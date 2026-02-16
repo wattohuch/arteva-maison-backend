@@ -38,15 +38,28 @@ async function initializeEmailService() {
     try {
         const transport = initializeTransporter();
         
-        // Verify connection with promise
-        await transport.verify();
+        console.log('🔍 Verifying SMTP connection...');
+        console.log(`📮 Using: ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}`);
+        console.log(`👤 User: ${process.env.EMAIL_USER}`);
         
-        console.log('📧 Email service initialized and ready');
+        // Verify connection with timeout
+        const verifyPromise = transport.verify();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('SMTP verification timeout after 10 seconds')), 10000)
+        );
+        
+        await Promise.race([verifyPromise, timeoutPromise]);
+        
+        console.log('✅ Email service initialized and ready');
         console.log(`📬 Email configured: ${process.env.EMAIL_USER}`);
         return { success: true };
     } catch (error) {
         console.error('❌ Email service initialization failed:', error.message);
         console.error('⚠️  Email features will not work. Please check EMAIL_USER and EMAIL_PASS in .env');
+        console.error('💡 Common issues:');
+        console.error('   - Gmail App Password expired or incorrect');
+        console.error('   - 2-Step Verification not enabled on Gmail');
+        console.error('   - Wrong EMAIL_HOST or EMAIL_PORT');
         return { success: false, error: error.message };
     }
 }
