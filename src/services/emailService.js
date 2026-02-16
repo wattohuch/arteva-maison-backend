@@ -26,17 +26,29 @@ function initializeTransporter() {
                 pass: process.env.EMAIL_PASS
             }
         });
-
-        // Verify connection
-        transporter.verify((error, success) => {
-            if (error) {
-                console.error('❌ Email service error:', error.message);
-            } else {
-                console.log('📧 Email service ready');
-            }
-        });
     }
     return transporter;
+}
+
+/**
+ * Initialize and verify email service
+ * Returns a promise that resolves when email service is ready
+ */
+async function initializeEmailService() {
+    try {
+        const transport = initializeTransporter();
+        
+        // Verify connection with promise
+        await transport.verify();
+        
+        console.log('📧 Email service initialized and ready');
+        console.log(`📬 Email configured: ${process.env.EMAIL_USER}`);
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Email service initialization failed:', error.message);
+        console.error('⚠️  Email features will not work. Please check EMAIL_USER and EMAIL_PASS in .env');
+        return { success: false, error: error.message };
+    }
 }
 
 /**
@@ -174,7 +186,7 @@ async function sendOTPEmail(user, otp) {
     });
 }
 
-// Initialize transporter on module load
+// Initialize transporter on module load (but don't verify yet - that happens in initializeEmailService)
 initializeTransporter();
 
 module.exports = {
@@ -182,6 +194,7 @@ module.exports = {
     sendOrderConfirmation,
     sendOrderStatusUpdate,
     sendWelcomeEmail,
-    sendOTPEmail
+    sendOTPEmail,
+    initializeEmailService
 };
 

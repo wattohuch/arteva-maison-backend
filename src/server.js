@@ -118,10 +118,16 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
+// Initialize email service
+const { initializeEmailService } = require('./services/emailService');
+
 // Use server.listen instead of app.listen for Socket.IO
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`\n🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
     console.log(`🔌 Socket.IO ready for real-time connections`);
+
+    // Initialize and verify email service
+    await initializeEmailService();
 
     // Start automatic backup scheduler
     startBackupScheduler();
