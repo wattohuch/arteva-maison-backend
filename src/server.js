@@ -127,7 +127,13 @@ server.listen(PORT, async () => {
     console.log(`🔌 Socket.IO ready for real-time connections`);
 
     // Initialize and verify email service
-    await initializeEmailService();
+    console.log('\n📧 Initializing email service...');
+    const emailResult = await initializeEmailService();
+    if (emailResult.success) {
+        console.log('✅ Email service is operational');
+    } else {
+        console.log('❌ Email service failed to start:', emailResult.error);
+    }
 
     // Start automatic backup scheduler
     startBackupScheduler();
