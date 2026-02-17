@@ -93,7 +93,7 @@ function getBaseLayout(content, title) {
             <div class="webkit">
                 <!-- Header with Brown Image -->
                 <div class="header">
-                    <img src="cid:brown-header" alt="" class="header-img">
+                    <img src="https://www.artevamaisonkw.com/assets/images/Brown%20Image.png" alt="" class="header-img">
                 </div>
                 
                 <!-- Main Content -->

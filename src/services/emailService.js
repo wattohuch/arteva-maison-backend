@@ -1,40 +1,19 @@
-
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const path = require('path');
 const fs = require('fs');
 const { getWelcomeEmailHtml, getOrderConfirmationHtml, getOrderStatusUpdateHtml, getPasswordResetOTPHtml } = require('./emailTemplates');
 
-// Logo path for email CID embedding
-const LOGO_PATH = path.join(__dirname, '..', '..', '..', 'assets', 'images', 'logo.png');
-const HEADER_IMG_PATH = path.join(__dirname, '..', '..', '..', 'assets', 'images', 'Brown Image.png');
-const BG_LOGO_PATH = path.join(__dirname, '..', '..', '..', 'assets', 'images', 'arteva_maison_email_logo.png');
-
-// Create reusable transporter
-let transporter = null;
+// Initialize Resend client
+let resend = null;
 
 /**
- * Initialize the email transporter
+ * Initialize the Resend email client
  */
-function initializeTransporter() {
-    if (!transporter) {
-        const port = parseInt(process.env.EMAIL_PORT) || 587;
-        transporter = nodemailer.createTransport({
-            host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-            port: port,
-            secure: port === 465, // true for 465, false for other ports
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            },
-            tls: {
-                rejectUnauthorized: false // Allow self-signed certificates
-            },
-            connectionTimeout: 10000, // 10 seconds
-            greetingTimeout: 10000,
-            socketTimeout: 10000
-        });
+function initializeResend() {
+    if (!resend && process.env.RESEND_API_KEY) {
+        resend = new Resend(process.env.RESEND_API_KEY);
     }
-    return transporter;
+    return resend;
 }
 
 /**
@@ -43,101 +22,56 @@ function initializeTransporter() {
  */
 async function initializeEmailService() {
     try {
-        const transport = initializeTransporter();
+        if (!process.env.RESEND_API_KEY) {
+            throw new Error('RESEND_API_KEY not configured in environment variables');
+        }
+
+        initializeResend();
         
-        console.log('🔍 Verifying SMTP connection...');
-        console.log(`📮 Using: ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}`);
-        console.log(`👤 User: ${process.env.EMAIL_USER}`);
-        console.log(`🔐 Pass length: ${process.env.EMAIL_PASS ? process.env.EMAIL_PASS.length : 0} chars`);
+        console.log('✅ Resend email service initialized');
+        console.log(`📬 Email from: ${process.env.EMAIL_FROM || 'onboarding@resend.dev'}`);
+        console.log('💡 Using Resend API (HTTPS) - no SMTP ports needed');
         
-        // Verify connection with timeout
-        const verifyPromise = transport.verify();
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('SMTP verification timeout after 15 seconds')), 15000)
-        );
-        
-        await Promise.race([verifyPromise, timeoutPromise]);
-        
-        console.log('✅ Email service initialized and ready');
-        console.log(`📬 Email configured: ${process.env.EMAIL_USER}`);
         return { success: true };
     } catch (error) {
         console.error('❌ Email service initialization failed:', error.message);
-        console.error('📋 Full error:', error);
-        console.error('⚠️  Email features will not work. Please check EMAIL_USER and EMAIL_PASS in .env');
-        console.error('💡 Common issues:');
-        console.error('   - Gmail App Password expired or incorrect');
-        console.error('   - 2-Step Verification not enabled on Gmail');
-        console.error('   - Wrong EMAIL_HOST or EMAIL_PORT');
-        console.error('   - Firewall blocking SMTP ports (587 or 465)');
+        console.error('⚠️  Email features will not work. Please check RESEND_API_KEY in .env');
+        console.error('💡 Get your API key from: https://resend.com/api-keys');
         return { success: false, error: error.message };
     }
 }
 
 /**
- * Send an email
+ * Send an email using Resend
  * @param {Object} options - Email options
  * @param {string} options.to - Recipient email
  * @param {string} options.subject - Email subject
  * @param {string} options.html - HTML content
  * @param {string} options.text - Plain text content (fallback)
  */
-async function sendEmail({ to, subject, html, text, attachments }) {
+async function sendEmail({ to, subject, html, text }) {
     try {
-        const transport = initializeTransporter();
+        const client = initializeResend();
+        
+        if (!client) {
+            throw new Error('Resend client not initialized');
+        }
 
-        const mailOptions = {
-            from: process.env.EMAIL_FROM || '"ARTEVA Maison" <noreply@artevamaisonkw.com>',
-            to,
+        const emailData = {
+            from: process.env.EMAIL_FROM || 'ARTEVA Maison <onboarding@resend.dev>',
+            to: [to],
             subject,
-            text: text || subject,
             html
         };
 
-        // Attach logo if the file exists
-        if (attachments) {
-            mailOptions.attachments = attachments;
-        } else {
-            const defaultAttachments = [];
+        const { data, error } = await client.emails.send(emailData);
 
-            if (fs.existsSync(LOGO_PATH)) {
-                defaultAttachments.push({
-                    filename: 'logo.png',
-                    path: LOGO_PATH,
-                    cid: 'arteva-logo'
-                });
-            }
-
-            if (fs.existsSync(HEADER_IMG_PATH)) {
-                defaultAttachments.push({
-                    filename: 'header-bg.png',
-                    path: HEADER_IMG_PATH,
-                    cid: 'brown-header'
-                });
-            }
-
-            if (fs.existsSync(BG_LOGO_PATH)) {
-                defaultAttachments.push({
-                    filename: 'bg-logo.png',
-                    path: BG_LOGO_PATH,
-                    cid: 'arteva-logo-bg'
-                });
-            } else if (fs.existsSync(LOGO_PATH)) {
-                // Fallback to regular logo if specific bg logo missing
-                defaultAttachments.push({
-                    filename: 'bg-logo-fallback.png',
-                    path: LOGO_PATH,
-                    cid: 'arteva-logo-bg'
-                });
-            }
-
-            mailOptions.attachments = defaultAttachments;
+        if (error) {
+            throw new Error(error.message);
         }
 
-        const info = await transport.sendMail(mailOptions);
-
-        console.log(`📧 Email sent to ${to}: ${info.messageId}`);
-        return { success: true, messageId: info.messageId };
+        console.log(`📧 Email sent to ${to}: ${data.id}`);
+        return { success: true, messageId: data.id };
     } catch (error) {
         console.error('❌ Email send error:', error.message);
         return { success: false, error: error.message };
@@ -209,8 +143,8 @@ async function sendOTPEmail(user, otp) {
     });
 }
 
-// Initialize transporter on module load (but don't verify yet - that happens in initializeEmailService)
-initializeTransporter();
+// Initialize Resend on module load
+initializeResend();
 
 module.exports = {
     sendEmail,
