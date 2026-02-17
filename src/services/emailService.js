@@ -17,14 +17,21 @@ let transporter = null;
  */
 function initializeTransporter() {
     if (!transporter) {
+        const port = parseInt(process.env.EMAIL_PORT) || 587;
         transporter = nodemailer.createTransport({
             host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-            port: parseInt(process.env.EMAIL_PORT) || 587,
-            secure: false, // true for 465, false for other ports
+            port: port,
+            secure: port === 465, // true for 465, false for other ports
             auth: {
                 user: process.env.EMAIL_USER,
                 pass: process.env.EMAIL_PASS
-            }
+            },
+            tls: {
+                rejectUnauthorized: false // Allow self-signed certificates
+            },
+            connectionTimeout: 10000, // 10 seconds
+            greetingTimeout: 10000,
+            socketTimeout: 10000
         });
     }
     return transporter;
@@ -41,11 +48,12 @@ async function initializeEmailService() {
         console.log('🔍 Verifying SMTP connection...');
         console.log(`📮 Using: ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}`);
         console.log(`👤 User: ${process.env.EMAIL_USER}`);
+        console.log(`🔐 Pass length: ${process.env.EMAIL_PASS ? process.env.EMAIL_PASS.length : 0} chars`);
         
         // Verify connection with timeout
         const verifyPromise = transport.verify();
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('SMTP verification timeout after 10 seconds')), 10000)
+            setTimeout(() => reject(new Error('SMTP verification timeout after 15 seconds')), 15000)
         );
         
         await Promise.race([verifyPromise, timeoutPromise]);
@@ -55,11 +63,13 @@ async function initializeEmailService() {
         return { success: true };
     } catch (error) {
         console.error('❌ Email service initialization failed:', error.message);
+        console.error('📋 Full error:', error);
         console.error('⚠️  Email features will not work. Please check EMAIL_USER and EMAIL_PASS in .env');
         console.error('💡 Common issues:');
         console.error('   - Gmail App Password expired or incorrect');
         console.error('   - 2-Step Verification not enabled on Gmail');
         console.error('   - Wrong EMAIL_HOST or EMAIL_PORT');
+        console.error('   - Firewall blocking SMTP ports (587 or 465)');
         return { success: false, error: error.message };
     }
 }
