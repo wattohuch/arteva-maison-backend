@@ -27,7 +27,7 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['user', 'admin', 'driver'],
+        enum: ['user', 'admin', 'driver', 'owner'],
         default: 'user'
     },
     addresses: [{
@@ -47,7 +47,7 @@ const userSchema = new mongoose.Schema({
     currency: {
         type: String,
         default: 'KWD',
-        enum: ['KWD', 'SAR', 'AED', 'QAR', 'BHD', 'OMR']
+        enum: ['KWD', 'SAR', 'AED', 'QAR', 'BHD', 'OMR', 'USD']
     },
     language: {
         type: String,

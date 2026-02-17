@@ -35,11 +35,11 @@ const seedDB = async () => {
         // Create admin user
         console.log('Creating admin user...');
         try {
-            const adminUser = await User.create({
-                name: 'Admin',
+            const ownerUser = await User.create({
+                name: 'Owner',
                 email: 'admin@arteva.com',
                 password: 'admin123',
-                role: 'admin'
+                role: 'owner'
             });
             console.log('Created admin user:', adminUser.email);
         } catch (err) {
@@ -160,7 +160,7 @@ const seedDB = async () => {
         console.log(`Created ${createdProducts.length} products`);
 
         console.log('\n✅ Database seeded successfully!');
-        console.log('Admin credentials: admin@arteva.com / admin123');
+        console.log('Owner credentials: admin@arteva.com / admin123');
 
         process.exit(0);
     } catch (error) {

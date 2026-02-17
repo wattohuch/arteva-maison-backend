@@ -216,6 +216,25 @@ const updateUserRole = asyncHandler(async (req, res) => {
         throw new Error('User not found');
     }
 
+    // Role change restrictions
+    // Only owner can assign owner role
+    if (role === 'owner' && req.user.role !== 'owner') {
+        res.status(403);
+        throw new Error('Only owners can assign owner role');
+    }
+
+    // Admin cannot change owner's role
+    if (user.role === 'owner' && req.user.role !== 'owner') {
+        res.status(403);
+        throw new Error('Cannot change owner role');
+    }
+
+    // Admin can only assign admin or driver roles
+    if (req.user.role === 'admin' && !['admin', 'driver', 'user'].includes(role)) {
+        res.status(403);
+        throw new Error('Admins can only assign admin, driver, or user roles');
+    }
+
     user.role = role;
     await user.save();
     res.json({ success: true, data: user });
