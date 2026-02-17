@@ -2,7 +2,6 @@ const { asyncHandler } = require('../middleware/error'); // Fix import destructu
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
-const nodemailer = require('nodemailer');
 
 // @desc    Get dashboard statistics
 // @route   GET /api/admin/stats
@@ -248,41 +247,66 @@ const sendOfferEmail = async (req, res) => {
         if (recipientType === 'all') {
             users = await User.find({});
         } else if (recipientType === 'subscribers') {
-            users = await User.find({ isSubscribed: true }); // Assuming isSubscribed field exists
+            users = await User.find({ isSubscribed: true });
         } else {
             return res.status(400).json({ success: false, message: 'Invalid recipient type' });
         }
 
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            }
-        });
-
-        // Send email to each user (limit for demo)
-        const targetUsers = users.slice(0, 5);
-
-        for (const user of targetUsers) {
-            await transporter.sendMail({
-                from: `"Arteva Maison Team" <${process.env.EMAIL_USER}>`,
-                to: user.email,
-                subject: subject,
-                html: `
-                    <div style="font-family: Arial, sans-serif; padding: 20px;">
-                        <h2>Hello ${user.name},</h2>
-                        <p>${message}</p>
-                        <hr>
-                        <p>Best regards,<br>ARTEVA Maison Team</p>
-                    </div>
-                `
-            });
+        if (users.length === 0) {
+            return res.status(400).json({ success: false, message: 'No users found to send emails to' });
         }
 
-        res.json({ success: true, message: `Email sent to ${targetUsers.length} users` });
+        // Use the email service
+        const { sendEmail } = require('../services/emailService');
+
+        // Send email to each user (limit to 10 for safety)
+        const targetUsers = users.slice(0, 10);
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const user of targetUsers) {
+            const emailHtml = `
+                <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+                    <div style="background-color: #8b7355; padding: 20px; text-align: center;">
+                        <h1 style="color: white; margin: 0;">ARTÉVA MAISON</h1>
+                    </div>
+                    <div style="padding: 30px; background-color: #f9f7f2;">
+                        <h2 style="color: #2c241b;">Hello ${user.name},</h2>
+                        <div style="color: #4a3b2a; line-height: 1.6;">
+                            ${message}
+                        </div>
+                    </div>
+                    <div style="padding: 20px; text-align: center; background-color: #ffffff; border-top: 1px solid #e6e1d6;">
+                        <p style="color: #8b7355; margin: 0;">Best regards,<br>ARTÉVA Maison Team</p>
+                    </div>
+                </div>
+            `;
+
+            const result = await sendEmail({
+                to: user.email,
+                subject: subject,
+                html: emailHtml
+            });
+
+            if (result.success) {
+                successCount++;
+            } else {
+                failCount++;
+                console.error(`Failed to send email to ${user.email}:`, result.error);
+            }
+        }
+
+        res.json({ 
+            success: true, 
+            message: `Email campaign completed: ${successCount} sent, ${failCount} failed`,
+            details: {
+                total: targetUsers.length,
+                sent: successCount,
+                failed: failCount
+            }
+        });
     } catch (error) {
-        console.error('Email send error:', error);
+        console.error('Email campaign error:', error);
         res.status(500).json({ success: false, message: 'Failed to send emails' });
     }
 };
