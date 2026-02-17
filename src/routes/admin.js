@@ -45,4 +45,11 @@ router.route('/users/:id')
 // Email
 router.post('/send-email', protect, admin, sendOfferEmail);
 
+// Backup management
+const { listBackups, downloadBackup, createBackup, restoreBackup } = require('../controllers/backupController');
+router.get('/backups', protect, admin, listBackups);
+router.get('/backups/:backupName/download', protect, admin, downloadBackup);
+router.post('/backups/create', protect, admin, createBackup);
+router.post('/backups/:backupName/restore', protect, admin, restoreBackup);
+
 module.exports = router;
