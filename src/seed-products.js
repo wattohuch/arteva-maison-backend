@@ -111,7 +111,7 @@ const productData = [
         nameAr: 'طبق أشعة الشمس الأزرق',
         price: 42.000,
         categorySlug: 'plates',
-        image: '/assets/images/products/product-12.jpeg', // No PNG available
+        image: '/assets/images/products/product-12.png',
         stock: 12,
         isNewArrival: true
     },
@@ -120,7 +120,7 @@ const productData = [
         nameAr: 'مجموعة مزهريات أوراق الخريف',
         price: 68.000,
         categorySlug: 'vases',
-        image: '/assets/images/products/product-13.jpeg', // No PNG available
+        image: '/assets/images/products/product-13.png',
         stock: 4
     },
     {
@@ -136,7 +136,7 @@ const productData = [
         nameAr: 'مجموعة الأواني الزجاجية الفنية',
         price: 75.000,
         categorySlug: 'glassware',
-        image: '/assets/images/hero/hero-bg.png',
+        image: '/assets/images/products/product-14.png',
         stock: 3,
         isFeatured: true
     }
