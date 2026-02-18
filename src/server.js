@@ -137,6 +137,24 @@ server.listen(PORT, async () => {
 
     // Start automatic backup scheduler
     startBackupScheduler();
+
+    // Keep-alive self-ping every 14 minutes to prevent Render free-tier spin-down
+    if (process.env.NODE_ENV === 'production') {
+        const PING_INTERVAL = 14 * 60 * 1000; // 14 minutes
+        const backendUrl = process.env.RENDER_EXTERNAL_URL || `https://arteva-maison-backend-gy1x.onrender.com`;
+
+        setInterval(() => {
+            const url = `${backendUrl}/api/health`;
+            const lib = url.startsWith('https') ? require('https') : require('http');
+            lib.get(url, (res) => {
+                console.log(`🏓 Keep-alive ping: ${res.statusCode}`);
+            }).on('error', (err) => {
+                console.log(`🏓 Keep-alive ping failed: ${err.message}`);
+            });
+        }, PING_INTERVAL);
+
+        console.log('🏓 Keep-alive pinger started (every 14 min)');
+    }
 });
 
 module.exports = { app, server, io };
