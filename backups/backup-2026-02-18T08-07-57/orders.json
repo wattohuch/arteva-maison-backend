@@ -1,0 +1,792 @@
+[
+  {
+    "_id": "69917ab71a82f8664403d5cb",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "69809365d775552b13057892",
+        "name": "Floral Cylinder Vase",
+        "image": "/assets/images/products/product-05.png",
+        "price": 24,
+        "quantity": 1,
+        "_id": "69917ab71a82f8664403d5cc"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "farwaniya",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917"
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "paid",
+    "orderStatus": "delivered",
+    "subtotal": 24,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 26.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-15T07:50:15.546Z",
+        "note": "Order placed",
+        "_id": "69917ab71a82f8664403d5ce"
+      },
+      {
+        "status": "processing",
+        "timestamp": "2026-02-15T07:50:46.309Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69917ad61a82f8664403d5e7"
+      },
+      {
+        "status": "processing",
+        "timestamp": "2026-02-15T08:20:14.328Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "699181beca972522bc236cc4"
+      },
+      {
+        "status": "processing",
+        "timestamp": "2026-02-15T08:36:44.874Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991859cca972522bc236e00"
+      },
+      {
+        "status": "delivered",
+        "timestamp": "2026-02-15T08:59:01.482Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69918ad59d72b5fd7f2fcb38"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T09:05:19.773Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69918c4f1f53f7c89f46024e"
+      },
+      {
+        "status": "delivered",
+        "timestamp": "2026-02-15T09:05:21.177Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69918c511f53f7c89f460259"
+      }
+    ],
+    "createdAt": "2026-02-15T07:50:15.529Z",
+    "updatedAt": "2026-02-15T09:05:21.180Z",
+    "orderNumber": "ART-000001",
+    "__v": 6,
+    "deliveredAt": "2026-02-15T09:05:21.178Z"
+  },
+  {
+    "_id": "69918584ca972522bc236db6",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "69809364d775552b1305786d",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "69918584ca972522bc236db7"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "farwaniya",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.3706,
+        "lng": 47.9697
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "paid",
+    "orderStatus": "delivered",
+    "subtotal": 35,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 37.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-15T08:36:20.167Z",
+        "note": "Order placed",
+        "_id": "69918584ca972522bc236db9"
+      },
+      {
+        "status": "processing",
+        "timestamp": "2026-02-15T08:36:43.097Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991859bca972522bc236df8"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T08:42:53.383Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991870d42e8af6fece7b231"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T08:43:05.785Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991871942e8af6fece7b23d"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T08:44:01.545Z",
+        "note": "Assigned to driver: Test User",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991875142e8af6fece7b281"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T08:44:12.531Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991875c42e8af6fece7b292"
+      },
+      {
+        "status": "delivered",
+        "timestamp": "2026-02-15T08:58:44.182Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69918ac49d72b5fd7f2fcaf7"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T09:05:09.481Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69918c451f53f7c89f4601ff"
+      },
+      {
+        "status": "delivered",
+        "timestamp": "2026-02-15T09:05:10.854Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69918c461f53f7c89f46020c"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T11:50:50.758Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991b31a3c5e0df63cfa8a5b"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T11:51:17.993Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991b3353c5e0df63cfa8a6d"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T11:51:20.823Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991b3383c5e0df63cfa8a7d"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T11:52:01.865Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991b3613c5e0df63cfa8b0f"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T11:57:44.384Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991b4b86cef697ca4001603"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T11:57:47.981Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6991b4bb6cef697ca4001635"
+      }
+    ],
+    "createdAt": "2026-02-15T08:36:20.152Z",
+    "updatedAt": "2026-02-15T12:03:35.192Z",
+    "orderNumber": "ART-000002",
+    "__v": 14,
+    "deliveryPilot": "6991b25c3c5e0df63cfa89d0",
+    "deliveredAt": "2026-02-15T12:03:35.186Z"
+  },
+  {
+    "_id": "6992149ec2b15cbb6ddfcc7c",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "6991adc0c717bff37f38b0aa",
+        "name": "Cobalt Sunburst Plate",
+        "image": "/assets/images/products/product-12.jpeg",
+        "price": 42,
+        "quantity": 1,
+        "_id": "6992149ec2b15cbb6ddfcc7d"
+      }
+    ],
+    "shippingAddress": {
+      "street": "drctr",
+      "city": "www",
+      "state": "t6frf",
+      "country": "Kuwait",
+      "zipCode": "gyvv",
+      "phone": "98767890",
+      "coordinates": {
+        "lat": 29.3759,
+        "lng": 47.9774
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "delivered",
+    "subtotal": 42,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 44.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-15T18:46:54.239Z",
+        "note": "Order placed",
+        "_id": "6992149ec2b15cbb6ddfcc7f"
+      },
+      {
+        "status": "packed",
+        "timestamp": "2026-02-15T18:49:24.047Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69921534c2b15cbb6ddfcd30"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T18:50:58.868Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69921592c2b15cbb6ddfce0b"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-16T06:25:15.852Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6992b84b11772f5b630bc57c"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-16T06:47:05.019Z",
+        "note": "Status updated by driver",
+        "updatedBy": "6991b25c3c5e0df63cfa89d0",
+        "_id": "6992bd69246b41b76c79cb92"
+      },
+      {
+        "status": "delivered",
+        "timestamp": "2026-02-16T06:48:43.322Z",
+        "note": "Status updated by driver",
+        "updatedBy": "6991b25c3c5e0df63cfa89d0",
+        "_id": "6992bdcb246b41b76c79cba6"
+      }
+    ],
+    "createdAt": "2026-02-15T18:46:54.218Z",
+    "updatedAt": "2026-02-16T06:48:43.325Z",
+    "orderNumber": "ART-000003",
+    "__v": 5,
+    "deliveryPilot": "6991b25c3c5e0df63cfa89d0",
+    "deliveredAt": "2026-02-16T06:48:43.323Z"
+  },
+  {
+    "_id": "699215ffc2b15cbb6ddfce23",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "6991adc0c717bff37f38b08c",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "699215ffc2b15cbb6ddfce24"
+      }
+    ],
+    "shippingAddress": {
+      "street": "sss",
+      "city": "sss",
+      "state": "sss",
+      "country": "Kuwait",
+      "zipCode": "sss",
+      "phone": "45677654",
+      "coordinates": {
+        "lat": 29.3759,
+        "lng": 47.9774
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "delivered",
+    "subtotal": 35,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 37.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-15T18:52:47.149Z",
+        "note": "Order placed",
+        "_id": "699215ffc2b15cbb6ddfce26"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-15T18:55:39.933Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "699216abc2b15cbb6ddfcf79"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T18:55:42.087Z",
+        "note": "Assigned to driver: Test User",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "699216aec2b15cbb6ddfcf81"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-15T18:55:45.123Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "699216b1c2b15cbb6ddfcf8a"
+      }
+    ],
+    "createdAt": "2026-02-15T18:52:47.121Z",
+    "updatedAt": "2026-02-15T18:57:37.804Z",
+    "orderNumber": "ART-000004",
+    "__v": 3,
+    "deliveryPilot": "6991b25c3c5e0df63cfa89d0",
+    "deliveredAt": "2026-02-15T18:57:37.802Z"
+  },
+  {
+    "_id": "6992b358307c203c12a7dd46",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "6992acbe44447472ad745ab3",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "6992b358307c203c12a7dd47"
+      },
+      {
+        "product": "6992acbf44447472ad745acb",
+        "name": "Sunset Gradient Vase Set",
+        "image": "/assets/images/products/product-09.png",
+        "price": 85,
+        "quantity": 1,
+        "_id": "6992b358307c203c12a7dd48"
+      }
+    ],
+    "shippingAddress": {
+      "street": "Al Rai Block 4 8th St",
+      "city": "Farwaniya",
+      "state": "",
+      "country": "Kuwait",
+      "zipCode": "70070",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.306703715151635,
+        "lng": 47.93396816016481
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "delivered",
+    "subtotal": 120,
+    "shippingCost": 0,
+    "discount": 0,
+    "total": 120,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-16T06:04:08.267Z",
+        "note": "Order placed",
+        "_id": "6992b358307c203c12a7dd4a"
+      },
+      {
+        "status": "confirmed",
+        "timestamp": "2026-02-16T06:05:15.529Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6992b39b307c203c12a7de64"
+      },
+      {
+        "status": "packed",
+        "timestamp": "2026-02-16T06:06:02.735Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6992b3ca307c203c12a7dedf"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-16T06:06:17.166Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6992b3d9307c203c12a7df13"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-16T06:06:27.762Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6992b3e3307c203c12a7df49"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-16T06:07:15.788Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "6992b413307c203c12a7df9b"
+      },
+      {
+        "status": "delivered",
+        "timestamp": "2026-02-16T06:46:49.785Z",
+        "note": "Status updated by driver",
+        "updatedBy": "6991b25c3c5e0df63cfa89d0",
+        "_id": "6992bd59246b41b76c79cb63"
+      }
+    ],
+    "createdAt": "2026-02-16T06:04:08.225Z",
+    "updatedAt": "2026-02-16T06:46:49.800Z",
+    "orderNumber": "ART-000005",
+    "__v": 6,
+    "deliveryPilot": "6991b25c3c5e0df63cfa89d0",
+    "deliveredAt": "2026-02-16T06:46:49.791Z"
+  },
+  {
+    "_id": "6993574bb47889d1f2219c05",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "6992dab74809fe4509d7a729",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "6993574bb47889d1f2219c06"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.358287389318594,
+        "lng": 47.9667917166722
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "out_for_delivery",
+    "subtotal": 35,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 37.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-16T17:43:40.241Z",
+        "note": "Order placed",
+        "_id": "6993574cb47889d1f2219c08"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-16T19:12:41.799Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69936c29ecbe01f351133fad"
+      }
+    ],
+    "createdAt": "2026-02-16T17:43:39.974Z",
+    "updatedAt": "2026-02-16T19:12:41.800Z",
+    "orderNumber": "ART-000006",
+    "__v": 1
+  },
+  {
+    "_id": "6993629fee498d385592d518",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "6992dab74809fe4509d7a729",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "6993629fee498d385592d519"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.358287389318594,
+        "lng": 47.9667917166722
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "handed_over",
+    "subtotal": 35,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 37.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-16T18:31:59.301Z",
+        "note": "Order placed",
+        "_id": "6993629fee498d385592d51b"
+      },
+      {
+        "status": "out_for_delivery",
+        "timestamp": "2026-02-16T19:12:20.660Z",
+        "note": "Status updated by admin",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69936c14ecbe01f351133f0f"
+      },
+      {
+        "status": "handed_over",
+        "timestamp": "2026-02-16T19:12:23.307Z",
+        "note": "Assigned to driver: Prince Walson",
+        "updatedBy": "69807d61b32934c8d27e0eca",
+        "_id": "69936c17ecbe01f351133f18"
+      }
+    ],
+    "createdAt": "2026-02-16T18:31:59.033Z",
+    "updatedAt": "2026-02-16T19:12:23.308Z",
+    "orderNumber": "ART-000007",
+    "__v": 2,
+    "deliveryPilot": "6991b25c3c5e0df63cfa89d0"
+  },
+  {
+    "_id": "69936de1ecbe01f3511342b6",
+    "user": "69807d61b32934c8d27e0eca",
+    "items": [
+      {
+        "product": "6992dab74809fe4509d7a729",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "69936de1ecbe01f3511342b7"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.358287389318594,
+        "lng": 47.9667917166722
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "pending",
+    "subtotal": 35,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 37.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-16T19:20:01.579Z",
+        "note": "Order placed",
+        "_id": "69936de1ecbe01f3511342b9"
+      }
+    ],
+    "createdAt": "2026-02-16T19:20:01.335Z",
+    "updatedAt": "2026-02-16T19:20:01.335Z",
+    "orderNumber": "ART-000008",
+    "__v": 0
+  },
+  {
+    "_id": "6993944d384243fce53c597f",
+    "user": "69939400384243fce53c5966",
+    "items": [
+      {
+        "product": "6992dab74809fe4509d7a729",
+        "name": "Amber Crystal Candle Holder",
+        "image": "/assets/images/products/product-01.png",
+        "price": 35,
+        "quantity": 1,
+        "_id": "6993944d384243fce53c5980"
+      }
+    ],
+    "shippingAddress": {
+      "street": "Block: 2, Street: 230, House No. 8",
+      "city": "Ishbelya",
+      "state": "Farwaneya",
+      "country": "Kuwait",
+      "zipCode": "1234",
+      "phone": "51008567",
+      "coordinates": {
+        "lat": 29.3759,
+        "lng": 47.9774
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "pending",
+    "subtotal": 35,
+    "shippingCost": 2.5,
+    "discount": 0,
+    "total": 37.5,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-16T22:03:58.238Z",
+        "note": "Order placed",
+        "_id": "6993944e384243fce53c5982"
+      }
+    ],
+    "createdAt": "2026-02-16T22:03:57.970Z",
+    "updatedAt": "2026-02-16T22:03:57.970Z",
+    "orderNumber": "ART-000009",
+    "__v": 0
+  },
+  {
+    "_id": "69943925b431148d037f9805",
+    "user": "6994044a93198da27a9b12b4",
+    "items": [
+      {
+        "product": "69809365d775552b1305788f",
+        "name": "Autumn Leaves Vase Collection",
+        "image": "/assets/images/products/product-13.jpeg",
+        "price": 68,
+        "quantity": 1,
+        "_id": "69943925b431148d037f9806"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.306700055933756,
+        "lng": 47.93397025114645
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "pending",
+    "subtotal": 68,
+    "shippingCost": 0,
+    "discount": 0,
+    "total": 68,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-17T09:47:17.399Z",
+        "note": "Order placed",
+        "_id": "69943925b431148d037f9808"
+      }
+    ],
+    "createdAt": "2026-02-17T09:47:17.132Z",
+    "updatedAt": "2026-02-17T09:47:17.132Z",
+    "orderNumber": "ART-000010",
+    "__v": 0
+  },
+  {
+    "_id": "69943a16b431148d037f9872",
+    "user": "699439f3b431148d037f9832",
+    "items": [
+      {
+        "product": "69809365d775552b13057886",
+        "name": "Sunset Gradient Vase Set",
+        "image": "/assets/images/products/product-09.jpeg",
+        "price": 85,
+        "quantity": 1,
+        "_id": "69943a16b431148d037f9873"
+      }
+    ],
+    "shippingAddress": {
+      "street": "al rai",
+      "city": "farwaniya",
+      "state": "",
+      "country": "Kuwait",
+      "zipCode": "13001",
+      "phone": "+96597295917",
+      "coordinates": {
+        "lat": 29.3706,
+        "lng": 47.9697
+      }
+    },
+    "paymentMethod": "cod",
+    "paymentStatus": "pending",
+    "orderStatus": "pending",
+    "subtotal": 85,
+    "shippingCost": 0,
+    "discount": 0,
+    "total": 85,
+    "currency": "KWD",
+    "notes": "",
+    "statusHistory": [
+      {
+        "status": "pending",
+        "timestamp": "2026-02-17T09:51:18.560Z",
+        "note": "Order placed",
+        "_id": "69943a16b431148d037f9875"
+      }
+    ],
+    "createdAt": "2026-02-17T09:51:18.294Z",
+    "updatedAt": "2026-02-17T09:51:18.294Z",
+    "orderNumber": "ART-000011",
+    "__v": 0
+  }
+]
