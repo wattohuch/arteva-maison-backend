@@ -1,0 +1,102 @@
+[
+  {
+    "_id": "69809364d775552b13057861",
+    "name": "New Arrivals",
+    "nameAr": "جديد",
+    "slug": "new",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057862",
+    "name": "Crystals",
+    "nameAr": "كريستال",
+    "slug": "crystals",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057863",
+    "name": "Glassware",
+    "nameAr": "الزجاجيات",
+    "slug": "glassware",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057864",
+    "name": "Vases",
+    "nameAr": "المزهريات",
+    "slug": "vases",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057865",
+    "name": "Bowls",
+    "nameAr": "الأوعية",
+    "slug": "bowls",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057866",
+    "name": "Plates",
+    "nameAr": "الأطباق",
+    "slug": "plates",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057867",
+    "name": "Serveware",
+    "nameAr": "التقديم",
+    "slug": "serveware",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057868",
+    "name": "Décor",
+    "nameAr": "ديكور",
+    "slug": "decor",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057869",
+    "name": "Candle Holders",
+    "nameAr": "حاملات الشموع",
+    "slug": "candles",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.846Z",
+    "updatedAt": "2026-02-02T12:07:00.846Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b1305786a",
+    "name": "Outlet",
+    "nameAr": "التخفيضات",
+    "slug": "outlet",
+    "isActive": true,
+    "createdAt": "2026-02-02T12:07:00.847Z",
+    "updatedAt": "2026-02-02T12:07:00.847Z",
+    "__v": 0
+  }
+]

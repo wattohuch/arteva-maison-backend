@@ -1,0 +1,64 @@
+[
+  {
+    "_id": "6994044a93198da27a9b12b4",
+    "name": "Admin",
+    "email": "admin@arteva.com",
+    "role": "admin",
+    "currency": "KWD",
+    "language": "en",
+    "wishlist": [],
+    "resetPasswordOTP": null,
+    "resetPasswordOTPExpiry": null,
+    "addresses": [
+      {
+        "label": "work",
+        "street": "al rai",
+        "city": "farwaniya",
+        "country": "Kuwait",
+        "zipCode": "13001",
+        "phone": "+96597295917",
+        "coordinates": {
+          "lat": 29.306700055933756,
+          "lng": 47.93397025114645
+        },
+        "isDefault": false,
+        "_id": "69942947d1f8c9771673feea"
+      }
+    ],
+    "createdAt": "2026-02-17T06:01:46.842Z",
+    "updatedAt": "2026-02-18T06:07:21.370Z",
+    "__v": 1
+  },
+  {
+    "_id": "69940e686717a38bc673e7f0",
+    "name": "mohammad alawaji",
+    "email": "mohammadalawaji2@gmail.com",
+    "phone": "+965 6561 1566",
+    "role": "admin",
+    "currency": "KWD",
+    "language": "en",
+    "wishlist": [],
+    "resetPasswordOTP": null,
+    "resetPasswordOTPExpiry": null,
+    "addresses": [],
+    "createdAt": "2026-02-17T06:44:56.756Z",
+    "updatedAt": "2026-02-17T06:45:19.907Z",
+    "__v": 0
+  },
+  {
+    "_id": "699439f3b431148d037f9832",
+    "name": "Prince Walson",
+    "email": "walson549@gmail.com",
+    "phone": "+96597295917",
+    "role": "user",
+    "currency": "KWD",
+    "language": "en",
+    "wishlist": [],
+    "resetPasswordOTP": null,
+    "resetPasswordOTPExpiry": null,
+    "addresses": [],
+    "createdAt": "2026-02-17T09:50:43.584Z",
+    "updatedAt": "2026-02-17T11:00:58.536Z",
+    "__v": 0
+  }
+]

@@ -1,0 +1,478 @@
+[
+  {
+    "_id": "69809364d775552b1305786d",
+    "name": "Amber Crystal Candle Holder",
+    "nameAr": "حامل شموع كريستال العنبر",
+    "slug": "amber-crystal-candle-holder",
+    "price": 35,
+    "currency": "KWD",
+    "category": "69809364d775552b13057862",
+    "images": [
+      {
+        "url": "/assets/images/products/product-01.jpeg",
+        "isPrimary": true,
+        "_id": "69809364d775552b1305786e"
+      }
+    ],
+    "stock": 15,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": true,
+    "isNewArrival": true,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.869Z",
+    "updatedAt": "2026-02-02T12:07:00.869Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057871",
+    "name": "Murano Wave Glass Bowls Set",
+    "nameAr": "طقم أوعية زجاج مورانو",
+    "slug": "murano-wave-glass-bowls-set",
+    "price": 55,
+    "currency": "KWD",
+    "category": "69809364d775552b13057863",
+    "images": [
+      {
+        "url": "/assets/images/products/product-02.png",
+        "isPrimary": true,
+        "_id": "69809364d775552b13057872"
+      }
+    ],
+    "stock": 10,
+    "isActive": true,
+    "isComingSoon": true,
+    "isFeatured": true,
+    "isNewArrival": true,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.895Z",
+    "updatedAt": "2026-02-17T17:21:52.247Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057874",
+    "name": "Emerald Decorative Plate",
+    "nameAr": "طبق ديكور زمردي",
+    "slug": "emerald-decorative-plate",
+    "price": 45,
+    "currency": "KWD",
+    "category": "69809364d775552b13057866",
+    "images": [
+      {
+        "url": "/assets/images/products/product-06.jpeg",
+        "isPrimary": true,
+        "_id": "69809364d775552b13057875"
+      }
+    ],
+    "stock": 12,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": true,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.915Z",
+    "updatedAt": "2026-02-02T12:07:00.915Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057877",
+    "name": "Botanical Relief Bowl",
+    "nameAr": "وعاء بنقش نباتي",
+    "slug": "botanical-relief-bowl",
+    "price": 38,
+    "currency": "KWD",
+    "category": "69809364d775552b13057865",
+    "images": [
+      {
+        "url": "/assets/images/products/product-11.jpeg",
+        "isPrimary": true,
+        "_id": "69809364d775552b13057878"
+      }
+    ],
+    "stock": 8,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": false,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.931Z",
+    "updatedAt": "2026-02-02T12:07:00.931Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b1305787a",
+    "name": "Gilded Floral Decorative Vase",
+    "nameAr": "مزهربة مذهبة بنقش زهور",
+    "slug": "gilded-floral-decorative-vase",
+    "price": 28,
+    "currency": "KWD",
+    "category": "69809364d775552b13057864",
+    "images": [
+      {
+        "url": "/assets/images/products/product-03.png",
+        "isPrimary": true,
+        "_id": "69809364d775552b1305787b"
+      }
+    ],
+    "stock": 20,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": true,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.949Z",
+    "updatedAt": "2026-02-02T12:07:00.949Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b1305787d",
+    "name": "Hand-Painted Golden Bowl",
+    "nameAr": "وعاء ذهبي مرسوم يدوياً",
+    "slug": "hand-painted-golden-bowl",
+    "price": 32,
+    "currency": "KWD",
+    "category": "69809364d775552b13057865",
+    "images": [
+      {
+        "url": "/assets/images/products/product-04.png",
+        "isPrimary": true,
+        "_id": "69809364d775552b1305787e"
+      }
+    ],
+    "stock": 15,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": false,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.965Z",
+    "updatedAt": "2026-02-02T12:07:00.965Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057880",
+    "name": "Amber Ruffled Bowl Set",
+    "nameAr": "طقم أوعية عنبرية مموجة",
+    "slug": "amber-ruffled-bowl-set",
+    "price": 65,
+    "currency": "KWD",
+    "category": "69809364d775552b13057865",
+    "images": [
+      {
+        "url": "/assets/images/products/product-07.png",
+        "isPrimary": true,
+        "_id": "69809364d775552b13057881"
+      }
+    ],
+    "stock": 6,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": true,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.982Z",
+    "updatedAt": "2026-02-02T12:07:00.982Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809364d775552b13057883",
+    "name": "Ocean Blue Artisan Bowls",
+    "nameAr": "أوعية فنية زرقاء",
+    "slug": "ocean-blue-artisan-bowls",
+    "price": 48,
+    "currency": "KWD",
+    "category": "69809364d775552b13057865",
+    "images": [
+      {
+        "url": "/assets/images/products/product-08.jpeg",
+        "isPrimary": true,
+        "_id": "69809364d775552b13057884"
+      }
+    ],
+    "stock": 10,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": false,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:00.998Z",
+    "updatedAt": "2026-02-02T12:07:00.998Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809365d775552b13057886",
+    "name": "Sunset Gradient Vase Set",
+    "nameAr": "طقم مزهريات متدرجة",
+    "slug": "sunset-gradient-vase-set",
+    "price": 85,
+    "currency": "KWD",
+    "category": "69809364d775552b13057864",
+    "images": [
+      {
+        "url": "/assets/images/products/product-09.jpeg",
+        "isPrimary": true,
+        "_id": "69809365d775552b13057887"
+      }
+    ],
+    "stock": 4,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": true,
+    "isNewArrival": true,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:01.014Z",
+    "updatedAt": "2026-02-17T09:51:18.022Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809365d775552b13057889",
+    "name": "Organic Form Art Bowl",
+    "nameAr": "وعاء فني عضوي",
+    "slug": "organic-form-art-bowl",
+    "price": 52,
+    "currency": "KWD",
+    "category": "69809364d775552b13057865",
+    "images": [
+      {
+        "url": "/assets/images/products/product-10.jpeg",
+        "isPrimary": true,
+        "_id": "69809365d775552b1305788a"
+      }
+    ],
+    "stock": 7,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": false,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:01.030Z",
+    "updatedAt": "2026-02-02T12:07:01.030Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809365d775552b1305788c",
+    "name": "Cobalt Sunburst Plate",
+    "nameAr": "طبق أشعة الشمس الأزرق",
+    "slug": "cobalt-sunburst-plate",
+    "price": 42,
+    "currency": "KWD",
+    "category": "69809364d775552b13057866",
+    "images": [
+      {
+        "url": "/assets/images/products/product-12.jpeg",
+        "isPrimary": true,
+        "_id": "69809365d775552b1305788d"
+      }
+    ],
+    "stock": 12,
+    "isActive": true,
+    "isComingSoon": true,
+    "isFeatured": false,
+    "isNewArrival": true,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:01.047Z",
+    "updatedAt": "2026-02-17T17:22:57.801Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809365d775552b1305788f",
+    "name": "Autumn Leaves Vase Collection",
+    "nameAr": "مجموعة مزهريات أوراق الخريف",
+    "slug": "autumn-leaves-vase-collection",
+    "price": 68,
+    "currency": "KWD",
+    "category": "69809364d775552b13057864",
+    "images": [
+      {
+        "url": "/assets/images/products/product-13.jpeg",
+        "isPrimary": true,
+        "_id": "69809365d775552b13057890"
+      }
+    ],
+    "stock": 3,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": false,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:01.062Z",
+    "updatedAt": "2026-02-17T09:47:16.859Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809365d775552b13057892",
+    "name": "Floral Cylinder Vase",
+    "nameAr": "مزهربة أسطوانية بنقش زهور",
+    "slug": "floral-cylinder-vase",
+    "price": 24,
+    "currency": "KWD",
+    "category": "69809364d775552b13057864",
+    "images": [
+      {
+        "url": "/assets/images/products/product-05.png",
+        "isPrimary": true,
+        "_id": "69809365d775552b13057893"
+      }
+    ],
+    "stock": 18,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": false,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:01.078Z",
+    "updatedAt": "2026-02-02T12:07:01.078Z",
+    "__v": 0
+  },
+  {
+    "_id": "69809365d775552b13057895",
+    "name": "Artisan Glassware Collection",
+    "nameAr": "مجموعة الأواني الزجاجية الفنية",
+    "slug": "artisan-glassware-collection",
+    "price": 75,
+    "currency": "KWD",
+    "category": "69809364d775552b13057863",
+    "images": [
+      {
+        "url": "/assets/images/hero/hero-bg.png",
+        "isPrimary": true,
+        "_id": "69809365d775552b13057896"
+      }
+    ],
+    "stock": 3,
+    "isActive": true,
+    "isComingSoon": false,
+    "isFeatured": true,
+    "isNewArrival": false,
+    "tags": [],
+    "dimensions": {
+      "unit": "cm"
+    },
+    "weight": {
+      "unit": "kg"
+    },
+    "materials": [],
+    "averageRating": 0,
+    "reviewCount": 0,
+    "createdAt": "2026-02-02T12:07:01.093Z",
+    "updatedAt": "2026-02-02T12:07:01.093Z",
+    "__v": 0
+  }
+]

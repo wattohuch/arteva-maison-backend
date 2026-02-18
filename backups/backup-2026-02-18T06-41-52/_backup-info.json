@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-02-18T06:41:52.708Z",
+  "totalRecords": 43,
+  "collections": [
+    "users",
+    "products",
+    "categories",
+    "carts",
+    "orders"
+  ],
+  "mongodbUri": "mongodb+srv://<hidden>@clusterarteva.ahgkw1j.mongodb.net/arteva_maison?retryWrites=true&w=majority&appName=ClusterARTEVA"
+}
