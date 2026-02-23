@@ -37,7 +37,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
         return sum + (item.product.price * item.quantity);
     }, 0);
 
-    const shippingCost = subtotal >= 50 ? 0 : 5; // Free shipping over 50 KWD
+    const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
     const total = subtotal + shippingCost;
 
     // Create order first
@@ -117,7 +117,7 @@ const executePayment = asyncHandler(async (req, res) => {
         return sum + (item.product.price * item.quantity);
     }, 0);
 
-    const shippingCost = subtotal >= 50 ? 0 : 5;
+    const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
     const total = subtotal + shippingCost;
 
     // Create order
@@ -323,7 +323,7 @@ const processCOD = asyncHandler(async (req, res) => {
         return sum + (item.product.price * item.quantity);
     }, 0);
 
-    const shippingCost = subtotal >= 50 ? 0 : 5;
+    const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
     const total = subtotal + shippingCost;
 
     // Create order

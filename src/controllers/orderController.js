@@ -47,8 +47,8 @@ const createOrder = asyncHandler(async (req, res) => {
         await product.save();
     }
 
-    // Calculate shipping (free over 50 KWD)
-    const shippingCost = subtotal >= 50 ? 0 : 2.5;
+    // Calculate shipping - Fixed 2 KD for all orders
+    const shippingCost = 2.0;
     const total = subtotal + shippingCost;
 
     const order = await Order.create({

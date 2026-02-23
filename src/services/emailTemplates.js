@@ -183,7 +183,7 @@ function getOrderConfirmationHtml(order, user) {
                 </tr>
                 <tr>
                     <td colspan="2" style="text-align: right; border-bottom: none;">Shipping:</td>
-                    <td style="text-align: right; border-bottom: none;">${order.shippingCost > 0 ? order.shippingCost.toFixed(3) + ' KWD' : 'FREE'}</td>
+                    <td style="text-align: right; border-bottom: none;">${order.shippingCost.toFixed(3)} KWD</td>
                 </tr>
                 <tr class="total-row">
                     <td colspan="2" style="text-align: right;">Total:</td>
