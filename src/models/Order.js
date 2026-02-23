@@ -163,7 +163,7 @@ orderSchema.methods.updateStatus = function (newStatus, note = '', updatedBy = n
 
 // Indexes for query performance
 orderSchema.index({ user: 1, createdAt: -1 });
-orderSchema.index({ orderNumber: 1 });
+// orderNumber already has unique index from schema definition
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
 
