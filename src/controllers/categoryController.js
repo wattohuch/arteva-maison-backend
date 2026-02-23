@@ -51,7 +51,15 @@ const getCategoryBySlug = asyncHandler(async (req, res) => {
 // @route   POST /api/categories
 // @access  Private/Admin
 const createCategory = asyncHandler(async (req, res) => {
-    const category = await Category.create(req.body);
+    const categoryData = { ...req.body };
+    
+    // Handle image upload
+    if (req.file) {
+        categoryData.image = `/assets/images/categories/${req.file.filename}`;
+        console.log(`[ADMIN] Created category with image: ${categoryData.image}`);
+    }
+    
+    const category = await Category.create(categoryData);
 
     res.status(201).json({
         success: true,
@@ -70,10 +78,25 @@ const updateCategory = asyncHandler(async (req, res) => {
         throw new Error('Category not found');
     }
 
-    category = await Category.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
-        runValidators: true
-    });
+    // Handle image deletion
+    if (req.body.deleteImage === 'true') {
+        category.image = null;
+        console.log(`[ADMIN] Deleted category image for "${category.name}"`);
+    }
+
+    // Handle new image upload
+    if (req.file) {
+        category.image = `/assets/images/categories/${req.file.filename}`;
+        console.log(`[ADMIN] Updated category image for "${category.name}"`);
+    }
+
+    // Update other fields
+    if (req.body.name) category.name = req.body.name;
+    if (req.body.nameAr !== undefined) category.nameAr = req.body.nameAr;
+    if (req.body.description !== undefined) category.description = req.body.description;
+    if (req.body.isActive !== undefined) category.isActive = req.body.isActive === 'true' || req.body.isActive === true;
+
+    await category.save();
 
     res.json({
         success: true,

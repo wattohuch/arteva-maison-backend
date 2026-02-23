@@ -114,7 +114,7 @@ const updateProduct = asyncHandler(async (req, res) => {
         throw new Error('Product not found');
     }
 
-    const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon } = req.body;
+    const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon, imagesToDelete, primaryImageUrl } = req.body;
 
     // Parse boolean values consistently
     const isFeaturedValue = parseBoolean(isFeatured);
@@ -129,6 +129,18 @@ const updateProduct = asyncHandler(async (req, res) => {
         isComingSoon: isComingSoonValue
     });
 
+    // Handle image deletion
+    if (imagesToDelete) {
+        try {
+            const urlsToDelete = JSON.parse(imagesToDelete);
+            const originalCount = product.images.length;
+            product.images = product.images.filter(img => !urlsToDelete.includes(img.url));
+            console.log(`[ADMIN UPDATE] Deleted ${originalCount - product.images.length} images`);
+        } catch (err) {
+            console.error('[ADMIN UPDATE] Error parsing imagesToDelete:', err);
+        }
+    }
+
     // Handle image updates if new files uploaded
     if (req.files && req.files.length > 0) {
         const newImages = req.files.map((file, index) => ({
@@ -137,6 +149,14 @@ const updateProduct = asyncHandler(async (req, res) => {
         }));
         product.images = [...product.images, ...newImages];
         console.log(`[ADMIN UPDATE] Added ${newImages.length} new images`);
+    }
+
+    // Update primary image if specified
+    if (primaryImageUrl) {
+        product.images.forEach(img => {
+            img.isPrimary = img.url === primaryImageUrl;
+        });
+        console.log(`[ADMIN UPDATE] Set primary image to: ${primaryImageUrl}`);
     }
 
     // Update fields - only update if value is provided
