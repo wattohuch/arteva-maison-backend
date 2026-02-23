@@ -111,9 +111,15 @@ const orderSchema = new mongoose.Schema({
         type: String,
         default: 'KWD'
     },
+    // MyFatoorah payment fields
+    myfatoorahInvoiceId: String,
+    myfatoorahTransactionId: String,
+    // Legacy Stripe field (deprecated)
+    stripeSessionId: String,
     notes: String,
     deliveredAt: Date,
-    cancelledAt: Date
+    cancelledAt: Date,
+    paidAt: Date
 }, {
     timestamps: true
 });

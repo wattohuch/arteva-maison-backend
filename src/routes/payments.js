@@ -1,21 +1,23 @@
 const express = require('express');
 const router = express.Router();
 const {
-    createCheckoutSession,
+    getPaymentMethods,
+    createPaymentSession,
+    executePayment,
+    verifyPayment,
     handleWebhook,
-    getSessionStatus,
-    processCOD,
-    processKNET
-} = require('../controllers/paymentController');
+    processCOD
+} = require('../controllers/paymentControllerMyFatoorah');
 const { protect } = require('../middleware/auth');
 
-// Webhook needs raw body, handled specially in server.js
-router.post('/webhook', express.raw({ type: 'application/json' }), handleWebhook);
+// Public routes
+router.get('/methods', getPaymentMethods);
+router.get('/verify/:paymentId', verifyPayment);
+router.post('/webhook', handleWebhook);
 
 // Protected routes
-router.post('/create-checkout-session', protect, createCheckoutSession);
-router.get('/session/:sessionId', protect, getSessionStatus);
+router.post('/create-session', protect, createPaymentSession);
+router.post('/execute', protect, executePayment);
 router.post('/cod', protect, processCOD);
-router.post('/knet', protect, processKNET);
 
 module.exports = router;

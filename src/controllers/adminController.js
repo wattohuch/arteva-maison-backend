@@ -3,6 +3,19 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 
+// Helper function to parse boolean values consistently
+// Handles: boolean, string ('true'/'false'), number (1/0), undefined
+const parseBoolean = (value) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        const lower = value.toLowerCase();
+        return lower === 'true' || lower === '1' || lower === 'yes';
+    }
+    if (typeof value === 'number') return value !== 0;
+    return Boolean(value);
+};
+
 // @desc    Get dashboard statistics
 // @route   GET /api/admin/stats
 // @access  Private/Admin
@@ -50,6 +63,18 @@ const getAdminProducts = asyncHandler(async (req, res) => {
 const createProduct = asyncHandler(async (req, res) => {
     const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon } = req.body;
 
+    // Parse boolean values consistently
+    const isFeaturedValue = parseBoolean(isFeatured);
+    const isNewArrivalValue = parseBoolean(isNewArrival);
+    const isComingSoonValue = parseBoolean(isComingSoon);
+
+    console.log(`[ADMIN CREATE] New product "${name}" by ${req.user.email}`);
+    console.log(`[ADMIN CREATE] Boolean flags:`, {
+        isFeatured: isFeaturedValue,
+        isNewArrival: isNewArrivalValue,
+        isComingSoon: isComingSoonValue
+    });
+
     let images = [];
     if (req.files && req.files.length > 0) {
         images = req.files.map((file, index) => ({
@@ -67,11 +92,13 @@ const createProduct = asyncHandler(async (req, res) => {
         category,
         stock,
         sku,
-        isFeatured: isFeatured === 'true',
-        isNewArrival: isNewArrival === 'true',
-        isComingSoon: isComingSoon === 'true',
+        isFeatured: isFeaturedValue || false,
+        isNewArrival: isNewArrivalValue || false,
+        isComingSoon: isComingSoonValue || false,
         images
     });
+
+    console.log(`[ADMIN CREATE] ✅ Product created with ID: ${product._id}`);
 
     res.status(201).json({ success: true, data: product });
 });
@@ -89,6 +116,19 @@ const updateProduct = asyncHandler(async (req, res) => {
 
     const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon } = req.body;
 
+    // Parse boolean values consistently
+    const isFeaturedValue = parseBoolean(isFeatured);
+    const isNewArrivalValue = parseBoolean(isNewArrival);
+    const isComingSoonValue = parseBoolean(isComingSoon);
+
+    // Log admin action for debugging and audit trail
+    console.log(`[ADMIN UPDATE] Product ${product._id} (${product.name}) updated by ${req.user.email}`);
+    console.log(`[ADMIN UPDATE] Boolean flags:`, {
+        isFeatured: isFeaturedValue,
+        isNewArrival: isNewArrivalValue,
+        isComingSoon: isComingSoonValue
+    });
+
     // Handle image updates if new files uploaded
     if (req.files && req.files.length > 0) {
         const newImages = req.files.map((file, index) => ({
@@ -96,22 +136,53 @@ const updateProduct = asyncHandler(async (req, res) => {
             isPrimary: index === 0 && product.images.length === 0
         }));
         product.images = [...product.images, ...newImages];
+        console.log(`[ADMIN UPDATE] Added ${newImages.length} new images`);
     }
 
-    product.name = name || product.name;
-    product.nameAr = nameAr || product.nameAr;
-    product.description = description || product.description;
-    product.descriptionAr = descriptionAr || product.descriptionAr;
-    product.price = price || product.price;
-    product.category = category || product.category;
-    product.stock = stock || product.stock;
-    product.sku = sku || product.sku;
-    product.isFeatured = isFeatured !== undefined ? isFeatured === 'true' : product.isFeatured;
-    product.isNewArrival = isNewArrival !== undefined ? isNewArrival === 'true' : product.isNewArrival;
-    product.isComingSoon = isComingSoon !== undefined ? isComingSoon === 'true' : product.isComingSoon;
+    // Update fields - only update if value is provided
+    if (name !== undefined) product.name = name;
+    if (nameAr !== undefined) product.nameAr = nameAr;
+    if (description !== undefined) product.description = description;
+    if (descriptionAr !== undefined) product.descriptionAr = descriptionAr;
+    if (price !== undefined) product.price = price;
+    if (category !== undefined) product.category = category;
+    if (stock !== undefined) product.stock = stock;
+    if (sku !== undefined) product.sku = sku;
+    
+    // Update boolean flags - CRITICAL: Only update if explicitly provided
+    if (isFeaturedValue !== undefined) {
+        product.isFeatured = isFeaturedValue;
+        console.log(`[ADMIN UPDATE] isFeatured set to: ${isFeaturedValue}`);
+    }
+    if (isNewArrivalValue !== undefined) {
+        product.isNewArrival = isNewArrivalValue;
+        console.log(`[ADMIN UPDATE] isNewArrival set to: ${isNewArrivalValue}`);
+    }
+    if (isComingSoonValue !== undefined) {
+        product.isComingSoon = isComingSoonValue;
+        console.log(`[ADMIN UPDATE] isComingSoon set to: ${isComingSoonValue}`);
+    }
 
+    // Save to database - THIS IS THE PERMANENT SAVE
     const updatedProduct = await product.save();
-    res.json({ success: true, data: updatedProduct });
+    
+    console.log(`[ADMIN UPDATE] ✅ Product saved to database successfully`);
+    console.log(`[ADMIN UPDATE] Final values:`, {
+        isFeatured: updatedProduct.isFeatured,
+        isNewArrival: updatedProduct.isNewArrival,
+        isComingSoon: updatedProduct.isComingSoon
+    });
+
+    res.json({ 
+        success: true, 
+        data: updatedProduct,
+        message: 'Product updated successfully and saved to database',
+        changes: {
+            isFeatured: isFeaturedValue,
+            isNewArrival: isNewArrivalValue,
+            isComingSoon: isComingSoonValue
+        }
+    });
 });
 
 // @desc    Delete a product
