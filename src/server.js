@@ -109,13 +109,14 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// NoSQL injection prevention - replaceWith option for Express 5.x compatibility
-app.use(mongoSanitize({
-    replaceWith: '_',
-    onSanitize: ({ req, key }) => {
-        console.warn(`Sanitized key: ${key}`);
-    }
-}));
+// NoSQL injection prevention - DISABLED temporarily due to Express 5.x incompatibility
+// TODO: Re-enable with Express 5.x compatible version or alternative solution
+// app.use(mongoSanitize({
+//     replaceWith: '_',
+//     onSanitize: ({ req, key }) => {
+//         console.warn(`Sanitized key: ${key}`);
+//     }
+// }));
 
 // Logging — only in development
 if (!isProd) {
