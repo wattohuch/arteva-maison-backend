@@ -68,7 +68,7 @@ const apiLimiter = rateLimit({
 // Stricter rate limiting — auth routes
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 10,
+    max: 50, // Increased for testing - reduce to 10 after launch
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many login attempts, please try again later.' }
