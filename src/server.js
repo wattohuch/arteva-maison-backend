@@ -5,7 +5,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
+const sanitizeRequest = require('./middleware/sanitize');
 const connectDB = require('./config/db');
 const { errorHandler } = require('./middleware/error');
 const { startBackupScheduler, updateActivity, forceBackup } = require('./autoBackup');
@@ -109,14 +109,8 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// NoSQL injection prevention - DISABLED temporarily due to Express 5.x incompatibility
-// TODO: Re-enable with Express 5.x compatible version or alternative solution
-// app.use(mongoSanitize({
-//     replaceWith: '_',
-//     onSanitize: ({ req, key }) => {
-//         console.warn(`Sanitized key: ${key}`);
-//     }
-// }));
+// NoSQL injection prevention - Custom middleware compatible with Express 5.x
+app.use(sanitizeRequest);
 
 // Logging — only in development
 if (!isProd) {
