@@ -106,14 +106,16 @@ const productSchema = new mongoose.Schema({
 });
 
 // Generate slug before saving
-// Generate slug before saving
 productSchema.pre('save', function () {
     if (this.isModified('name')) {
         this.slug = this.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     }
 });
 
-// Index for search
+// Indexes for search and query performance
 productSchema.index({ name: 'text', description: 'text', tags: 'text' });
+productSchema.index({ category: 1, isActive: 1 });
+productSchema.index({ isFeatured: 1, isActive: 1 });
+productSchema.index({ isNewArrival: 1, isActive: 1 });
 
 module.exports = mongoose.model('Product', productSchema);

@@ -11,7 +11,7 @@ const { sendOrderConfirmation } = require('../services/emailService');
 const getPaymentMethods = asyncHandler(async (req, res) => {
     const amount = req.query.amount || 1;
     const methods = await myfatoorah.getPaymentMethods(amount);
-    
+
     res.json({
         success: true,
         data: methods.methods
@@ -23,10 +23,10 @@ const getPaymentMethods = asyncHandler(async (req, res) => {
 // @access  Private
 const createPaymentSession = asyncHandler(async (req, res) => {
     const { paymentMethod, shippingAddress } = req.body;
-    
+
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    
+
     if (!cart || cart.items.length === 0) {
         res.status(400);
         throw new Error('Cart is empty');
@@ -83,9 +83,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
     order.myfatoorahInvoiceId = payment.invoiceId;
     await order.save();
 
-    // Clear cart
-    cart.items = [];
-    await cart.save();
+    // NOTE: Cart is NOT cleared here — only cleared after payment is confirmed
 
     res.json({
         success: true,
@@ -103,12 +101,12 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 // @access  Private
 const executePayment = asyncHandler(async (req, res) => {
     const { paymentMethodId, shippingAddress } = req.body;
-    
+
     // paymentMethodId: 1=KNET, 2=VISA/Master, 20=Apple Pay
-    
+
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    
+
     if (!cart || cart.items.length === 0) {
         res.status(400);
         throw new Error('Cart is empty');
@@ -164,9 +162,7 @@ const executePayment = asyncHandler(async (req, res) => {
     order.myfatoorahInvoiceId = payment.invoiceId;
     await order.save();
 
-    // Clear cart
-    cart.items = [];
-    await cart.save();
+    // NOTE: Cart is NOT cleared here — only cleared after payment is confirmed
 
     res.json({
         success: true,
@@ -184,13 +180,13 @@ const executePayment = asyncHandler(async (req, res) => {
 // @access  Public
 const verifyPayment = asyncHandler(async (req, res) => {
     const { paymentId } = req.params;
-    
+
     // Get payment status from MyFatoorah
     const paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
-    
+
     // Find order
     const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email');
-    
+
     if (!order) {
         res.status(404);
         throw new Error('Order not found');
@@ -198,23 +194,48 @@ const verifyPayment = asyncHandler(async (req, res) => {
 
     // Update order based on payment status
     if (paymentStatus.status === 'Paid') {
+        // Idempotency check — skip if already processed
+        if (order.paymentStatus === 'paid') {
+            return res.json({
+                success: true,
+                message: 'Payment already processed',
+                data: { orderNumber: order.orderNumber, status: 'paid' }
+            });
+        }
+
+        // Verify payment amount matches order total
+        if (paymentStatus.amount && Math.abs(paymentStatus.amount - order.total) > 0.01) {
+            order.paymentStatus = 'failed';
+            order.notes = 'Payment amount mismatch detected';
+            await order.save();
+            res.status(400);
+            throw new Error('Payment amount mismatch');
+        }
+
         order.paymentStatus = 'paid';
         order.orderStatus = 'confirmed';
         order.myfatoorahTransactionId = paymentStatus.transactionId;
         order.paidAt = new Date();
-        
+
         // Update product stock
         for (const item of order.items) {
             await Product.findByIdAndUpdate(item.product, {
                 $inc: { stock: -item.quantity }
             });
         }
-        
+
+        // Clear the user's cart now that payment is confirmed
+        await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+
         // Send confirmation email
-        await sendOrderConfirmation(order, order.user);
-        
+        try {
+            await sendOrderConfirmation(order, order.user);
+        } catch (emailErr) {
+            // Don't fail the payment verification if email fails
+        }
+
         await order.save();
-        
+
         res.json({
             success: true,
             message: 'Payment successful',
@@ -226,7 +247,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
     } else if (paymentStatus.status === 'Failed') {
         order.paymentStatus = 'failed';
         await order.save();
-        
+
         res.status(400).json({
             success: false,
             message: 'Payment failed'
@@ -247,37 +268,39 @@ const verifyPayment = asyncHandler(async (req, res) => {
 // @access  Public
 const handleWebhook = asyncHandler(async (req, res) => {
     const { Event, Data } = req.body;
-    
-    console.log('MyFatoorah webhook received:', Event);
-    
+
     if (Event === 'TransactionStatusChanged') {
         const paymentId = Data.PaymentId;
         const paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
-        
+
         const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email');
-        
+
+        // Idempotency: only process if not already paid
         if (order && paymentStatus.status === 'Paid' && order.paymentStatus !== 'paid') {
             order.paymentStatus = 'paid';
             order.orderStatus = 'confirmed';
             order.myfatoorahTransactionId = paymentStatus.transactionId;
             order.paidAt = new Date();
-            
+
             // Update stock
             for (const item of order.items) {
                 await Product.findByIdAndUpdate(item.product, {
                     $inc: { stock: -item.quantity }
                 });
             }
-            
-            // Send email
-            await sendOrderConfirmation(order, order.user);
-            
+
+            // Clear cart after payment confirmed
+            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+
+            // Send email (don't fail on error)
+            try {
+                await sendOrderConfirmation(order, order.user);
+            } catch (emailErr) { /* silent */ }
+
             await order.save();
-            
-            console.log('Order updated from webhook:', order.orderNumber);
         }
     }
-    
+
     res.json({ success: true });
 });
 
@@ -286,10 +309,10 @@ const handleWebhook = asyncHandler(async (req, res) => {
 // @access  Private
 const processCOD = asyncHandler(async (req, res) => {
     const { shippingAddress } = req.body;
-    
+
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
-    
+
     if (!cart || cart.items.length === 0) {
         res.status(400);
         throw new Error('Cart is empty');
@@ -324,7 +347,7 @@ const processCOD = asyncHandler(async (req, res) => {
 
     // Update stock
     for (const item of cart.items) {
-        await Product.findByIdAndUpdate(item.product.product, {
+        await Product.findByIdAndUpdate(item.product._id, {
             $inc: { stock: -item.quantity }
         });
     }

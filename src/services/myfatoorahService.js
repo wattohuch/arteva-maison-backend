@@ -9,22 +9,17 @@ const axios = require('axios');
 class MyFatoorahService {
     constructor() {
         this.apiKey = process.env.MYFATOORAH_API_KEY;
-        this.baseUrl = process.env.MYFATOORAH_MODE === 'live' 
+        this.baseUrl = process.env.MYFATOORAH_MODE === 'live'
             ? 'https://api.myfatoorah.com'
             : 'https://apitest.myfatoorah.com';
-        
+
         this.headers = {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
         };
 
-        // Log initialization (without exposing API key)
-        console.log(`✅ MyFatoorah initialized in ${process.env.MYFATOORAH_MODE || 'test'} mode`);
-        console.log(`🌐 API URL: ${this.baseUrl}`);
-        
-        if (!this.apiKey) {
-            console.error('❌ MYFATOORAH_API_KEY not configured!');
-        }
+        // Request timeout (10 seconds)
+        this.timeout = 10000;
     }
 
     /**
@@ -49,14 +44,13 @@ class MyFatoorahService {
                     UnitPrice: item.price
                 })),
                 // Enable payment methods
-                MobileCountryCode: '+965', // Kuwait
-                DisplayCurrencyIso: 'KWD'
+                MobileCountryCode: '+965' // Kuwait
             };
 
             const response = await axios.post(
                 `${this.baseUrl}/v2/SendPayment`,
                 payload,
-                { headers: this.headers }
+                { headers: this.headers, timeout: this.timeout }
             );
 
             if (response.data.IsSuccess) {
@@ -103,7 +97,7 @@ class MyFatoorahService {
             const response = await axios.post(
                 `${this.baseUrl}/v2/ExecutePayment`,
                 payload,
-                { headers: this.headers }
+                { headers: this.headers, timeout: this.timeout }
             );
 
             if (response.data.IsSuccess) {
@@ -129,7 +123,7 @@ class MyFatoorahService {
             const response = await axios.post(
                 `${this.baseUrl}/v2/GetPaymentStatus`,
                 { Key: paymentId, KeyType: 'PaymentId' },
-                { headers: this.headers }
+                { headers: this.headers, timeout: this.timeout }
             );
 
             if (response.data.IsSuccess) {
@@ -161,7 +155,7 @@ class MyFatoorahService {
             const response = await axios.post(
                 `${this.baseUrl}/v2/InitiatePayment`,
                 { InvoiceAmount: amount, CurrencyIso: 'KWD' },
-                { headers: this.headers }
+                { headers: this.headers, timeout: this.timeout }
             );
 
             if (response.data.IsSuccess) {
@@ -200,7 +194,7 @@ class MyFatoorahService {
                     Amount: amount,
                     Comment: reason
                 },
-                { headers: this.headers }
+                { headers: this.headers, timeout: this.timeout }
             );
 
             if (response.data.IsSuccess) {

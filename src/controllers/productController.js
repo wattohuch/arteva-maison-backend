@@ -54,7 +54,8 @@ const getProducts = asyncHandler(async (req, res) => {
         .populate('category', 'name slug')
         .sort(sortQuery)
         .skip(skip)
-        .limit(limit);
+        .limit(limit)
+        .lean();
 
     const total = await Product.countDocuments(filter);
 
@@ -74,7 +75,7 @@ const getProducts = asyncHandler(async (req, res) => {
 // @route   GET /api/products/:id
 // @access  Public
 const getProduct = asyncHandler(async (req, res) => {
-    const product = await Product.findById(req.params.id).populate('category', 'name slug');
+    const product = await Product.findById(req.params.id).populate('category', 'name slug').lean();
 
     if (!product) {
         res.status(404);
@@ -92,7 +93,8 @@ const getProduct = asyncHandler(async (req, res) => {
 // @access  Public
 const getProductBySlug = asyncHandler(async (req, res) => {
     const product = await Product.findOne({ slug: req.params.slug, isActive: true })
-        .populate('category', 'name slug');
+        .populate('category', 'name slug')
+        .lean();
 
     if (!product) {
         res.status(404);
@@ -166,7 +168,8 @@ const getFeaturedProducts = asyncHandler(async (req, res) => {
 
     const products = await Product.find({ isActive: true, isFeatured: true })
         .populate('category', 'name slug')
-        .limit(limit);
+        .limit(limit)
+        .lean();
 
     res.json({
         success: true,

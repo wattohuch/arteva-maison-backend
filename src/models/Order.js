@@ -55,7 +55,7 @@ const orderSchema = new mongoose.Schema({
     },
     paymentMethod: {
         type: String,
-        enum: ['cod', 'knet', 'card'],
+        enum: ['cod', 'knet', 'card', 'myfatoorah', 'applepay'],
         default: 'cod'
     },
     paymentStatus: {
@@ -160,5 +160,11 @@ orderSchema.methods.updateStatus = function (newStatus, note = '', updatedBy = n
 
     return this;
 };
+
+// Indexes for query performance
+orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ orderNumber: 1 });
+orderSchema.index({ orderStatus: 1 });
+orderSchema.index({ paymentStatus: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

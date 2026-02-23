@@ -88,7 +88,8 @@ const getMyOrders = asyncHandler(async (req, res) => {
     const orders = await Order.find({ user: req.user._id })
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit);
+        .limit(limit)
+        .lean();
 
     const total = await Order.countDocuments({ user: req.user._id });
 
@@ -145,7 +146,8 @@ const getAllOrders = asyncHandler(async (req, res) => {
         .populate('user', 'name email')
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit);
+        .limit(limit)
+        .lean();
 
     const total = await Order.countDocuments(filter);
 
