@@ -4,6 +4,9 @@
  * 
  * This middleware sanitizes user input by removing MongoDB operators ($, .) 
  * from query strings, request bodies, and URL parameters.
+ * 
+ * IMPORTANT: This runs AFTER body parsing but does NOT modify req.query/req.params
+ * directly. Instead, it sanitizes req.body and provides sanitized versions via req.sanitized
  */
 
 /**
@@ -36,7 +39,8 @@ function sanitizeObject(obj) {
 
 /**
  * Express middleware to sanitize request data
- * Works with Express 5.x by creating new sanitized objects instead of modifying read-only properties
+ * Works with Express 5.x by only sanitizing req.body (which is writable)
+ * For query and params, we provide sanitized versions in req.sanitized
  */
 function sanitizeRequest(req, res, next) {
     // Sanitize req.body (writable in Express 5.x)
@@ -45,27 +49,11 @@ function sanitizeRequest(req, res, next) {
     }
 
     // For req.query and req.params (read-only in Express 5.x), 
-    // we create sanitized versions and store them in req.sanitized
+    // provide sanitized versions in req.sanitized for manual use if needed
     req.sanitized = {
         query: req.query ? sanitizeObject({ ...req.query }) : {},
         params: req.params ? sanitizeObject({ ...req.params }) : {}
     };
-
-    // Override req.query and req.params with sanitized versions
-    // This works because we're replacing the entire object, not modifying properties
-    Object.defineProperty(req, 'query', {
-        value: req.sanitized.query,
-        writable: false,
-        enumerable: true,
-        configurable: true
-    });
-
-    Object.defineProperty(req, 'params', {
-        value: req.sanitized.params,
-        writable: false,
-        enumerable: true,
-        configurable: true
-    });
 
     next();
 }
