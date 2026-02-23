@@ -32,7 +32,6 @@ const corsOptions = {
             'https://www.artevamaisonkw.com'
         ];
 
-        // Allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
 
         if (allowedOrigins.indexOf(origin) !== -1 ||
@@ -41,7 +40,6 @@ const corsOptions = {
             origin.includes('127.0.0.1')) {
             callback(null, true);
         } else {
-            console.log('Blocked by CORS:', origin);
             callback(new Error('Not allowed by CORS'));
         }
     },
@@ -64,14 +62,14 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logging
-if (process.env.NODE_ENV !== 'production') {
+// Logging - only in development
+if (process.env.NODE_ENV === 'development') {
     app.use(morgan('dev'));
 }
 
-// Track user activity for smart backups
+// Track user activity for smart backups (silent)
 app.use((req, res, next) => {
-    updateActivity(); // Record that someone is using the site
+    updateActivity();
     next();
 });
 
@@ -123,17 +121,8 @@ const { initializeEmailService } = require('./services/emailService');
 
 // Use server.listen instead of app.listen for Socket.IO
 server.listen(PORT, async () => {
-    console.log(`\n🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-    console.log(`🔌 Socket.IO ready for real-time connections`);
-
-    // Initialize and verify email service
-    console.log('\n📧 Initializing email service...');
-    const emailResult = await initializeEmailService();
-    if (emailResult.success) {
-        console.log('✅ Email service is operational');
-    } else {
-        console.log('❌ Email service failed to start:', emailResult.error);
-    }
+    // Initialize email service silently
+    await initializeEmailService();
 
     // Start automatic backup scheduler
     startBackupScheduler();
@@ -146,14 +135,8 @@ server.listen(PORT, async () => {
         setInterval(() => {
             const url = `${backendUrl}/api/health`;
             const lib = url.startsWith('https') ? require('https') : require('http');
-            lib.get(url, (res) => {
-                console.log(`🏓 Keep-alive ping: ${res.statusCode}`);
-            }).on('error', (err) => {
-                console.log(`🏓 Keep-alive ping failed: ${err.message}`);
-            });
+            lib.get(url, () => {}).on('error', () => {});
         }, PING_INTERVAL);
-
-        console.log('🏓 Keep-alive pinger started (every 14 min)');
     }
 });
 

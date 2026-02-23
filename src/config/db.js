@@ -1,11 +1,10 @@
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
-dns.setServers(['8.8.8.8', '8.8.4.4']); // Use Google DNS - fixes Atlas SRV resolution on some networks
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 const mongoose = require('mongoose');
 
-let _memoryServer = null; // keep ref so it doesn't get GC'd
+let _memoryServer = null;
 
-// 1) Use MONGODB_URI from .env, or 2) local MongoDB, or 3) in-memory MongoDB (zero setup)
 async function getMongoUri() {
     if (process.env.MONGODB_URI) return process.env.MONGODB_URI;
     const local = 'mongodb://127.0.0.1:27017/arteva_maison';
@@ -14,13 +13,10 @@ async function getMongoUri() {
         await mongoose.disconnect();
         return local;
     } catch {
-        // Local MongoDB not running - use in-memory server
         try {
             const { MongoMemoryServer } = require('mongodb-memory-server');
             _memoryServer = await MongoMemoryServer.create();
-            const uri = _memoryServer.getUri();
-            console.log('💾 Using in-memory MongoDB (data resets on restart)');
-            return uri;
+            return _memoryServer.getUri();
         } catch (e) {
             throw new Error('No MongoDB. Run: npm i mongodb-memory-server');
         }
@@ -30,13 +26,17 @@ async function getMongoUri() {
 const connectDB = async () => {
     try {
         const uri = await getMongoUri();
-        const conn = await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
-        console.log(`MongoDB Connected: ${conn.connection.host}`);
+        // Optimized for low resources (512MB RAM, 0.1 CPU)
+        await mongoose.connect(uri, {
+            serverSelectionTimeoutMS: 10000,
+            maxPoolSize: 5, // Limit connection pool (default 100)
+            minPoolSize: 1,
+            socketTimeoutMS: 45000,
+            family: 4, // Use IPv4
+            maxIdleTimeMS: 30000, // Close idle connections faster
+            compressors: 'zlib', // Enable compression
+        });
     } catch (error) {
-        console.error(`MongoDB connection error: ${error.message}`);
-        if (!process.env.MONGODB_URI) {
-            console.error('Tip: Set MONGODB_URI in .env, or run: npm i mongodb-memory-server');
-        }
         process.exit(1);
     }
 };
