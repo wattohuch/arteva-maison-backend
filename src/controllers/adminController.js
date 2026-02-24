@@ -351,6 +351,7 @@ const deleteUser = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const sendOfferEmail = async (req, res) => {
     const { subject, message, recipientType } = req.body;
+    const images = req.files || []; // Get uploaded images from multer
 
     try {
         let users;
@@ -369,8 +370,20 @@ const sendOfferEmail = async (req, res) => {
         // Use the email service
         const { sendEmail } = require('../services/emailService');
 
-        // Send email to each user (limit to 10 for safety)
-        const targetUsers = users.slice(0, 10);
+        // Build image HTML if images are attached
+        let imagesHtml = '';
+        if (images && images.length > 0) {
+            imagesHtml = '<div style="margin: 20px 0; text-align: center;">';
+            images.forEach(image => {
+                // Use the full URL for the image
+                const imageUrl = `${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/uploads/${image.filename}`;
+                imagesHtml += `<img src="${imageUrl}" alt="Campaign Image" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">`;
+            });
+            imagesHtml += '</div>';
+        }
+
+        // Send email to each user (limit to 50 for safety)
+        const targetUsers = users.slice(0, 50);
         let successCount = 0;
         let failCount = 0;
 
@@ -385,6 +398,7 @@ const sendOfferEmail = async (req, res) => {
                         <div style="color: #4a3b2a; line-height: 1.6;">
                             ${message}
                         </div>
+                        ${imagesHtml}
                     </div>
                     <div style="padding: 20px; text-align: center; background-color: #ffffff; border-top: 1px solid #e6e1d6;">
                         <p style="color: #8b7355; margin: 0;">Best regards,<br>ARTÉVA Maison Team</p>

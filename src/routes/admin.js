@@ -42,8 +42,8 @@ router.route('/users/:id')
     .put(protect, admin, updateUserRole)
     .delete(protect, admin, deleteUser);
 
-// Email
-router.post('/send-email', protect, admin, sendOfferEmail);
+// Email (with image attachments support)
+router.post('/send-email', protect, admin, upload.array('images', 5), sendOfferEmail);
 
 // Backup management
 const { listBackups, downloadBackup, createBackup, restoreBackup } = require('../controllers/backupController');
