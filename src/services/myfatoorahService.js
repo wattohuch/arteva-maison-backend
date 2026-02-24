@@ -78,17 +78,24 @@ class MyFatoorahService {
         try {
             console.log('MyFatoorah executePayment - Base URL:', this.baseUrl);
             console.log('MyFatoorah executePayment - Payment Data:', JSON.stringify(paymentData, null, 2));
+            
+            // Clean phone number - remove country code and special characters
+            let cleanPhone = paymentData.customerPhone.replace(/[^0-9]/g, '');
+            if (cleanPhone.startsWith('965')) {
+                cleanPhone = cleanPhone.substring(3); // Remove Kuwait country code
+            }
+            
             const payload = {
                 PaymentMethodId: paymentData.paymentMethodId, // 1=KNET, 2=VISA/Master, 20=Apple Pay
                 CustomerName: paymentData.customerName,
                 DisplayCurrencyIso: 'KWD',
-                MobileCountryCode: '+965',
-                CustomerMobile: paymentData.customerPhone,
+                MobileCountryCode: '965',
+                CustomerMobile: cleanPhone,
                 CustomerEmail: paymentData.customerEmail,
                 InvoiceValue: paymentData.amount,
                 CallBackUrl: `${process.env.FRONTEND_URL}/order-success`,
                 ErrorUrl: `${process.env.FRONTEND_URL}/checkout?error=payment_failed`,
-                Language: paymentData.language || 'en',
+                Language: paymentData.language === 'ar' ? 'AR' : 'EN',
                 CustomerReference: paymentData.orderNumber,
                 UserDefinedField: paymentData.orderId,
                 InvoiceItems: paymentData.items.map(item => ({
@@ -98,11 +105,15 @@ class MyFatoorahService {
                 }))
             };
 
+            console.log('MyFatoorah payload:', JSON.stringify(payload, null, 2));
+
             const response = await axios.post(
                 `${this.baseUrl}/v2/ExecutePayment`,
                 payload,
                 { headers: this.headers, timeout: this.timeout }
             );
+
+            console.log('MyFatoorah response:', JSON.stringify(response.data, null, 2));
 
             if (response.data.IsSuccess) {
                 return {
@@ -117,9 +128,16 @@ class MyFatoorahService {
             console.error('MyFatoorah execute payment error:', {
                 message: error.message,
                 response: error.response?.data,
+                validationErrors: error.response?.data?.ValidationErrors,
                 status: error.response?.status,
                 headers: error.response?.headers
             });
+            
+            // Log validation errors in detail
+            if (error.response?.data?.ValidationErrors) {
+                console.error('Validation Errors Detail:', JSON.stringify(error.response.data.ValidationErrors, null, 2));
+            }
+            
             throw new Error(error.response?.data?.Message || error.message);
         }
     }
