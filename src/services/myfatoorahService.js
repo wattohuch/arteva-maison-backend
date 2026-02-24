@@ -98,11 +98,19 @@ class MyFatoorahService {
                 Language: paymentData.language === 'ar' ? 'AR' : 'EN',
                 CustomerReference: paymentData.orderNumber,
                 UserDefinedField: paymentData.orderId,
-                InvoiceItems: paymentData.items.map(item => ({
-                    ItemName: item.name,
-                    Quantity: item.quantity,
-                    UnitPrice: item.price
-                }))
+                InvoiceItems: [
+                    ...paymentData.items.map(item => ({
+                        ItemName: item.name,
+                        Quantity: item.quantity,
+                        UnitPrice: item.price
+                    })),
+                    // Add shipping as a separate item
+                    {
+                        ItemName: 'Shipping',
+                        Quantity: 1,
+                        UnitPrice: 2.0
+                    }
+                ]
             };
 
             console.log('MyFatoorah payload:', JSON.stringify(payload, null, 2));
