@@ -27,6 +27,8 @@ class MyFatoorahService {
      */
     async initiatePayment(orderData) {
         try {
+            console.log('MyFatoorah initiatePayment - Base URL:', this.baseUrl);
+            console.log('MyFatoorah initiatePayment - Order Data:', JSON.stringify(orderData, null, 2));
             const payload = {
                 CustomerName: orderData.customerName,
                 InvoiceValue: orderData.amount,
@@ -74,6 +76,8 @@ class MyFatoorahService {
      */
     async executePayment(paymentData) {
         try {
+            console.log('MyFatoorah executePayment - Base URL:', this.baseUrl);
+            console.log('MyFatoorah executePayment - Payment Data:', JSON.stringify(paymentData, null, 2));
             const payload = {
                 PaymentMethodId: paymentData.paymentMethodId, // 1=KNET, 2=VISA/Master, 20=Apple Pay
                 CustomerName: paymentData.customerName,
@@ -110,7 +114,12 @@ class MyFatoorahService {
                 throw new Error(response.data.Message || 'Payment execution failed');
             }
         } catch (error) {
-            console.error('MyFatoorah execute payment error:', error.response?.data || error.message);
+            console.error('MyFatoorah execute payment error:', {
+                message: error.message,
+                response: error.response?.data,
+                status: error.response?.status,
+                headers: error.response?.headers
+            });
             throw new Error(error.response?.data?.Message || error.message);
         }
     }
