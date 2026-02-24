@@ -102,15 +102,23 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 const executePayment = asyncHandler(async (req, res) => {
     const { paymentMethodId, shippingAddress } = req.body;
 
+    console.log('=== EXECUTE PAYMENT REQUEST ===');
+    console.log('Payment Method ID:', paymentMethodId);
+    console.log('Shipping Address:', JSON.stringify(shippingAddress, null, 2));
+    console.log('User:', req.user.email);
+
     // paymentMethodId: 1=KNET, 2=VISA/Master, 20=Apple Pay
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
 
     if (!cart || cart.items.length === 0) {
+        console.error('Cart is empty for user:', req.user.email);
         res.status(400);
         throw new Error('Cart is empty');
     }
+
+    console.log('Cart items:', cart.items.length);
 
     // Calculate totals
     const subtotal = cart.items.reduce((sum, item) => {
@@ -119,6 +127,8 @@ const executePayment = asyncHandler(async (req, res) => {
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
     const total = subtotal + shippingCost;
+
+    console.log('Order totals - Subtotal:', subtotal, 'Shipping:', shippingCost, 'Total:', total);
 
     // Create order
     const order = await Order.create({
@@ -139,6 +149,8 @@ const executePayment = asyncHandler(async (req, res) => {
         total
     });
 
+    console.log('Order created:', order.orderNumber);
+
     // Execute payment
     const paymentData = {
         paymentMethodId,
@@ -156,23 +168,40 @@ const executePayment = asyncHandler(async (req, res) => {
         }))
     };
 
-    const payment = await myfatoorah.executePayment(paymentData);
+    console.log('Calling MyFatoorah executePayment...');
 
-    // Update order
-    order.myfatoorahInvoiceId = payment.invoiceId;
-    await order.save();
+    try {
+        const payment = await myfatoorah.executePayment(paymentData);
 
-    // NOTE: Cart is NOT cleared here — only cleared after payment is confirmed
+        console.log('MyFatoorah response:', JSON.stringify(payment, null, 2));
 
-    res.json({
-        success: true,
-        data: {
-            paymentUrl: payment.paymentUrl,
-            invoiceId: payment.invoiceId,
-            orderNumber: order.orderNumber,
-            orderId: order._id
-        }
-    });
+        // Update order
+        order.myfatoorahInvoiceId = payment.invoiceId;
+        await order.save();
+
+        // NOTE: Cart is NOT cleared here — only cleared after payment is confirmed
+
+        res.json({
+            success: true,
+            data: {
+                paymentUrl: payment.paymentUrl,
+                invoiceId: payment.invoiceId,
+                orderNumber: order.orderNumber,
+                orderId: order._id
+            }
+        });
+    } catch (error) {
+        console.error('=== PAYMENT EXECUTION FAILED ===');
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+        
+        // Return detailed error to frontend for debugging
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Payment execution failed',
+            error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
 });
 
 // @desc    Verify payment status (callback from MyFatoorah)
