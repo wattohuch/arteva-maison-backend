@@ -184,9 +184,8 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
     log.info(`Server running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
 
-    // Lazy-load and initialize email service
-    const { initializeEmailService } = require('./services/emailService');
-    await initializeEmailService();
+    // Email service initializes automatically on module load
+    // (see emailService.js - initializeEmailService() is called at bottom)
 
     // Start automatic backup scheduler
     startBackupScheduler();
