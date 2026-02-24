@@ -24,6 +24,20 @@ const getCategory = asyncHandler(async (req, res) => {
     res.json({ success: true, data: category });
 });
 
+// @desc    Get category by slug
+// @route   GET /api/categories/slug/:slug
+// @access  Public
+const getCategoryBySlug = asyncHandler(async (req, res) => {
+    const category = await Category.findOne({ slug: req.params.slug });
+    
+    if (!category) {
+        res.status(404);
+        throw new Error('Category not found');
+    }
+    
+    res.json({ success: true, data: category });
+});
+
 // @desc    Create category
 // @route   POST /api/categories
 // @access  Private/Admin
@@ -137,6 +151,7 @@ const getCategoryStats = asyncHandler(async (req, res) => {
 module.exports = {
     getCategories,
     getCategory,
+    getCategoryBySlug,
     createCategory,
     updateCategory,
     deleteCategory,
