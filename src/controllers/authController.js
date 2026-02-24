@@ -263,6 +263,31 @@ const resetPassword = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Verify password for re-authentication
+// @route   POST /api/auth/verify-password
+// @access  Private
+const verifyPassword = asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+
+    // Verify the user making the request matches the email
+    if (req.user.email !== email) {
+        res.status(403);
+        throw new Error('Unauthorized');
+    }
+
+    const user = await User.findById(req.user._id).select('+password');
+
+    if (user && (await user.matchPassword(password))) {
+        res.json({
+            success: true,
+            message: 'Password verified'
+        });
+    } else {
+        res.status(401);
+        throw new Error('Incorrect password');
+    }
+});
+
 module.exports = {
     register,
     login,
@@ -272,5 +297,6 @@ module.exports = {
     deleteAddress,
     forgotPassword,
     verifyOTP,
-    resetPassword
+    resetPassword,
+    verifyPassword
 };
