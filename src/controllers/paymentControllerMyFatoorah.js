@@ -414,11 +414,107 @@ function getPaymentMethodName(methodId) {
     return methods[methodId] || 'myfatoorah';
 }
 
+// @desc    Handle payment callback from MyFatoorah (success/failure)
+// @route   GET /api/payments/callback
+// @access  Public
+const handlePaymentCallback = asyncHandler(async (req, res) => {
+    const { paymentId, Id } = req.query;
+    const idToVerify = paymentId || Id;
+
+    console.log('=== PAYMENT CALLBACK ===');
+    console.log('Query params:', req.query);
+
+    if (!idToVerify) {
+        return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=missing_payment_id`);
+    }
+
+    try {
+        // Get payment status from MyFatoorah
+        const paymentStatus = await myfatoorah.getPaymentStatus(idToVerify);
+        console.log('Payment status from MyFatoorah:', paymentStatus);
+
+        // Find order
+        const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email');
+
+        if (!order) {
+            console.error('Order not found:', paymentStatus.orderId);
+            return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=order_not_found`);
+        }
+
+        // Handle based on payment status
+        if (paymentStatus.status === 'Paid') {
+            // Idempotency check
+            if (order.paymentStatus === 'paid') {
+                console.log('Payment already processed for order:', order.orderNumber);
+                return res.redirect(`${process.env.FRONTEND_URL}/order-success.html?order=${order.orderNumber}`);
+            }
+
+            // Verify amount
+            if (paymentStatus.amount && Math.abs(paymentStatus.amount - order.total) > 0.01) {
+                order.paymentStatus = 'failed';
+                order.orderStatus = 'cancelled';
+                order.notes = 'Payment amount mismatch detected';
+                await order.save();
+                console.error('Payment amount mismatch:', { expected: order.total, received: paymentStatus.amount });
+                return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=amount_mismatch&order=${order.orderNumber}`);
+            }
+
+            // Payment successful
+            order.paymentStatus = 'paid';
+            order.orderStatus = 'confirmed';
+            order.myfatoorahTransactionId = paymentStatus.transactionId;
+            order.paidAt = new Date();
+
+            // Update product stock
+            for (const item of order.items) {
+                await Product.findByIdAndUpdate(item.product, {
+                    $inc: { stock: -item.quantity }
+                });
+            }
+
+            // Clear cart
+            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+
+            // Send confirmation email
+            try {
+                await sendOrderConfirmation(order, order.user);
+            } catch (emailErr) {
+                console.error('Email send failed:', emailErr);
+            }
+
+            await order.save();
+            console.log('Payment successful for order:', order.orderNumber);
+
+            return res.redirect(`${process.env.FRONTEND_URL}/order-success.html?order=${order.orderNumber}`);
+
+        } else if (paymentStatus.status === 'Failed' || paymentStatus.status === 'Expired') {
+            // Payment failed or expired
+            order.paymentStatus = 'failed';
+            order.orderStatus = 'cancelled';
+            order.notes = `Payment ${paymentStatus.status.toLowerCase()}: ${paymentStatus.status}`;
+            await order.save();
+            console.log(`Payment ${paymentStatus.status} for order:`, order.orderNumber);
+
+            return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?status=${paymentStatus.status.toLowerCase()}&order=${order.orderNumber}`);
+
+        } else {
+            // Payment still pending or other status
+            console.log('Payment status pending for order:', order.orderNumber, 'Status:', paymentStatus.status);
+            return res.redirect(`${process.env.FRONTEND_URL}/payment-pending.html?order=${order.orderNumber}`);
+        }
+
+    } catch (error) {
+        console.error('Payment callback error:', error);
+        return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=verification_failed`);
+    }
+});
+
 module.exports = {
     getPaymentMethods,
     createPaymentSession,
     executePayment,
     verifyPayment,
+    handlePaymentCallback,
     handleWebhook,
     processCOD
 };
