@@ -9,6 +9,7 @@ const connectDB = require('./config/db');
 const { errorHandler } = require('./middleware/error');
 const { startBackupScheduler, updateActivity, forceBackup } = require('./autoBackup');
 const { initializeSocket } = require('./socketHandler');
+const Order = require('./models/Order');
 const path = require('path');
 
 const isProd = process.env.NODE_ENV === 'production';
@@ -199,7 +200,30 @@ server.listen(PORT, async () => {
     log.info(`Server running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
 
     // Email service initializes automatically on module load
-    // (see emailService.js - initializeEmailService() is called at bottom)
+    // (see emailService.js - Resend API, initializes on require())
+
+    // Clean up expired payment orders (awaiting_payment older than 1 hour)
+    try {
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        const result = await Order.updateMany(
+            {
+                paymentStatus: 'awaiting_payment',
+                createdAt: { $lt: oneHourAgo }
+            },
+            {
+                $set: {
+                    paymentStatus: 'payment_expired',
+                    orderStatus: 'cancelled',
+                    notes: 'Payment not completed within 1 hour — automatically expired'
+                }
+            }
+        );
+        if (result.modifiedCount > 0) {
+            console.log(`🧹 Expired ${result.modifiedCount} abandoned payment orders`);
+        }
+    } catch (err) {
+        console.error('Failed to clean up expired orders:', err.message);
+    }
 
     // Start automatic backup scheduler
     startBackupScheduler();

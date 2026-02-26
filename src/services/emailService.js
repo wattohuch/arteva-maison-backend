@@ -1,73 +1,60 @@
 /**
- * Gmail-Only Email Service
- * Simple, reliable, production-ready
- * 500 emails/day - FREE
+ * ARTEVA Maison - Email Service (Resend API)
+ * Uses HTTPS API calls — works on Render (which blocks SMTP ports 465/587)
+ * Free tier: 100 emails/day via Resend
  */
 
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { getWelcomeEmailHtml, getOrderConfirmationHtml, getOrderStatusUpdateHtml, getPasswordResetOTPHtml } = require('./emailTemplates');
 
-// Gmail transporter
-let gmailTransporter = null;
+// Resend client
+let resend = null;
 
 /**
- * Initialize Gmail SMTP transporter
+ * Initialize Resend client
  */
 function initializeEmailService() {
-    console.log('\n📧 Initializing Gmail Email Service...');
+    console.log('\n📧 Initializing Email Service (Resend API)...');
 
-    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-        console.error('❌ Gmail credentials missing!');
-        console.error('   Required: GMAIL_USER and GMAIL_APP_PASSWORD');
+    if (!process.env.RESEND_API_KEY) {
+        console.error('❌ RESEND_API_KEY missing in environment variables');
+        console.error('   Get your API key from: https://resend.com');
         return false;
     }
 
     try {
-        gmailTransporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
-            auth: {
-                user: process.env.GMAIL_USER,
-                pass: process.env.GMAIL_APP_PASSWORD
-            },
-            connectionTimeout: 10000,
-            greetingTimeout: 10000,
-            socketTimeout: 15000
-        });
-
-        console.log('✅ Gmail SMTP initialized');
-        console.log(`📧 Sending from: ${process.env.GMAIL_USER}`);
-        console.log('📊 Capacity: 500 emails/day');
+        resend = new Resend(process.env.RESEND_API_KEY);
+        console.log('✅ Resend API initialized');
+        console.log(`📧 Sending from: ${process.env.EMAIL_FROM || 'onboarding@resend.dev'}`);
+        console.log('📊 Capacity: 100 emails/day (free tier)');
         console.log('');
-
         return true;
     } catch (error) {
-        console.error('❌ Gmail initialization failed:', error.message);
+        console.error('❌ Resend initialization failed:', error.message);
         return false;
     }
 }
 
 /**
- * Send email using Gmail
+ * Send email using Resend API
  */
 async function sendEmail({ to, subject, html, text }) {
-    if (!gmailTransporter) {
-        console.error('❌ Gmail not initialized');
+    if (!resend) {
+        console.error('❌ Resend not initialized. Check RESEND_API_KEY in .env');
         return { success: false, error: 'Email service not initialized' };
     }
 
     try {
-        const info = await gmailTransporter.sendMail({
-            from: process.env.EMAIL_FROM || `"ARTEVA Maison" <${process.env.GMAIL_USER}>`,
-            to,
-            subject,
-            html,
+        const result = await resend.emails.send({
+            from: process.env.EMAIL_FROM || 'ARTEVA Maison <onboarding@resend.dev>',
+            to: to,
+            subject: subject,
+            html: html,
             text: text || subject
         });
 
-        console.log(`📧 Email sent to ${to}: ${info.messageId}`);
-        return { success: true, messageId: info.messageId, provider: 'gmail' };
+        console.log(`📧 Email sent to ${to}: ${result.data?.id || 'OK'}`);
+        return { success: true, messageId: result.data?.id, provider: 'resend' };
     } catch (error) {
         console.error(`❌ Failed to send email to ${to}:`, error.message);
         return { success: false, error: error.message };
@@ -143,10 +130,10 @@ async function sendOTPEmail(user, otp) {
  */
 function getEmailServiceStatus() {
     return {
-        provider: 'Gmail SMTP',
-        enabled: gmailTransporter !== null,
-        limit: '500 emails/day',
-        from: process.env.GMAIL_USER
+        provider: 'Resend API',
+        enabled: resend !== null,
+        limit: '100 emails/day (free tier)',
+        from: process.env.EMAIL_FROM || 'onboarding@resend.dev'
     };
 }
 
