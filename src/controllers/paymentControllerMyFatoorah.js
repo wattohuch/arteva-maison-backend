@@ -52,7 +52,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
         })),
         shippingAddress,
         paymentMethod: paymentMethod || 'myfatoorah',
-        paymentStatus: 'awaiting_payment',
+        paymentStatus: 'pending',
         orderStatus: 'pending',
         subtotal,
         shippingCost,
@@ -142,7 +142,7 @@ const executePayment = asyncHandler(async (req, res) => {
         })),
         shippingAddress,
         paymentMethod: getPaymentMethodName(paymentMethodId),
-        paymentStatus: 'awaiting_payment',
+        paymentStatus: 'pending',
         orderStatus: 'pending',
         subtotal,
         shippingCost,
@@ -196,11 +196,11 @@ const executePayment = asyncHandler(async (req, res) => {
         console.error('Error stack:', error.stack);
 
         // Payment execution failed — mark the orphaned order
-        order.paymentStatus = 'payment_failed';
+        order.paymentStatus = 'failed';
         order.orderStatus = 'cancelled';
         order.notes = `Payment execution failed: ${error.message}`;
         await order.save();
-        console.log(`[PAYMENT] Order ${order.orderNumber} marked as payment_failed`);
+        console.log(`[PAYMENT] Order ${order.orderNumber} marked as failed`);
 
         // Return detailed error to frontend for debugging
         res.status(500).json({

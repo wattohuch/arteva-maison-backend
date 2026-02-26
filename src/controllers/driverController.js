@@ -67,14 +67,13 @@ exports.updateDeliveryStatus = async (req, res) => {
         }
 
         const oldStatus = order.orderStatus;
-        order.orderStatus = status;
+        
+        // Update status history (this also sets orderStatus)
+        order.updateStatus(status, `Status updated by driver`, req.user._id);
+        
         if (status === 'delivered') {
-            order.isDelivered = true;
             order.deliveredAt = Date.now();
         }
-
-        // Update status history
-        order.updateStatus(status, `Status updated by driver`, req.user._id);
 
         await order.save();
 
