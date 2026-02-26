@@ -80,9 +80,14 @@ class MyFatoorahService {
             console.log('MyFatoorah executePayment - Payment Data:', JSON.stringify(paymentData, null, 2));
 
             // Clean phone number - strip all formatting, then extract country code + local number
-            let rawPhone = paymentData.customerPhone.replace(/[\s\-\(\)\+]/g, '');
+            let rawPhone = (paymentData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
             // Remove leading zeros (international prefix like 00965)
             rawPhone = rawPhone.replace(/^00/, '');
+
+            // If phone is empty after cleaning, use a placeholder (MyFatoorah requires a value)
+            if (!rawPhone || rawPhone.length < 4) {
+                rawPhone = '96500000000';
+            }
 
             let mobileCountryCode = '965'; // Default Kuwait
             let cleanPhone = rawPhone;
@@ -93,6 +98,11 @@ class MyFatoorahService {
             if (matchedCode) {
                 mobileCountryCode = matchedCode;
                 cleanPhone = rawPhone.substring(matchedCode.length);
+            }
+
+            // Ensure cleanPhone has at least some digits (MyFatoorah validation)
+            if (!cleanPhone || cleanPhone.length < 4) {
+                cleanPhone = '00000000';
             }
 
             const payload = {
