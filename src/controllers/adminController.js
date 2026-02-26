@@ -2,6 +2,7 @@ const { asyncHandler } = require('../middleware/error'); // Fix import destructu
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
 
 // Helper function to parse boolean values consistently
 // Handles: boolean, string ('true'/'false'), number (1/0), undefined
@@ -77,10 +78,19 @@ const createProduct = asyncHandler(async (req, res) => {
 
     let images = [];
     if (req.files && req.files.length > 0) {
-        images = req.files.map((file, index) => ({
-            url: `/assets/images/products/${file.filename}`,
-            isPrimary: index === 0
-        }));
+        for (let i = 0; i < req.files.length; i++) {
+            const file = req.files[i];
+            try {
+                const result = await uploadToCloudinary(file.buffer, 'products');
+                images.push({
+                    url: result.url,
+                    isPrimary: i === 0
+                });
+                console.log(`[ADMIN CREATE] ⬆️ Image uploaded to Cloudinary: ${result.url}`);
+            } catch (err) {
+                console.error(`[ADMIN CREATE] ❌ Failed to upload image:`, err.message);
+            }
+        }
     }
 
     const product = await Product.create({
@@ -134,6 +144,14 @@ const updateProduct = asyncHandler(async (req, res) => {
         try {
             const urlsToDelete = JSON.parse(imagesToDelete);
             const originalCount = product.images.length;
+            // Delete from Cloudinary
+            for (const url of urlsToDelete) {
+                const publicId = getPublicIdFromUrl(url);
+                if (publicId) {
+                    await deleteFromCloudinary(publicId);
+                    console.log(`[ADMIN UPDATE] 🗑️ Deleted from Cloudinary: ${publicId}`);
+                }
+            }
             product.images = product.images.filter(img => !urlsToDelete.includes(img.url));
             console.log(`[ADMIN UPDATE] Deleted ${originalCount - product.images.length} images`);
         } catch (err) {
@@ -143,10 +161,20 @@ const updateProduct = asyncHandler(async (req, res) => {
 
     // Handle image updates if new files uploaded
     if (req.files && req.files.length > 0) {
-        const newImages = req.files.map((file, index) => ({
-            url: `/assets/images/products/${file.filename}`,
-            isPrimary: index === 0 && product.images.length === 0
-        }));
+        const newImages = [];
+        for (let i = 0; i < req.files.length; i++) {
+            const file = req.files[i];
+            try {
+                const result = await uploadToCloudinary(file.buffer, 'products');
+                newImages.push({
+                    url: result.url,
+                    isPrimary: i === 0 && product.images.length === 0
+                });
+                console.log(`[ADMIN UPDATE] ⬆️ Image uploaded to Cloudinary: ${result.url}`);
+            } catch (err) {
+                console.error(`[ADMIN UPDATE] ❌ Failed to upload image:`, err.message);
+            }
+        }
         product.images = [...product.images, ...newImages];
         console.log(`[ADMIN UPDATE] Added ${newImages.length} new images`);
     }

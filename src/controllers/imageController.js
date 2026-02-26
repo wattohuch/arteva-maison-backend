@@ -1,8 +1,7 @@
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const { asyncHandler } = require('../middleware/error');
-const path = require('path');
-const fs = require('fs').promises;
+const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
 
 // @desc    Update product image
 // @route   PUT /api/images/product/:id
@@ -20,17 +19,19 @@ const updateProductImage = asyncHandler(async (req, res) => {
         throw new Error('Please upload an image');
     }
 
-    // Delete old image if it exists (optional - keep for backup)
-    // const oldImagePath = path.join(__dirname, '../../../frontend', product.image);
-    // try {
-    //     await fs.unlink(oldImagePath);
-    // } catch (err) {
-    //     // Image doesn't exist, continue
-    // }
+    // Delete old image from Cloudinary if it exists
+    if (product.image) {
+        const oldPublicId = getPublicIdFromUrl(product.image);
+        if (oldPublicId) {
+            await deleteFromCloudinary(oldPublicId);
+        }
+    }
 
-    // Update product with new image path
-    const imagePath = `/assets/images/products/${req.file.filename}`;
-    product.image = imagePath;
+    // Upload new image to Cloudinary
+    const result = await uploadToCloudinary(req.file.buffer, 'products');
+
+    // Update product with Cloudinary URL
+    product.image = result.url;
     await product.save();
 
     res.json({
@@ -56,9 +57,19 @@ const updateCategoryImage = asyncHandler(async (req, res) => {
         throw new Error('Please upload an image');
     }
 
-    // Update category with new image path
-    const imagePath = `/assets/images/categories/${req.file.filename}`;
-    category.image = imagePath;
+    // Delete old image from Cloudinary if it exists
+    if (category.image) {
+        const oldPublicId = getPublicIdFromUrl(category.image);
+        if (oldPublicId) {
+            await deleteFromCloudinary(oldPublicId);
+        }
+    }
+
+    // Upload new image to Cloudinary
+    const result = await uploadToCloudinary(req.file.buffer, 'categories');
+
+    // Update category with Cloudinary URL
+    category.image = result.url;
     await category.save();
 
     res.json({
@@ -79,8 +90,16 @@ const deleteProductImage = asyncHandler(async (req, res) => {
         throw new Error('Product not found');
     }
 
-    // Set to default placeholder or empty
-    product.image = '/assets/images/products/placeholder.png';
+    // Delete from Cloudinary
+    if (product.image) {
+        const publicId = getPublicIdFromUrl(product.image);
+        if (publicId) {
+            await deleteFromCloudinary(publicId);
+        }
+    }
+
+    // Set to empty
+    product.image = '';
     await product.save();
 
     res.json({
@@ -101,8 +120,16 @@ const deleteCategoryImage = asyncHandler(async (req, res) => {
         throw new Error('Category not found');
     }
 
-    // Set to default placeholder or empty
-    category.image = '/assets/images/categories/placeholder.png';
+    // Delete from Cloudinary
+    if (category.image) {
+        const publicId = getPublicIdFromUrl(category.image);
+        if (publicId) {
+            await deleteFromCloudinary(publicId);
+        }
+    }
+
+    // Set to empty
+    category.image = '';
     await category.save();
 
     res.json({
