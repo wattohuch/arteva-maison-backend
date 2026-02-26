@@ -30,6 +30,20 @@ const server = http.createServer(app);
 app.set('trust proxy', 1);
 
 // ============================================
+// STATIC ASSETS (must be BEFORE helmet to avoid CORP blocking)
+// ============================================
+
+// Serve uploaded images (products, categories) with cross-origin headers
+// This MUST come before helmet() because Helmet sets Cross-Origin-Resource-Policy: same-origin
+// which blocks cross-origin image loads from the frontend (Vercel) to backend (Render)
+app.use('/assets/images', (req, res, next) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // 24hr cache
+    next();
+}, express.static(path.join(__dirname, '../../assets/images')));
+
+// ============================================
 // SECURITY & PERFORMANCE MIDDLEWARE
 // ============================================
 
@@ -120,10 +134,6 @@ if (!isProd) {
     const morgan = require('morgan');
     app.use(morgan('dev'));
 }
-
-// Serve uploaded images (products, categories) from the backend
-// This ensures images uploaded via admin are accessible regardless of frontend deployment
-app.use('/assets/images', express.static(path.join(__dirname, '../../assets/images')));
 
 // Track user activity for smart backups (silent)
 app.use((req, res, next) => {
