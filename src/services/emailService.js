@@ -15,7 +15,7 @@ let gmailTransporter = null;
  */
 function initializeEmailService() {
     console.log('\n📧 Initializing Gmail Email Service...');
-    
+
     if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
         console.error('❌ Gmail credentials missing!');
         console.error('   Required: GMAIL_USER and GMAIL_APP_PASSWORD');
@@ -24,18 +24,23 @@ function initializeEmailService() {
 
     try {
         gmailTransporter = nodemailer.createTransport({
-            service: 'gmail',
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
             auth: {
                 user: process.env.GMAIL_USER,
                 pass: process.env.GMAIL_APP_PASSWORD
-            }
+            },
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 15000
         });
-        
+
         console.log('✅ Gmail SMTP initialized');
         console.log(`📧 Sending from: ${process.env.GMAIL_USER}`);
         console.log('📊 Capacity: 500 emails/day');
         console.log('');
-        
+
         return true;
     } catch (error) {
         console.error('❌ Gmail initialization failed:', error.message);
@@ -60,7 +65,7 @@ async function sendEmail({ to, subject, html, text }) {
             html,
             text: text || subject
         });
-        
+
         console.log(`📧 Email sent to ${to}: ${info.messageId}`);
         return { success: true, messageId: info.messageId, provider: 'gmail' };
     } catch (error) {
