@@ -168,7 +168,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     if (category !== undefined) product.category = category;
     if (stock !== undefined) product.stock = stock;
     if (sku !== undefined) product.sku = sku;
-    
+
     // Update boolean flags - CRITICAL: Only update if explicitly provided
     if (isFeaturedValue !== undefined) {
         product.isFeatured = isFeaturedValue;
@@ -185,7 +185,7 @@ const updateProduct = asyncHandler(async (req, res) => {
 
     // Save to database - THIS IS THE PERMANENT SAVE
     const updatedProduct = await product.save();
-    
+
     console.log(`[ADMIN UPDATE] ✅ Product saved to database successfully`);
     console.log(`[ADMIN UPDATE] Final values:`, {
         isFeatured: updatedProduct.isFeatured,
@@ -193,8 +193,8 @@ const updateProduct = asyncHandler(async (req, res) => {
         isComingSoon: updatedProduct.isComingSoon
     });
 
-    res.json({ 
-        success: true, 
+    res.json({
+        success: true,
         data: updatedProduct,
         message: 'Product updated successfully and saved to database',
         changes: {
@@ -367,23 +367,32 @@ const sendOfferEmail = async (req, res) => {
             return res.status(400).json({ success: false, message: 'No users found to send emails to' });
         }
 
-        // Use the email service
-        const { sendEmail } = require('../services/emailService');
+        // Limit to 50 users for safety
+        const targetUsers = users.slice(0, 50);
 
         // Build image HTML if images are attached
         let imagesHtml = '';
         if (images && images.length > 0) {
             imagesHtml = '<div style="margin: 20px 0; text-align: center;">';
             images.forEach(image => {
-                // Use the full URL for the image
                 const imageUrl = `${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/uploads/${image.filename}`;
                 imagesHtml += `<img src="${imageUrl}" alt="Campaign Image" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">`;
             });
             imagesHtml += '</div>';
         }
 
-        // Send email to each user (limit to 50 for safety)
-        const targetUsers = users.slice(0, 50);
+        // Respond immediately — emails will be sent in the background
+        res.status(202).json({
+            success: true,
+            message: `Email campaign queued for ${targetUsers.length} recipients. Emails are being sent in the background.`,
+            details: {
+                total: targetUsers.length,
+                status: 'processing'
+            }
+        });
+
+        // Send emails in the background (after response is sent)
+        const { sendEmail } = require('../services/emailService');
         let successCount = 0;
         let failCount = 0;
 
@@ -420,18 +429,29 @@ const sendOfferEmail = async (req, res) => {
             }
         }
 
-        res.json({ 
-            success: true, 
-            message: `Email campaign completed: ${successCount} sent, ${failCount} failed`,
-            details: {
-                total: targetUsers.length,
-                sent: successCount,
-                failed: failCount
+        console.log(`[EMAIL CAMPAIGN] Completed: ${successCount} sent, ${failCount} failed out of ${targetUsers.length}`);
+
+        // Emit result via socket if available (for admin dashboard real-time feedback)
+        try {
+            const io = req.app.locals.io;
+            if (io) {
+                io.to('admin_room').emit('email_campaign_complete', {
+                    total: targetUsers.length,
+                    sent: successCount,
+                    failed: failCount,
+                    timestamp: new Date().toISOString()
+                });
             }
-        });
+        } catch (socketErr) {
+            // Socket notification is optional
+        }
+
     } catch (error) {
         console.error('Email campaign error:', error);
-        res.status(500).json({ success: false, message: 'Failed to send emails' });
+        // Only send error if response hasn't been sent yet
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, message: 'Failed to start email campaign' });
+        }
     }
 };
 

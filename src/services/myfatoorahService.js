@@ -35,8 +35,8 @@ class MyFatoorahService {
                 DisplayCurrencyIso: orderData.currency || 'KWD',
                 CustomerEmail: orderData.customerEmail,
                 CustomerMobile: orderData.customerPhone,
-                CallBackUrl: `${process.env.FRONTEND_URL}/order-success.html`,
-                ErrorUrl: `${process.env.FRONTEND_URL}/checkout.html?error=payment_failed`,
+                CallBackUrl: process.env.MYFATOORAH_SUCCESS_URL || `${process.env.FRONTEND_URL}/order-success.html`,
+                ErrorUrl: process.env.MYFATOORAH_ERROR_URL || `${process.env.FRONTEND_URL}/checkout.html?error=payment_failed`,
                 Language: orderData.language || 'en',
                 CustomerReference: orderData.orderNumber,
                 UserDefinedField: orderData.orderId, // Store order ID for webhook
@@ -78,23 +78,33 @@ class MyFatoorahService {
         try {
             console.log('MyFatoorah executePayment - Base URL:', this.baseUrl);
             console.log('MyFatoorah executePayment - Payment Data:', JSON.stringify(paymentData, null, 2));
-            
-            // Clean phone number - remove country code and special characters
-            let cleanPhone = paymentData.customerPhone.replace(/[^0-9]/g, '');
-            if (cleanPhone.startsWith('965')) {
-                cleanPhone = cleanPhone.substring(3); // Remove Kuwait country code
+
+            // Clean phone number - strip all formatting, then extract country code + local number
+            let rawPhone = paymentData.customerPhone.replace(/[\s\-\(\)\+]/g, '');
+            // Remove leading zeros (international prefix like 00965)
+            rawPhone = rawPhone.replace(/^00/, '');
+
+            let mobileCountryCode = '965'; // Default Kuwait
+            let cleanPhone = rawPhone;
+
+            // Known GCC country codes (3-digit)
+            const gccCodes = ['965', '966', '971', '974', '973', '968'];
+            const matchedCode = gccCodes.find(code => rawPhone.startsWith(code));
+            if (matchedCode) {
+                mobileCountryCode = matchedCode;
+                cleanPhone = rawPhone.substring(matchedCode.length);
             }
-            
+
             const payload = {
                 PaymentMethodId: paymentData.paymentMethodId, // 1=KNET, 2=VISA/Master, 20=Apple Pay
                 CustomerName: paymentData.customerName,
                 DisplayCurrencyIso: 'KWD',
-                MobileCountryCode: '965',
+                MobileCountryCode: mobileCountryCode,
                 CustomerMobile: cleanPhone,
                 CustomerEmail: paymentData.customerEmail,
                 InvoiceValue: paymentData.amount,
-                CallBackUrl: `${process.env.FRONTEND_URL}/order-success.html`,
-                ErrorUrl: `${process.env.FRONTEND_URL}/checkout.html?error=payment_failed`,
+                CallBackUrl: process.env.MYFATOORAH_SUCCESS_URL || `${process.env.FRONTEND_URL}/order-success.html`,
+                ErrorUrl: process.env.MYFATOORAH_ERROR_URL || `${process.env.FRONTEND_URL}/checkout.html?error=payment_failed`,
                 Language: paymentData.language === 'ar' ? 'AR' : 'EN',
                 CustomerReference: paymentData.orderNumber,
                 UserDefinedField: paymentData.orderId,
@@ -140,12 +150,12 @@ class MyFatoorahService {
                 status: error.response?.status,
                 headers: error.response?.headers
             });
-            
+
             // Log validation errors in detail
             if (error.response?.data?.ValidationErrors) {
                 console.error('Validation Errors Detail:', JSON.stringify(error.response.data.ValidationErrors, null, 2));
             }
-            
+
             throw new Error(error.response?.data?.Message || error.message);
         }
     }

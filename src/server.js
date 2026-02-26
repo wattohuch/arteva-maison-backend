@@ -121,6 +121,10 @@ if (!isProd) {
     app.use(morgan('dev'));
 }
 
+// Serve uploaded images (products, categories) from the backend
+// This ensures images uploaded via admin are accessible regardless of frontend deployment
+app.use('/assets/images', express.static(path.join(__dirname, '../../assets/images')));
+
 // Track user activity for smart backups (silent)
 app.use((req, res, next) => {
     updateActivity();
