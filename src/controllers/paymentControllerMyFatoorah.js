@@ -130,24 +130,48 @@ const executePayment = asyncHandler(async (req, res) => {
 
     console.log('Order totals - Subtotal:', subtotal, 'Shipping:', shippingCost, 'Total:', total);
 
-    // Create order
-    const order = await Order.create({
+    // Check for existing awaiting_payment order for this user to prevent duplicates
+    let order = await Order.findOne({
         user: req.user._id,
-        items: cart.items.map(item => ({
+        paymentStatus: 'awaiting_payment'
+    });
+
+    if (order) {
+        // Reuse existing pending order — update it with current cart/shipping
+        console.log(`[DEDUP] Reusing existing order ${order.orderNumber} instead of creating duplicate`);
+        order.items = cart.items.map(item => ({
             product: item.product._id,
             name: item.product.name,
             price: item.product.price,
             quantity: item.quantity,
             image: item.product.images[0]?.url
-        })),
-        shippingAddress,
-        paymentMethod: getPaymentMethodName(paymentMethodId),
-        paymentStatus: 'awaiting_payment',
-        orderStatus: 'pending',
-        subtotal,
-        shippingCost,
-        total
-    });
+        }));
+        order.shippingAddress = shippingAddress;
+        order.paymentMethod = getPaymentMethodName(paymentMethodId);
+        order.subtotal = subtotal;
+        order.shippingCost = shippingCost;
+        order.total = total;
+        await order.save();
+    } else {
+        // Create new order
+        order = await Order.create({
+            user: req.user._id,
+            items: cart.items.map(item => ({
+                product: item.product._id,
+                name: item.product.name,
+                price: item.product.price,
+                quantity: item.quantity,
+                image: item.product.images[0]?.url
+            })),
+            shippingAddress,
+            paymentMethod: getPaymentMethodName(paymentMethodId),
+            paymentStatus: 'awaiting_payment',
+            orderStatus: 'pending',
+            subtotal,
+            shippingCost,
+            total
+        });
+    }
 
     console.log('Order created:', order.orderNumber);
 

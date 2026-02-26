@@ -85,13 +85,15 @@ const createOrder = asyncHandler(async (req, res) => {
 const getMyOrders = asyncHandler(async (req, res) => {
     const { skip, limit, page } = paginate(req.query.page, req.query.limit);
 
-    const orders = await Order.find({ user: req.user._id })
+    const filter = { user: req.user._id, paymentStatus: { $ne: 'awaiting_payment' } };
+
+    const orders = await Order.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
 
-    const total = await Order.countDocuments({ user: req.user._id });
+    const total = await Order.countDocuments(filter);
 
     res.json({
         success: true,
@@ -137,7 +139,7 @@ const getAllOrders = asyncHandler(async (req, res) => {
     const { status } = req.query;
     const { skip, limit, page } = paginate(req.query.page, req.query.limit);
 
-    let filter = {};
+    let filter = { paymentStatus: { $ne: 'awaiting_payment' } };
     if (status) {
         filter.orderStatus = status;
     }
@@ -207,10 +209,35 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get order by order number (e.g. ART-000001)
+// @route   GET /api/orders/by-number/:orderNumber
+// @access  Private
+const getOrderByNumber = asyncHandler(async (req, res) => {
+    const order = await Order.findOne({ orderNumber: req.params.orderNumber })
+        .populate('user', 'name email phone');
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    // Check if user owns the order or is admin
+    if (order.user._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+        res.status(403);
+        throw new Error('Not authorized');
+    }
+
+    res.json({
+        success: true,
+        data: order
+    });
+});
+
 module.exports = {
     createOrder,
     getMyOrders,
     getOrder,
+    getOrderByNumber,
     getAllOrders,
     updateOrderStatus
 };
