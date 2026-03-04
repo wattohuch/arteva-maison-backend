@@ -8,7 +8,11 @@ const PushSubscription = require('../models/PushSubscription');
 // Configure VAPID keys
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@arteva.com';
+let VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@arteva.com';
+// Auto-fix: add mailto: prefix if someone sets a bare email
+if (VAPID_SUBJECT && !VAPID_SUBJECT.startsWith('mailto:') && !VAPID_SUBJECT.startsWith('https://')) {
+    VAPID_SUBJECT = 'mailto:' + VAPID_SUBJECT;
+}
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);

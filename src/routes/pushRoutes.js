@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const PushSubscription = require('../models/PushSubscription');
 const { getVapidPublicKey } = require('../services/pushService');
-const { protect } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/auth');
 
 /**
  * GET /api/push/vapid-key
