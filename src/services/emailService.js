@@ -34,7 +34,8 @@ function initializeEmailService() {
         const mailgun = new Mailgun(formData);
         mg = mailgun.client({
             username: 'api',
-            key: process.env.MAILGUN_API_KEY
+            key: process.env.MAILGUN_API_KEY,
+            url: 'https://api.eu.mailgun.net'  // EU region
         });
         mailgunDomain = process.env.MAILGUN_DOMAIN;
 
