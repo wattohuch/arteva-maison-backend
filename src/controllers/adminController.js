@@ -284,7 +284,8 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     emitOrderStatusUpdate(order.orderNumber, {
         status: order.orderStatus,
         statusHistory: order.statusHistory,
-        orderId: order._id.toString()
+        orderId: order._id.toString(),
+        userId: order.user ? order.user.toString() : null
     });
 
     res.json({ success: true, data: order });

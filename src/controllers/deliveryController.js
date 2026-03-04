@@ -130,7 +130,8 @@ const assignPilotToOrder = asyncHandler(async (req, res) => {
     // Emit real-time updates
     emitOrderStatusUpdate(order.orderNumber, {
         status: order.orderStatus,
-        statusHistory: order.statusHistory
+        statusHistory: order.statusHistory,
+        userId: order.user ? order.user.toString() : null
     });
 
     emitPilotAssigned(order.orderNumber, {
@@ -282,7 +283,8 @@ const updateDeliveryStatus = asyncHandler(async (req, res) => {
     // Emit real-time status update
     emitOrderStatusUpdate(order.orderNumber, {
         status: order.orderStatus,
-        statusHistory: order.statusHistory
+        statusHistory: order.statusHistory,
+        userId: order.user ? order.user.toString() : null
     });
 
     res.json({

@@ -67,10 +67,10 @@ exports.updateDeliveryStatus = async (req, res) => {
         }
 
         const oldStatus = order.orderStatus;
-        
+
         // Update status history (this also sets orderStatus)
         order.updateStatus(status, `Status updated by driver`, req.user._id);
-        
+
         if (status === 'delivered') {
             order.deliveredAt = Date.now();
         }
@@ -81,7 +81,8 @@ exports.updateDeliveryStatus = async (req, res) => {
         emitOrderStatusUpdate(order.orderNumber, {
             status: order.orderStatus,
             statusHistory: order.statusHistory,
-            orderId: order._id.toString()
+            orderId: order._id.toString(),
+            userId: order.user ? order.user.toString() : null
         });
 
         // Send email notification when driver starts delivery

@@ -160,6 +160,7 @@ app.use('/api/delivery', apiLimiter, require('./routes/delivery'));
 app.use('/api/admin', apiLimiter, require('./routes/admin'));
 app.use('/api/driver', apiLimiter, require('./routes/driver'));
 app.use('/api/images', apiLimiter, require('./routes/images'));
+app.use('/api/push', apiLimiter, require('./routes/pushRoutes'));
 
 // Health check (no rate limiting)
 app.get('/api/health', (req, res) => {

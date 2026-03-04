@@ -1,60 +1,77 @@
 /**
- * ARTEVA Maison - Email Service (Resend API)
- * Uses HTTPS API calls — works on Render (which blocks SMTP ports 465/587)
- * Free tier: 100 emails/day via Resend
+ * ARTEVA Maison - Email Service (Mailgun API)
+ * Uses Mailgun REST API — works on Render (which blocks SMTP ports 465/587)
+ * Flex plan: 1,000 emails/month free
  */
 
-const { Resend } = require('resend');
+const formData = require('form-data');
+const Mailgun = require('mailgun.js');
 const { getWelcomeEmailHtml, getOrderConfirmationHtml, getOrderStatusUpdateHtml, getPasswordResetOTPHtml } = require('./emailTemplates');
 
-// Resend client
-let resend = null;
+// Mailgun client
+let mg = null;
+let mailgunDomain = null;
 
 /**
- * Initialize Resend client
+ * Initialize Mailgun client
  */
 function initializeEmailService() {
-    console.log('\n📧 Initializing Email Service (Resend API)...');
+    console.log('\n📧 Initializing Email Service (Mailgun API)...');
 
-    if (!process.env.RESEND_API_KEY) {
-        console.error('❌ RESEND_API_KEY missing in environment variables');
-        console.error('   Get your API key from: https://resend.com');
+    if (!process.env.MAILGUN_API_KEY) {
+        console.error('❌ MAILGUN_API_KEY missing in environment variables');
+        console.error('   Get your API key from: https://app.mailgun.com/settings/api_security');
+        return false;
+    }
+
+    if (!process.env.MAILGUN_DOMAIN) {
+        console.error('❌ MAILGUN_DOMAIN missing in environment variables');
+        console.error('   Set it to your verified domain, e.g. mg.artevamaisonkw.com');
         return false;
     }
 
     try {
-        resend = new Resend(process.env.RESEND_API_KEY);
-        console.log('✅ Resend API initialized');
-        console.log(`📧 Sending from: ${process.env.EMAIL_FROM || 'onboarding@resend.dev'}`);
-        console.log('📊 Capacity: 100 emails/day (free tier)');
+        const mailgun = new Mailgun(formData);
+        mg = mailgun.client({
+            username: 'api',
+            key: process.env.MAILGUN_API_KEY
+        });
+        mailgunDomain = process.env.MAILGUN_DOMAIN;
+
+        console.log('✅ Mailgun API initialized');
+        console.log(`📧 Sending domain: ${mailgunDomain}`);
+        console.log(`📧 Sending from: ${process.env.EMAIL_FROM || `ARTEVA Maison <noreply@${mailgunDomain}>`}`);
+        console.log('📊 Capacity: 1,000 emails/month (Flex plan)');
         console.log('');
         return true;
     } catch (error) {
-        console.error('❌ Resend initialization failed:', error.message);
+        console.error('❌ Mailgun initialization failed:', error.message);
         return false;
     }
 }
 
 /**
- * Send email using Resend API
+ * Send email using Mailgun API
  */
 async function sendEmail({ to, subject, html, text }) {
-    if (!resend) {
-        console.error('❌ Resend not initialized. Check RESEND_API_KEY in .env');
+    if (!mg || !mailgunDomain) {
+        console.error('❌ Mailgun not initialized. Check MAILGUN_API_KEY and MAILGUN_DOMAIN in .env');
         return { success: false, error: 'Email service not initialized' };
     }
 
     try {
-        const result = await resend.emails.send({
-            from: process.env.EMAIL_FROM || 'ARTEVA Maison <onboarding@resend.dev>',
-            to: to,
+        const messageData = {
+            from: process.env.EMAIL_FROM || `ARTEVA Maison <noreply@${mailgunDomain}>`,
+            to: Array.isArray(to) ? to : [to],
             subject: subject,
             html: html,
             text: text || subject
-        });
+        };
 
-        console.log(`📧 Email sent to ${to}: ${result.data?.id || 'OK'}`);
-        return { success: true, messageId: result.data?.id, provider: 'resend' };
+        const result = await mg.messages.create(mailgunDomain, messageData);
+
+        console.log(`📧 Email sent to ${to}: ${result.id || 'OK'}`);
+        return { success: true, messageId: result.id, provider: 'mailgun' };
     } catch (error) {
         console.error(`❌ Failed to send email to ${to}:`, error.message);
         return { success: false, error: error.message };
@@ -130,10 +147,11 @@ async function sendOTPEmail(user, otp) {
  */
 function getEmailServiceStatus() {
     return {
-        provider: 'Resend API',
-        enabled: resend !== null,
-        limit: '100 emails/day (free tier)',
-        from: process.env.EMAIL_FROM || 'onboarding@resend.dev'
+        provider: 'Mailgun API',
+        enabled: mg !== null && mailgunDomain !== null,
+        limit: '1,000 emails/month (Flex plan)',
+        domain: mailgunDomain || 'not configured',
+        from: process.env.EMAIL_FROM || (mailgunDomain ? `noreply@${mailgunDomain}` : 'not configured')
     };
 }
 

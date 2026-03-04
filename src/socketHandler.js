@@ -115,17 +115,28 @@ function emitOrderStatusUpdate(orderNumber, statusData) {
             statusHistory: statusData.statusHistory,
             timestamp: new Date().toISOString()
         };
-        
+
         // Emit to order room (for customers tracking)
         io.to(`order_${orderNumber}`).emit('order_status_update', updateData);
-        
+
         // Also emit to admin room (for admin dashboard)
         io.to('admin_room').emit('admin_order_status_update', {
             ...updateData,
             orderId: statusData.orderId // Include order ID for admin to update specific row
         });
-        
+
         console.log(`📨 Emitted status update for order ${orderNumber}: ${statusData.status}`);
+
+        // Trigger push notification to customer (async, non-blocking)
+        if (statusData.userId) {
+            try {
+                const { sendOrderStatusPush } = require('./services/pushService');
+                sendOrderStatusPush(statusData.userId, orderNumber, statusData.status)
+                    .catch(err => console.error('Push notification error:', err.message));
+            } catch (e) {
+                // pushService not available - skip silently
+            }
+        }
     }
 }
 
