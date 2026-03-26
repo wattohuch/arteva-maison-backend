@@ -230,11 +230,23 @@ server.listen(PORT, async () => {
     startBackupScheduler();
 
     // Keep-alive self-ping every 14 minutes (Render free-tier)
+    // Pauses between 4:00-4:59 AM Kuwait time (UTC+3) to save ~31 hrs/month
     if (isProd) {
         const PING_INTERVAL = 14 * 60 * 1000;
+        const SLEEP_HOUR = 4; // 4 AM Kuwait time — lowest traffic hour
+        const KUWAIT_OFFSET = 3; // UTC+3
         const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
 
         setInterval(() => {
+            // Get current hour in Kuwait time (UTC+3)
+            const now = new Date();
+            const kuwaitHour = (now.getUTCHours() + KUWAIT_OFFSET) % 24;
+
+            if (kuwaitHour === SLEEP_HOUR) {
+                // Skip ping — let Render auto-sleep the service
+                return;
+            }
+
             const url = `${backendUrl}/api/health`;
             const lib = url.startsWith('https') ? require('https') : require('http');
             lib.get(url, () => { }).on('error', () => { });
