@@ -37,6 +37,8 @@ const connectDB = async () => {
             compressors: 'zlib', // Enable compression
         });
     } catch (error) {
+        console.error('❌ Database connection failed:');
+        console.error(error);
         process.exit(1);
     }
 };
