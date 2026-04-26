@@ -100,6 +100,10 @@ const productSchema = new mongoose.Schema({
     reviewCount: {
         type: Number,
         default: 0
+    },
+    viewCount: {
+        type: Number,
+        default: 0
     }
 }, {
     timestamps: true
@@ -117,5 +121,6 @@ productSchema.index({ name: 'text', description: 'text', tags: 'text' });
 productSchema.index({ category: 1, isActive: 1 });
 productSchema.index({ isFeatured: 1, isActive: 1 });
 productSchema.index({ isNewArrival: 1, isActive: 1 });
+productSchema.index({ viewCount: -1 });
 
 module.exports = mongoose.model('Product', productSchema);

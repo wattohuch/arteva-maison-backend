@@ -177,6 +177,24 @@ const getFeaturedProducts = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Increment product view count
+// @route   POST /api/products/:id/view
+// @access  Public
+const incrementProductView = asyncHandler(async (req, res) => {
+    const product = await Product.findByIdAndUpdate(
+        req.params.id,
+        { $inc: { viewCount: 1 } },
+        { new: false, select: '_id' }
+    );
+
+    if (!product) {
+        res.status(404);
+        throw new Error('Product not found');
+    }
+
+    res.json({ success: true });
+});
+
 module.exports = {
     getProducts,
     getProduct,
@@ -184,5 +202,6 @@ module.exports = {
     createProduct,
     updateProduct,
     deleteProduct,
-    getFeaturedProducts
+    getFeaturedProducts,
+    incrementProductView
 };

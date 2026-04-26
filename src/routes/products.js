@@ -7,7 +7,8 @@ const {
     createProduct,
     updateProduct,
     deleteProduct,
-    getFeaturedProducts
+    getFeaturedProducts,
+    incrementProductView
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/auth');
 
@@ -15,6 +16,7 @@ router.get('/', getProducts);
 router.get('/featured', getFeaturedProducts);
 router.get('/slug/:slug', getProductBySlug);
 router.get('/:id', getProduct);
+router.post('/:id/view', incrementProductView);
 
 // Admin routes
 // Re-route into other resource routers

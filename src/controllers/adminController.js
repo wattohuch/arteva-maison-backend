@@ -484,6 +484,37 @@ const sendOfferEmail = async (req, res) => {
     }
 };
 
+// @desc    Get product view analytics
+// @route   GET /api/admin/analytics/product-views
+// @access  Private/Admin
+const getProductViewAnalytics = asyncHandler(async (req, res) => {
+    const limit = parseInt(req.query.limit) || 20;
+
+    const products = await Product.find({ isActive: true })
+        .select('name nameAr images category viewCount price')
+        .populate('category', 'name')
+        .sort({ viewCount: -1 })
+        .limit(limit)
+        .lean();
+
+    // Calculate totals
+    const totalViews = products.reduce((sum, p) => sum + (p.viewCount || 0), 0);
+    const totalProducts = await Product.countDocuments({ isActive: true });
+
+    res.json({
+        success: true,
+        data: {
+            products,
+            summary: {
+                totalViews,
+                totalProducts,
+                topProduct: products.length > 0 ? products[0].name : 'N/A',
+                averageViews: totalProducts > 0 ? Math.round(totalViews / totalProducts) : 0
+            }
+        }
+    });
+});
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -496,5 +527,6 @@ module.exports = {
     getAdminUsers,
     updateUserRole,
     deleteUser,
-    sendOfferEmail
+    sendOfferEmail,
+    getProductViewAnalytics
 };

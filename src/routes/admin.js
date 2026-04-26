@@ -12,13 +12,17 @@ const {
     getAdminUsers,
     updateUserRole,
     deleteUser,
-    sendOfferEmail
+    sendOfferEmail,
+    getProductViewAnalytics
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // Stats
 router.get('/stats', protect, admin, getDashboardStats);
+
+// Analytics
+router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
 
 // Products
 router.route('/products')
