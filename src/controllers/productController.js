@@ -131,7 +131,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     }
 
     product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
+        returnDocument: 'after',
         runValidators: true
     });
 
@@ -184,7 +184,7 @@ const incrementProductView = asyncHandler(async (req, res) => {
     const product = await Product.findByIdAndUpdate(
         req.params.id,
         { $inc: { viewCount: 1 } },
-        { new: false, select: '_id' }
+        { returnDocument: 'before', select: '_id' }
     );
 
     if (!product) {

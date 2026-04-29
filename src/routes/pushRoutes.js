@@ -37,7 +37,7 @@ router.post('/subscribe', protect, async (req, res) => {
                 userAgent: req.headers['user-agent'],
                 createdAt: new Date()
             },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: 'after' }
         );
 
         res.json({ success: true, message: 'Subscribed to push notifications' });
