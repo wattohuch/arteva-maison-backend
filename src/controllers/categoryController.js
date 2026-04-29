@@ -132,6 +132,12 @@ const updateCategory = asyncHandler(async (req, res) => {
         }
     }
     
+    // Allow setting image URL directly (for fixes/migrations)
+    if (!req.file && req.body.imageUrl) {
+        category.image = req.body.imageUrl;
+        console.log(`[CATEGORY UPDATE] 🔗 Image URL set directly: ${req.body.imageUrl}`);
+    }
+    
     // Update fields
     category.name = name || category.name;
     category.nameAr = nameAr !== undefined ? nameAr : category.nameAr;
