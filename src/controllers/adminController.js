@@ -124,19 +124,21 @@ const updateProduct = asyncHandler(async (req, res) => {
         throw new Error('Product not found');
     }
 
-    const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon, imagesToDelete, primaryImageUrl } = req.body;
+    const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon, isCollectionFeatured, imagesToDelete, primaryImageUrl } = req.body;
 
     // Parse boolean values consistently
     const isFeaturedValue = parseBoolean(isFeatured);
     const isNewArrivalValue = parseBoolean(isNewArrival);
     const isComingSoonValue = parseBoolean(isComingSoon);
+    const isCollectionFeaturedValue = parseBoolean(isCollectionFeatured);
 
     // Log admin action for debugging and audit trail
     console.log(`[ADMIN UPDATE] Product ${product._id} (${product.name}) updated by ${req.user.email}`);
     console.log(`[ADMIN UPDATE] Boolean flags:`, {
         isFeatured: isFeaturedValue,
         isNewArrival: isNewArrivalValue,
-        isComingSoon: isComingSoonValue
+        isComingSoon: isComingSoonValue,
+        isCollectionFeatured: isCollectionFeaturedValue
     });
 
     // Handle image deletion
@@ -210,6 +212,10 @@ const updateProduct = asyncHandler(async (req, res) => {
         product.isComingSoon = isComingSoonValue;
         console.log(`[ADMIN UPDATE] isComingSoon set to: ${isComingSoonValue}`);
     }
+    if (isCollectionFeaturedValue !== undefined) {
+        product.isCollectionFeatured = isCollectionFeaturedValue;
+        console.log(`[ADMIN UPDATE] isCollectionFeatured set to: ${isCollectionFeaturedValue}`);
+    }
 
     // Save to database - THIS IS THE PERMANENT SAVE
     const updatedProduct = await product.save();
@@ -218,7 +224,8 @@ const updateProduct = asyncHandler(async (req, res) => {
     console.log(`[ADMIN UPDATE] Final values:`, {
         isFeatured: updatedProduct.isFeatured,
         isNewArrival: updatedProduct.isNewArrival,
-        isComingSoon: updatedProduct.isComingSoon
+        isComingSoon: updatedProduct.isComingSoon,
+        isCollectionFeatured: updatedProduct.isCollectionFeatured
     });
 
     res.json({
@@ -228,7 +235,8 @@ const updateProduct = asyncHandler(async (req, res) => {
         changes: {
             isFeatured: isFeaturedValue,
             isNewArrival: isNewArrivalValue,
-            isComingSoon: isComingSoonValue
+            isComingSoon: isComingSoonValue,
+            isCollectionFeatured: isCollectionFeaturedValue
         }
     });
 });
