@@ -30,19 +30,30 @@ const getProducts = asyncHandler(async (req, res) => {
             }
         }
         // Match products where primary category OR additionalCategories contains the target
-        const orConditions = [
+        const catConditions = [
             { category: catId },
             { additionalCategories: catId }
         ];
         // Special case: "new-arrivals" category also matches isNewArrival flag
         if (category === 'new-arrivals') {
-            orConditions.push({ isNewArrival: true });
+            catConditions.push({ isNewArrival: true });
         }
-        filter.$or = orConditions;
+        if (!filter.$and) filter.$and = [];
+        filter.$and.push({ $or: catConditions });
     }
 
     if (search) {
-        filter.$text = { $search: search };
+        // Support both English and Arabic search via regex
+        const searchRegex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        const searchConditions = [
+            { name: searchRegex },
+            { nameAr: searchRegex },
+            { description: searchRegex },
+            { descriptionAr: searchRegex },
+            { tags: searchRegex }
+        ];
+        if (!filter.$and) filter.$and = [];
+        filter.$and.push({ $or: searchConditions });
     }
 
     if (minPrice || maxPrice) {
@@ -217,6 +228,24 @@ const incrementProductView = asyncHandler(async (req, res) => {
     res.json({ success: true });
 });
 
+// @desc    Get collection-featured products
+// @route   GET /api/products/collection-featured
+// @access  Public
+const getCollectionFeatured = asyncHandler(async (req, res) => {
+    const limit = parseInt(req.query.limit) || 12;
+
+    const products = await Product.find({ isActive: true, isCollectionFeatured: true })
+        .populate('category', 'name slug')
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean();
+
+    res.json({
+        success: true,
+        data: products
+    });
+});
+
 module.exports = {
     getProducts,
     getProduct,
@@ -225,5 +254,6 @@ module.exports = {
     updateProduct,
     deleteProduct,
     getFeaturedProducts,
-    incrementProductView
+    incrementProductView,
+    getCollectionFeatured
 };

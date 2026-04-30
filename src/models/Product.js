@@ -108,6 +108,10 @@ const productSchema = new mongoose.Schema({
     viewCount: {
         type: Number,
         default: 0
+    },
+    isCollectionFeatured: {
+        type: Boolean,
+        default: false
     }
 }, {
     timestamps: true
@@ -121,7 +125,8 @@ productSchema.pre('save', function () {
 });
 
 // Indexes for search and query performance
-productSchema.index({ name: 'text', description: 'text', tags: 'text' });
+// Includes Arabic fields for bilingual search support
+productSchema.index({ name: 'text', nameAr: 'text', description: 'text', descriptionAr: 'text', tags: 'text' });
 productSchema.index({ category: 1, isActive: 1 });
 productSchema.index({ additionalCategories: 1, isActive: 1 });
 productSchema.index({ isFeatured: 1, isActive: 1 });

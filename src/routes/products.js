@@ -8,12 +8,14 @@ const {
     updateProduct,
     deleteProduct,
     getFeaturedProducts,
-    incrementProductView
+    incrementProductView,
+    getCollectionFeatured
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/auth');
 
 router.get('/', getProducts);
 router.get('/featured', getFeaturedProducts);
+router.get('/collection-featured', getCollectionFeatured);
 router.get('/slug/:slug', getProductBySlug);
 router.get('/:id', getProduct);
 router.post('/:id/view', incrementProductView);
