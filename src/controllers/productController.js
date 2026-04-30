@@ -30,10 +30,15 @@ const getProducts = asyncHandler(async (req, res) => {
             }
         }
         // Match products where primary category OR additionalCategories contains the target
-        filter.$or = [
+        const orConditions = [
             { category: catId },
             { additionalCategories: catId }
         ];
+        // Special case: "new-arrivals" category also matches isNewArrival flag
+        if (category === 'new-arrivals') {
+            orConditions.push({ isNewArrival: true });
+        }
+        filter.$or = orConditions;
     }
 
     if (search) {
