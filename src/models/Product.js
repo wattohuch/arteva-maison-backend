@@ -47,6 +47,10 @@ const productSchema = new mongoose.Schema({
         ref: 'Category',
         required: [true, 'Product category is required']
     },
+    additionalCategories: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Category'
+    }],
     images: [{
         url: { type: String, required: true },
         alt: { type: String },
@@ -119,6 +123,7 @@ productSchema.pre('save', function () {
 // Indexes for search and query performance
 productSchema.index({ name: 'text', description: 'text', tags: 'text' });
 productSchema.index({ category: 1, isActive: 1 });
+productSchema.index({ additionalCategories: 1, isActive: 1 });
 productSchema.index({ isFeatured: 1, isActive: 1 });
 productSchema.index({ isNewArrival: 1, isActive: 1 });
 productSchema.index({ viewCount: -1 });

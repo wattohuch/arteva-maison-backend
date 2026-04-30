@@ -16,18 +16,24 @@ const getProducts = asyncHandler(async (req, res) => {
 
     if (category) {
         // Support both ObjectId and slug-based category filtering
+        let catId;
         if (mongoose.Types.ObjectId.isValid(category)) {
-            filter.category = category;
+            catId = category;
         } else {
             // Look up category by slug
             const cat = await Category.findOne({ slug: category });
             if (cat) {
-                filter.category = cat._id;
+                catId = cat._id;
             } else {
                 // No matching category — return empty results
                 return res.json({ success: true, data: [], pagination: { page, limit, total: 0, pages: 0 } });
             }
         }
+        // Match products where primary category OR additionalCategories contains the target
+        filter.$or = [
+            { category: catId },
+            { additionalCategories: catId }
+        ];
     }
 
     if (search) {
@@ -52,6 +58,7 @@ const getProducts = asyncHandler(async (req, res) => {
 
     const products = await Product.find(filter)
         .populate('category', 'name slug')
+        .populate('additionalCategories', 'name slug')
         .sort(sortQuery)
         .skip(skip)
         .limit(limit)
@@ -75,7 +82,7 @@ const getProducts = asyncHandler(async (req, res) => {
 // @route   GET /api/products/:id
 // @access  Public
 const getProduct = asyncHandler(async (req, res) => {
-    const product = await Product.findById(req.params.id).populate('category', 'name slug').lean();
+    const product = await Product.findById(req.params.id).populate('category', 'name slug').populate('additionalCategories', 'name slug').lean();
 
     if (!product) {
         res.status(404);
@@ -94,6 +101,7 @@ const getProduct = asyncHandler(async (req, res) => {
 const getProductBySlug = asyncHandler(async (req, res) => {
     const product = await Product.findOne({ slug: req.params.slug, isActive: true })
         .populate('category', 'name slug')
+        .populate('additionalCategories', 'name slug')
         .lean();
 
     if (!product) {
@@ -128,6 +136,15 @@ const updateProduct = asyncHandler(async (req, res) => {
     if (!product) {
         res.status(404);
         throw new Error('Product not found');
+    }
+
+    // Parse additionalCategories if sent as JSON string (from FormData)
+    if (req.body.additionalCategories && typeof req.body.additionalCategories === 'string') {
+        try {
+            req.body.additionalCategories = JSON.parse(req.body.additionalCategories);
+        } catch (e) {
+            req.body.additionalCategories = [];
+        }
     }
 
     product = await Product.findByIdAndUpdate(req.params.id, req.body, {
