@@ -1,10 +1,11 @@
 /**
  * ARTEVA Maison - Automatic Backup Scheduler
  * 
- * This runs alongside your server and automatically backs up data:
+ * Runs alongside your server and automatically backs up data:
  * - Every day at 4:00 AM (Kuwait time) - when traffic is lowest
  * - Runs in the background - doesn't slow down your website
  * - Keeps the last 7 days of backups automatically
+ * - Uploads backups to Google Cloud Storage (if configured)
  * 
  * The backup is completely invisible to your customers!
  */
@@ -19,6 +20,9 @@ const Product = require('./models/Product');
 const Category = require('./models/Category');
 const Cart = require('./models/Cart');
 const Order = require('./models/Order');
+
+// Import GitHub backup service
+const { uploadBackupToGitHub, cleanOldGitHubBackups, isGitHubEnabled } = require('./services/githubBackup');
 
 // Configuration
 const BACKUP_HOUR = 4; // 4:00 AM - lowest traffic time
@@ -65,7 +69,8 @@ function getActiveUsers() {
  */
 async function performBackup() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const backupFolder = path.join(backupDir, `backup-${timestamp}`);
+    const backupName = `backup-${timestamp}`;
+    const backupFolder = path.join(backupDir, backupName);
 
     console.log(`\n📦 [${new Date().toLocaleString()}] Starting automatic backup...`);
 
@@ -103,9 +108,22 @@ async function performBackup() {
             JSON.stringify(backupInfo, null, 2)
         );
 
-        console.log(`✅ Backup complete! ${totalRecords} records saved to ${backupFolder}`);
+        console.log(`✅ Local backup complete! ${totalRecords} records saved to ${backupFolder}`);
 
-        // Clean up old backups (keep only last 7 days)
+        // Upload to GitHub (if configured)
+        if (isGitHubEnabled()) {
+            console.log(`🐙 Uploading backup to GitHub...`);
+            const ghSuccess = await uploadBackupToGitHub(backupFolder, backupName);
+            if (ghSuccess) {
+                console.log(`🐙 Cloud backup successful!`);
+                // Clean old GitHub backups (keep last 7)
+                await cleanOldGitHubBackups(DAYS_TO_KEEP);
+            } else {
+                console.error(`⚠️  Cloud backup failed — local backup is still safe`);
+            }
+        }
+
+        // Clean up old local backups (keep only last 7 days)
         cleanOldBackups();
 
         return true;
@@ -168,10 +186,12 @@ async function smartBackup() {
 let backupScheduled = false;
 
 function startBackupScheduler() {
+    const cloudStatus = isGitHubEnabled() ? '🐙 GitHub Cloud Backup' : '💾 Local only';
     console.log('📅 Automatic backup scheduler started');
     console.log(`   ⏰ Daily backup at ${BACKUP_HOUR}:00 AM`);
     console.log(`   📁 Backups saved to: ${backupDir}`);
-    console.log(`   🔄 Keeping last ${DAYS_TO_KEEP} days of backups\n`);
+    console.log(`   🔄 Keeping last ${DAYS_TO_KEEP} days of backups`);
+    console.log(`   ${cloudStatus}\n`);
 
     // Check every minute if it's backup time
     setInterval(() => {

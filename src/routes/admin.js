@@ -13,13 +13,17 @@ const {
     updateUserRole,
     deleteUser,
     sendOfferEmail,
-    getProductViewAnalytics
+    getProductViewAnalytics,
+    getRevenueHistory
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // Stats
 router.get('/stats', protect, admin, getDashboardStats);
+
+// Revenue History (owner only - auth check in controller)
+router.get('/revenue-history', protect, admin, getRevenueHistory);
 
 // Analytics
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);

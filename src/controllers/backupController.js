@@ -6,6 +6,7 @@ const Product = require('../models/Product');
 const Category = require('../models/Category');
 const Cart = require('../models/Cart');
 const Order = require('../models/Order');
+const { uploadBackupToGitHub, listGitHubBackups, downloadBackupFromGitHub, isGitHubEnabled } = require('../services/githubBackup');
 
 const backupDir = path.join(__dirname, '..', '..', 'backups');
 
@@ -14,11 +15,12 @@ if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true });
 }
 
-// @desc    List all available backups
+// @desc    List all available backups (local + GCS)
 // @route   GET /api/admin/backups
 // @access  Private/Admin
 const listBackups = asyncHandler(async (req, res) => {
-    const backups = fs.readdirSync(backupDir)
+    // Get local backups
+    const localBackups = fs.readdirSync(backupDir)
         .filter(f => f.startsWith('backup-'))
         .map(folder => {
             const infoPath = path.join(backupDir, folder, '_backup-info.json');
@@ -31,27 +33,72 @@ const listBackups = asyncHandler(async (req, res) => {
             return {
                 name: folder,
                 ...info,
-                size: getFolderSize(path.join(backupDir, folder))
+                size: getFolderSize(path.join(backupDir, folder)),
+                source: 'local'
             };
         })
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+        .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+
+    // Get GitHub backups
+    let ghBackups = [];
+    if (isGitHubEnabled()) {
+        try {
+            ghBackups = await listGitHubBackups();
+        } catch (err) {
+            console.error('Failed to list GitHub backups:', err.message);
+        }
+    }
+
+    // Merge: prefer local, add GitHub-only entries
+    const localNames = new Set(localBackups.map(b => b.name));
+    const mergedBackups = [...localBackups];
+
+    for (const ghBackup of ghBackups) {
+        if (!localNames.has(ghBackup.name)) {
+            mergedBackups.push({
+                name: ghBackup.name,
+                timestamp: ghBackup.timestamp,
+                totalRecords: 0,
+                size: 'cloud',
+                source: 'github'
+            });
+        } else {
+            // Mark local backup as also being in GitHub
+            const localEntry = mergedBackups.find(b => b.name === ghBackup.name);
+            if (localEntry) localEntry.source = 'local+github';
+        }
+    }
+
+    // Sort by timestamp descending
+    mergedBackups.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
 
     res.json({
         success: true,
-        data: backups
+        data: mergedBackups,
+        githubEnabled: isGitHubEnabled()
     });
 });
 
-// @desc    Download a backup as JSON
+// @desc    Download a backup as JSON (local or from GitHub)
 // @route   GET /api/admin/backups/:backupName/download
 // @access  Private/Admin
 const downloadBackup = asyncHandler(async (req, res) => {
     const { backupName } = req.params;
-    const backupPath = path.join(backupDir, backupName);
+    let backupPath = path.join(backupDir, backupName);
 
+    // If not found locally, try downloading from GitHub
     if (!fs.existsSync(backupPath)) {
-        res.status(404);
-        throw new Error('Backup not found');
+        if (isGitHubEnabled()) {
+            console.log(`Backup ${backupName} not found locally, downloading from GitHub...`);
+            const success = await downloadBackupFromGitHub(backupName, backupDir);
+            if (!success) {
+                res.status(404);
+                throw new Error('Backup not found locally or in cloud storage');
+            }
+        } else {
+            res.status(404);
+            throw new Error('Backup not found');
+        }
     }
 
     // Read all backup files
@@ -73,13 +120,14 @@ const downloadBackup = asyncHandler(async (req, res) => {
     });
 });
 
-// @desc    Create a new backup
+// @desc    Create a new backup (local + GitHub)
 // @route   POST /api/admin/backups/create
 // @access  Private/Admin
 const createBackup = asyncHandler(async (req, res) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0] + '-' + 
                       new Date().toTimeString().split(' ')[0].replace(/:/g, '-');
-    const backupFolder = path.join(backupDir, `backup-${timestamp}`);
+    const backupName = `backup-${timestamp}`;
+    const backupFolder = path.join(backupDir, backupName);
 
     // Create backup folder
     fs.mkdirSync(backupFolder, { recursive: true });
@@ -114,12 +162,19 @@ const createBackup = asyncHandler(async (req, res) => {
         JSON.stringify(backupInfo, null, 2)
     );
 
+    // Upload to GitHub if available
+    let ghUploaded = false;
+    if (isGitHubEnabled()) {
+        ghUploaded = await uploadBackupToGitHub(backupFolder, backupName);
+    }
+
     res.json({
         success: true,
-        message: 'Backup created successfully',
+        message: `Backup created successfully${ghUploaded ? ' (uploaded to GitHub)' : ''}`,
         data: {
-            name: `backup-${timestamp}`,
-            ...backupInfo
+            name: backupName,
+            ...backupInfo,
+            source: ghUploaded ? 'local+github' : 'local'
         }
     });
 });
@@ -129,11 +184,21 @@ const createBackup = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const restoreBackup = asyncHandler(async (req, res) => {
     const { backupName } = req.params;
-    const backupPath = path.join(backupDir, backupName);
+    let backupPath = path.join(backupDir, backupName);
 
+    // If not found locally, try downloading from GitHub
     if (!fs.existsSync(backupPath)) {
-        res.status(404);
-        throw new Error('Backup not found');
+        if (isGitHubEnabled()) {
+            console.log(`Backup ${backupName} not found locally, downloading from GitHub for restore...`);
+            const success = await downloadBackupFromGitHub(backupName, backupDir);
+            if (!success) {
+                res.status(404);
+                throw new Error('Backup not found locally or in cloud storage');
+            }
+        } else {
+            res.status(404);
+            throw new Error('Backup not found');
+        }
     }
 
     const collections = [

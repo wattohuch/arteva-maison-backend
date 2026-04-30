@@ -515,6 +515,123 @@ const getProductViewAnalytics = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get revenue history with breakdowns
+// @route   GET /api/admin/revenue-history
+// @access  Private/Owner
+const getRevenueHistory = asyncHandler(async (req, res) => {
+    const now = new Date();
+
+    // Start of today (Kuwait time UTC+3)
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Start of this week (Sunday)
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+
+    // Start of this month
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // 12 months ago
+    const yearStart = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+
+    // Today's revenue
+    const todayOrders = await Order.find({
+        paymentStatus: 'paid',
+        createdAt: { $gte: todayStart }
+    }).lean();
+    const todayRevenue = todayOrders.reduce((sum, o) => sum + o.total, 0);
+    const todayOrderCount = todayOrders.length;
+
+    // This week's revenue
+    const weekOrders = await Order.find({
+        paymentStatus: 'paid',
+        createdAt: { $gte: weekStart }
+    }).lean();
+    const weekRevenue = weekOrders.reduce((sum, o) => sum + o.total, 0);
+
+    // This month's revenue
+    const monthOrders = await Order.find({
+        paymentStatus: 'paid',
+        createdAt: { $gte: monthStart }
+    }).lean();
+    const monthRevenue = monthOrders.reduce((sum, o) => sum + o.total, 0);
+
+    // All-time revenue
+    const allOrders = await Order.find({ paymentStatus: 'paid' }).lean();
+    const allTimeRevenue = allOrders.reduce((sum, o) => sum + o.total, 0);
+    const totalOrderCount = allOrders.length;
+
+    // Daily breakdown (last 30 days) using aggregation
+    const thirtyDaysAgo = new Date(todayStart);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const dailyBreakdown = await Order.aggregate([
+        {
+            $match: {
+                paymentStatus: 'paid',
+                createdAt: { $gte: thirtyDaysAgo }
+            }
+        },
+        {
+            $group: {
+                _id: {
+                    year: { $year: '$createdAt' },
+                    month: { $month: '$createdAt' },
+                    day: { $dayOfMonth: '$createdAt' }
+                },
+                revenue: { $sum: '$total' },
+                orders: { $sum: 1 }
+            }
+        },
+        { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
+    ]);
+
+    // Monthly breakdown (last 12 months) using aggregation
+    const monthlyBreakdown = await Order.aggregate([
+        {
+            $match: {
+                paymentStatus: 'paid',
+                createdAt: { $gte: yearStart }
+            }
+        },
+        {
+            $group: {
+                _id: {
+                    year: { $year: '$createdAt' },
+                    month: { $month: '$createdAt' }
+                },
+                revenue: { $sum: '$total' },
+                orders: { $sum: 1 }
+            }
+        },
+        { $sort: { '_id.year': -1, '_id.month': -1 } }
+    ]);
+
+    res.json({
+        success: true,
+        data: {
+            summary: {
+                today: { revenue: todayRevenue, orders: todayOrderCount },
+                thisWeek: { revenue: weekRevenue, orders: weekOrders.length },
+                thisMonth: { revenue: monthRevenue, orders: monthOrders.length },
+                allTime: { revenue: allTimeRevenue, orders: totalOrderCount }
+            },
+            dailyBreakdown: dailyBreakdown.map(d => ({
+                date: `${d._id.year}-${String(d._id.month).padStart(2, '0')}-${String(d._id.day).padStart(2, '0')}`,
+                revenue: d.revenue,
+                orders: d.orders
+            })),
+            monthlyBreakdown: monthlyBreakdown.map(m => ({
+                year: m._id.year,
+                month: m._id.month,
+                revenue: m.revenue,
+                orders: m.orders
+            }))
+        }
+    });
+});
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -528,5 +645,6 @@ module.exports = {
     updateUserRole,
     deleteUser,
     sendOfferEmail,
-    getProductViewAnalytics
+    getProductViewAnalytics,
+    getRevenueHistory
 };
