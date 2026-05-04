@@ -25,27 +25,27 @@ const protect = async (req, res, next) => {
     }
 };
 
-// Admin only middleware (includes owner)
+// Admin only middleware (includes owner and superuser)
 const admin = (req, res, next) => {
-    if (req.user && (req.user.role === 'admin' || req.user.role === 'owner')) {
+    if (req.user && (req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'superuser')) {
         next();
     } else {
         res.status(403).json({ success: false, message: 'Not authorized as admin' });
     }
 };
 
-// Owner only middleware
+// Owner only middleware (includes superuser)
 const owner = (req, res, next) => {
-    if (req.user && req.user.role === 'owner') {
+    if (req.user && (req.user.role === 'owner' || req.user.role === 'superuser')) {
         next();
     } else {
         res.status(403).json({ success: false, message: 'Not authorized as owner' });
     }
 };
 
-// Admin only (not owner) middleware
+// Admin only (not owner) middleware (includes superuser)
 const adminOnly = (req, res, next) => {
-    if (req.user && req.user.role === 'admin') {
+    if (req.user && (req.user.role === 'admin' || req.user.role === 'superuser')) {
         next();
     } else {
         res.status(403).json({ success: false, message: 'Not authorized as admin' });
@@ -69,9 +69,9 @@ const optionalAuth = async (req, res, next) => {
     next();
 };
 
-// Driver middleware (also allows admin and owner access)
+// Driver middleware (also allows admin, owner and superuser access)
 const driver = (req, res, next) => {
-    if (req.user && (req.user.role === 'driver' || req.user.role === 'admin' || req.user.role === 'owner')) {
+    if (req.user && (req.user.role === 'driver' || req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'superuser')) {
         next();
     } else {
         res.status(403).json({ success: false, message: 'Not authorized as driver' });
