@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/seed.js",
     "update-owner": "node src/update-admin-to-owner.js",
+    "setup-superuser": "node setup-superuser.js",
     "fix-images": "node src/fix-product-images.js",
     "fix-images-auto": "node src/fix-product-images.js --auto-fix",
     "fix-images-script": "node src/fix-product-images.js --generate-script",

@@ -62,12 +62,24 @@ const getAdminProducts = asyncHandler(async (req, res) => {
 // @route   POST /api/admin/products
 // @access  Private/Admin
 const createProduct = asyncHandler(async (req, res) => {
-    const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon } = req.body;
+    const { name, nameAr, description, descriptionAr, price, category, additionalCategories, stock, sku, isFeatured, isNewArrival, isComingSoon } = req.body;
 
     // Parse boolean values consistently
     const isFeaturedValue = parseBoolean(isFeatured);
     const isNewArrivalValue = parseBoolean(isNewArrival);
     const isComingSoonValue = parseBoolean(isComingSoon);
+
+    // Parse additionalCategories if sent as JSON string
+    let parsedAdditionalCategories = [];
+    if (additionalCategories) {
+        try {
+            parsedAdditionalCategories = typeof additionalCategories === 'string' 
+                ? JSON.parse(additionalCategories) 
+                : additionalCategories;
+        } catch (e) {
+            console.error('[ADMIN CREATE] Failed to parse additionalCategories:', e);
+        }
+    }
 
     console.log(`[ADMIN CREATE] New product "${name}" by ${req.user.email}`);
     console.log(`[ADMIN CREATE] Boolean flags:`, {
@@ -75,6 +87,7 @@ const createProduct = asyncHandler(async (req, res) => {
         isNewArrival: isNewArrivalValue,
         isComingSoon: isComingSoonValue
     });
+    console.log(`[ADMIN CREATE] Categories:`, { primary: category, additional: parsedAdditionalCategories });
 
     let images = [];
     if (req.files && req.files.length > 0) {
@@ -100,6 +113,7 @@ const createProduct = asyncHandler(async (req, res) => {
         descriptionAr,
         price,
         category,
+        additionalCategories: parsedAdditionalCategories,
         stock,
         sku,
         isFeatured: isFeaturedValue || false,
@@ -124,13 +138,26 @@ const updateProduct = asyncHandler(async (req, res) => {
         throw new Error('Product not found');
     }
 
-    const { name, nameAr, description, descriptionAr, price, category, stock, sku, isFeatured, isNewArrival, isComingSoon, isCollectionFeatured, imagesToDelete, primaryImageUrl } = req.body;
+    const { name, nameAr, description, descriptionAr, price, category, additionalCategories, stock, sku, isFeatured, isNewArrival, isComingSoon, isCollectionFeatured, imagesToDelete, primaryImageUrl } = req.body;
 
     // Parse boolean values consistently
     const isFeaturedValue = parseBoolean(isFeatured);
     const isNewArrivalValue = parseBoolean(isNewArrival);
     const isComingSoonValue = parseBoolean(isComingSoon);
     const isCollectionFeaturedValue = parseBoolean(isCollectionFeatured);
+
+    // Parse additionalCategories if sent as JSON string
+    let parsedAdditionalCategories;
+    if (additionalCategories !== undefined) {
+        try {
+            parsedAdditionalCategories = typeof additionalCategories === 'string' 
+                ? JSON.parse(additionalCategories) 
+                : additionalCategories;
+        } catch (e) {
+            console.error('[ADMIN UPDATE] Failed to parse additionalCategories:', e);
+            parsedAdditionalCategories = [];
+        }
+    }
 
     // Log admin action for debugging and audit trail
     console.log(`[ADMIN UPDATE] Product ${product._id} (${product.name}) updated by ${req.user.email}`);
@@ -140,6 +167,9 @@ const updateProduct = asyncHandler(async (req, res) => {
         isComingSoon: isComingSoonValue,
         isCollectionFeatured: isCollectionFeaturedValue
     });
+    if (parsedAdditionalCategories !== undefined) {
+        console.log(`[ADMIN UPDATE] Additional categories:`, parsedAdditionalCategories);
+    }
 
     // Handle image deletion
     if (imagesToDelete) {
@@ -196,6 +226,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     if (descriptionAr !== undefined) product.descriptionAr = descriptionAr;
     if (price !== undefined) product.price = price;
     if (category !== undefined) product.category = category;
+    if (parsedAdditionalCategories !== undefined) product.additionalCategories = parsedAdditionalCategories;
     if (stock !== undefined) product.stock = stock;
     if (sku !== undefined) product.sku = sku;
 
@@ -272,13 +303,14 @@ const getAdminOrders = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const updateOrderStatus = asyncHandler(async (req, res) => {
     const { status } = req.body;
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id).populate('user', 'name email phone');
 
     if (!order) {
         res.status(404);
         throw new Error('Order not found');
     }
 
+    const oldStatus = order.orderStatus;
     order.updateStatus(status, 'Status updated by admin', req.user._id);
 
     if (status === 'paid' || status === 'delivered') {
@@ -287,13 +319,21 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
     await order.save();
 
+    // Send WhatsApp notification to OWNER about status change
+    try {
+        const whatsapp = require('../services/whatsappService');
+        await whatsapp.notifyOwnerOrderStatusChange(order, order.user, oldStatus, status);
+    } catch (whatsappErr) {
+        console.error('Failed to send WhatsApp notification:', whatsappErr);
+    }
+
     // Emit real-time update (include orderId for admin dashboard)
     const { emitOrderStatusUpdate } = require('../socketHandler');
     emitOrderStatusUpdate(order.orderNumber, {
         status: order.orderStatus,
         statusHistory: order.statusHistory,
         orderId: order._id.toString(),
-        userId: order.user ? order.user.toString() : null
+        userId: order.user ? order.user._id.toString() : null
     });
 
     res.json({ success: true, data: order });
@@ -523,10 +563,15 @@ const getProductViewAnalytics = asyncHandler(async (req, res) => {
     });
 });
 
-// @desc    Get revenue history with breakdowns
+// @desc    Get revenue history with breakdowns and paid orders
 // @route   GET /api/admin/revenue-history
-// @access  Private/Owner
+// @access  Private/Superuser
 const getRevenueHistory = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can access revenue data.');
+    }
+
     const now = new Date();
 
     // Start of today (Kuwait time UTC+3)
@@ -569,6 +614,18 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
     const allOrders = await Order.find({ paymentStatus: 'paid' }).lean();
     const allTimeRevenue = allOrders.reduce((sum, o) => sum + o.total, 0);
     const totalOrderCount = allOrders.length;
+
+    // Get detailed paid orders for receipts (last 6 months)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+    const paidOrders = await Order.find({
+        paymentStatus: 'paid',
+        createdAt: { $gte: sixMonthsAgo }
+    })
+    .populate('user', 'name email phone language')
+    .sort({ createdAt: -1 })
+    .lean();
 
     // Daily breakdown (last 30 days) using aggregation
     const thirtyDaysAgo = new Date(todayStart);
@@ -625,6 +682,26 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
                 thisMonth: { revenue: monthRevenue, orders: monthOrders.length },
                 allTime: { revenue: allTimeRevenue, orders: totalOrderCount }
             },
+            paidOrders: paidOrders.map(order => ({
+                _id: order._id,
+                orderNumber: order.orderNumber,
+                customer: {
+                    name: order.user.name,
+                    email: order.user.email,
+                    phone: order.user.phone,
+                    language: order.user.language
+                },
+                total: order.total,
+                currency: order.currency,
+                paymentMethod: order.paymentMethod,
+                createdAt: order.createdAt,
+                paidAt: order.paidAt,
+                items: order.items,
+                shippingAddress: order.shippingAddress,
+                // Calculate if order is within 14-day cancellation period
+                canCancel: new Date() - new Date(order.createdAt) <= 14 * 24 * 60 * 60 * 1000,
+                daysSinceOrder: Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000))
+            })),
             dailyBreakdown: dailyBreakdown.map(d => ({
                 date: `${d._id.year}-${String(d._id.month).padStart(2, '0')}-${String(d._id.day).padStart(2, '0')}`,
                 revenue: d.revenue,
@@ -640,6 +717,479 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Check if user is superuser
+// @route   GET /api/admin/check-superuser
+// @access  Private
+const checkSuperuser = asyncHandler(async (req, res) => {
+    res.json({
+        success: true,
+        isSuperuser: req.user.role === 'superuser'
+    });
+});
+
+// @desc    Authenticate revenue access with password
+// @route   POST /api/admin/revenue-auth
+// @access  Private/Superuser
+const authenticateRevenueAccess = asyncHandler(async (req, res) => {
+    const { revenuePassword } = req.body;
+
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can access revenue data.');
+    }
+
+    const user = await User.findById(req.user._id).select('+revenuePassword');
+
+    if (!user.revenuePassword) {
+        res.status(400);
+        throw new Error('Revenue password not set. Please contact administrator.');
+    }
+
+    const isMatch = await user.matchPassword(revenuePassword);
+
+    if (!isMatch) {
+        res.status(401);
+        throw new Error('Invalid revenue password');
+    }
+
+    res.json({
+        success: true,
+        message: 'Revenue access authenticated'
+    });
+});
+
+// @desc    Request revenue OTP
+// @route   POST /api/admin/revenue-otp/request
+// @access  Private/Superuser
+const requestRevenueOTP = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can request revenue OTP.');
+    }
+
+    const user = await User.findById(req.user._id);
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.revenueOTP = otp;
+    user.revenueOTPExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    await user.save();
+
+    // Send OTP via email and SMS
+    const { sendEmail } = require('../services/emailService');
+    
+    const emailHtml = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+            <div style="background-color: #8b7355; padding: 20px; text-align: center;">
+                <h1 style="color: white; margin: 0;">ARTÉVA MAISON</h1>
+            </div>
+            <div style="padding: 30px; background-color: #f9f7f2;">
+                <h2 style="color: #2c241b;">Revenue Access OTP</h2>
+                <p style="color: #4a3b2a;">Your OTP for revenue access is:</p>
+                <div style="background-color: #8b7355; color: white; font-size: 32px; font-weight: bold; text-align: center; padding: 20px; margin: 20px 0; border-radius: 8px;">
+                    ${otp}
+                </div>
+                <p style="color: #4a3b2a;">This OTP will expire in 10 minutes.</p>
+            </div>
+        </div>
+    `;
+
+    await sendEmail({
+        to: 'mohammadalawaji2@gmail.com',
+        subject: 'Revenue Access OTP - ARTEVA Maison',
+        html: emailHtml
+    });
+
+    // TODO: Integrate SMS service for +965656115663
+    console.log(`[REVENUE OTP] Generated OTP ${otp} for user ${user.email}`);
+
+    res.json({
+        success: true,
+        message: 'OTP sent to registered email and phone number'
+    });
+});
+
+// @desc    Verify revenue OTP
+// @route   POST /api/admin/revenue-otp/verify
+// @access  Private/Superuser
+const verifyRevenueOTP = asyncHandler(async (req, res) => {
+    const { otp } = req.body;
+
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can verify revenue OTP.');
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user.revenueOTP || !user.revenueOTPExpiry) {
+        res.status(400);
+        throw new Error('No OTP request found. Please request a new OTP.');
+    }
+
+    if (new Date() > user.revenueOTPExpiry) {
+        res.status(400);
+        throw new Error('OTP has expired. Please request a new OTP.');
+    }
+
+    if (user.revenueOTP !== otp) {
+        res.status(401);
+        throw new Error('Invalid OTP');
+    }
+
+    // Clear OTP after successful verification
+    user.revenueOTP = null;
+    user.revenueOTPExpiry = null;
+    await user.save();
+
+    res.json({
+        success: true,
+        message: 'OTP verified successfully'
+    });
+});
+
+// @desc    Generate receipt for order
+// @route   GET /api/admin/receipt/:orderId
+// @access  Private/Superuser
+const generateReceipt = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can generate receipts.');
+    }
+
+    const order = await Order.findById(req.params.orderId)
+        .populate('user', 'name email phone language')
+        .lean();
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    if (order.paymentStatus !== 'paid') {
+        res.status(400);
+        throw new Error('Receipt can only be generated for paid orders');
+    }
+
+    const isArabic = order.user.language === 'ar';
+    const daysSinceOrder = Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000));
+    const canCancel = daysSinceOrder <= 14;
+
+    // Generate receipt HTML
+    const receiptHtml = generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(receiptHtml);
+});
+
+// @desc    Set revenue password for superuser (first time)
+// @route   POST /api/admin/set-revenue-password
+// @access  Private/Superuser
+const setRevenuePassword = asyncHandler(async (req, res) => {
+    const { revenuePassword } = req.body;
+
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can set revenue password.');
+    }
+
+    if (!revenuePassword || revenuePassword.length < 6) {
+        res.status(400);
+        throw new Error('Revenue password must be at least 6 characters');
+    }
+
+    const user = await User.findById(req.user._id).select('+revenuePassword');
+
+    // Only allow setting if not already set
+    if (user.revenuePassword) {
+        res.status(400);
+        throw new Error('Revenue password already set. Use forgot password to reset.');
+    }
+
+    // Hash and save revenue password
+    const bcrypt = require('bcryptjs');
+    const salt = await bcrypt.genSalt(10);
+    user.revenuePassword = await bcrypt.hash(revenuePassword, salt);
+    await user.save();
+
+    console.log(`[REVENUE] Revenue password set for superuser: ${user.email}`);
+
+    res.json({
+        success: true,
+        message: 'Revenue password set successfully'
+    });
+});
+
+// Helper function to generate receipt HTML
+function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
+    const dir = isArabic ? 'rtl' : 'ltr';
+    const align = isArabic ? 'right' : 'left';
+    const oppositeAlign = isArabic ? 'left' : 'right';
+    
+    const texts = isArabic ? {
+        title: 'إيصال الطلب',
+        orderNumber: 'رقم الطلب',
+        orderDate: 'تاريخ الطلب',
+        customer: 'العميل',
+        email: 'البريد الإلكتروني',
+        phone: 'الهاتف',
+        shippingAddress: 'عنوان الشحن',
+        items: 'المنتجات',
+        product: 'المنتج',
+        quantity: 'الكمية',
+        price: 'السعر',
+        total: 'المجموع',
+        subtotal: 'المجموع الفرعي',
+        shipping: 'الشحن',
+        grandTotal: 'المجموع الكلي',
+        paymentMethod: 'طريقة الدفع',
+        paymentStatus: 'حالة الدفع',
+        paid: 'مدفوع',
+        refundPolicy: 'سياسة الاسترجاع',
+        refundNotice: `يمكن استرجاع المنتجات غير المفتوحة خلال 14 يومًا من تاريخ الطلب. (${daysSinceOrder} يوم منذ الطلب)`,
+        refundExpired: `انتهت فترة الاسترجاع (14 يومًا). مر ${daysSinceOrder} يومًا منذ الطلب.`,
+        contactUs: 'للاستفسارات، تواصل معنا عبر واتساب: +965656115663',
+        thankYou: 'شكراً لتسوقك معنا!'
+    } : {
+        title: 'Order Receipt',
+        orderNumber: 'Order Number',
+        orderDate: 'Order Date',
+        customer: 'Customer',
+        email: 'Email',
+        phone: 'Phone',
+        shippingAddress: 'Shipping Address',
+        items: 'Items',
+        product: 'Product',
+        quantity: 'Quantity',
+        price: 'Price',
+        total: 'Total',
+        subtotal: 'Subtotal',
+        shipping: 'Shipping',
+        grandTotal: 'Grand Total',
+        paymentMethod: 'Payment Method',
+        paymentStatus: 'Payment Status',
+        paid: 'Paid',
+        refundPolicy: 'Refund Policy',
+        refundNotice: `Unopened products can be refunded within 14 days of order date. (${daysSinceOrder} days since order)`,
+        refundExpired: `Refund period expired (14 days). ${daysSinceOrder} days have passed since order.`,
+        contactUs: 'For inquiries, contact us via WhatsApp: +965656115663',
+        thankYou: 'Thank you for shopping with us!'
+    };
+
+    const refundBgColor = canCancel ? '#d4edda' : '#fff3cd';
+    const refundTextColor = canCancel ? '#155724' : '#856404';
+    const refundMessage = canCancel ? texts.refundNotice : texts.refundExpired;
+
+    const itemsHtml = order.items.map(item => {
+        const productName = isArabic && item.nameAr ? item.nameAr : item.name;
+        return `
+            <tr>
+                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: ${align};">${productName}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: center;">${item.quantity}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign};">${item.price.toFixed(3)} ${order.currency}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign}; font-weight: bold;">${(item.price * item.quantity).toFixed(3)} ${order.currency}</td>
+            </tr>
+        `;
+    }).join('');
+
+    const shippingAddress = order.shippingAddress;
+    const addressText = `${shippingAddress.street}, ${shippingAddress.city}, ${shippingAddress.state || ''} ${shippingAddress.zipCode || ''}, ${shippingAddress.country}`;
+
+    return `
+<!DOCTYPE html>
+<html lang="${isArabic ? 'ar' : 'en'}" dir="${dir}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${texts.title} - ${order.orderNumber}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: ${isArabic ? "'Tajawal', 'Arial', sans-serif" : "'Arial', sans-serif"}; 
+            background-color: #f5f5f5; 
+            padding: 20px;
+            direction: ${dir};
+        }
+        .receipt-container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            background: white; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        .header { 
+            background: linear-gradient(135deg, #8b7355 0%, #6d5a45 100%); 
+            color: white; 
+            padding: 30px; 
+            text-align: center;
+        }
+        .header h1 { font-size: 32px; margin-bottom: 10px; letter-spacing: 2px; }
+        .header p { font-size: 14px; opacity: 0.9; }
+        .content { padding: 30px; }
+        .section { margin-bottom: 25px; }
+        .section-title { 
+            font-size: 18px; 
+            font-weight: bold; 
+            color: #8b7355; 
+            margin-bottom: 12px; 
+            padding-bottom: 8px; 
+            border-bottom: 2px solid #8b7355;
+        }
+        .info-row { 
+            display: flex; 
+            justify-content: space-between; 
+            padding: 8px 0; 
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .info-label { font-weight: bold; color: #555; }
+        .info-value { color: #333; text-align: ${oppositeAlign}; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th { 
+            background-color: #8b7355; 
+            color: white; 
+            padding: 12px; 
+            text-align: ${align}; 
+            font-weight: bold;
+        }
+        th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: center; }
+        .totals { margin-top: 20px; }
+        .totals-row { 
+            display: flex; 
+            justify-content: space-between; 
+            padding: 10px 0; 
+            font-size: 16px;
+        }
+        .totals-row.grand { 
+            font-size: 20px; 
+            font-weight: bold; 
+            color: #8b7355; 
+            border-top: 2px solid #8b7355; 
+            padding-top: 15px; 
+            margin-top: 10px;
+        }
+        .refund-notice { 
+            background-color: ${refundBgColor}; 
+            color: ${refundTextColor}; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin: 20px 0; 
+            border-left: 4px solid ${refundTextColor};
+            text-align: ${align};
+        }
+        .footer { 
+            background-color: #f9f7f2; 
+            padding: 20px; 
+            text-align: center; 
+            color: #666; 
+            border-top: 1px solid #e6e1d6;
+        }
+        .footer p { margin: 5px 0; }
+        @media print {
+            body { padding: 0; background: white; }
+            .receipt-container { box-shadow: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="receipt-container">
+        <div class="header">
+            <h1>ARTÉVA MAISON</h1>
+            <p>${texts.title}</p>
+        </div>
+        
+        <div class="content">
+            <div class="section">
+                <div class="info-row">
+                    <span class="info-label">${texts.orderNumber}:</span>
+                    <span class="info-value">${order.orderNumber}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">${texts.orderDate}:</span>
+                    <span class="info-value">${new Date(order.createdAt).toLocaleDateString(isArabic ? 'ar-KW' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">${texts.customer}</div>
+                <div class="info-row">
+                    <span class="info-label">${texts.customer}:</span>
+                    <span class="info-value">${order.user.name}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">${texts.email}:</span>
+                    <span class="info-value">${order.user.email}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">${texts.phone}:</span>
+                    <span class="info-value">${order.user.phone || 'N/A'}</span>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">${texts.shippingAddress}</div>
+                <p style="color: #333; line-height: 1.6;">${addressText}</p>
+            </div>
+
+            <div class="section">
+                <div class="section-title">${texts.items}</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>${texts.product}</th>
+                            <th>${texts.quantity}</th>
+                            <th>${texts.price}</th>
+                            <th>${texts.total}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="totals">
+                <div class="totals-row">
+                    <span>${texts.subtotal}:</span>
+                    <span>${order.subtotal.toFixed(3)} ${order.currency}</span>
+                </div>
+                <div class="totals-row">
+                    <span>${texts.shipping}:</span>
+                    <span>${order.shippingCost.toFixed(3)} ${order.currency}</span>
+                </div>
+                <div class="totals-row grand">
+                    <span>${texts.grandTotal}:</span>
+                    <span>${order.total.toFixed(3)} ${order.currency}</span>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="info-row">
+                    <span class="info-label">${texts.paymentMethod}:</span>
+                    <span class="info-value">${order.paymentMethod}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">${texts.paymentStatus}:</span>
+                    <span class="info-value" style="color: #28a745; font-weight: bold;">${texts.paid}</span>
+                </div>
+            </div>
+
+            <div class="refund-notice">
+                <strong>${texts.refundPolicy}:</strong><br>
+                ${refundMessage}
+            </div>
+        </div>
+
+        <div class="footer">
+            <p style="font-weight: bold; color: #8b7355; font-size: 16px;">${texts.thankYou}</p>
+            <p style="margin-top: 10px;">${texts.contactUs}</p>
+            <p style="margin-top: 5px; font-size: 12px;">www.artevamaisonkw.com</p>
+        </div>
+    </div>
+</body>
+</html>
+    `.trim();
+}
+
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -654,5 +1204,11 @@ module.exports = {
     deleteUser,
     sendOfferEmail,
     getProductViewAnalytics,
-    getRevenueHistory
+    getRevenueHistory,
+    checkSuperuser,
+    authenticateRevenueAccess,
+    requestRevenueOTP,
+    verifyRevenueOTP,
+    generateReceipt,
+    setRevenuePassword
 };

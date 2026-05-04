@@ -236,6 +236,9 @@ class MyFatoorahService {
 
     /**
      * Refund payment
+     * NOTE: This initiates a refund request in MyFatoorah.
+     * Refunds typically require MANUAL APPROVAL in MyFatoorah merchant dashboard.
+     * The refund is not automatic - merchant must log in and approve it.
      */
     async refundPayment(paymentId, amount, reason) {
         try {
@@ -253,10 +256,13 @@ class MyFatoorahService {
             );
 
             if (response.data.IsSuccess) {
+                console.log(`[MYFATOORAH] Refund request created: ${response.data.Data.RefundId}`);
+                console.log(`[MYFATOORAH] ⚠️  IMPORTANT: Refund requires manual approval in MyFatoorah dashboard`);
                 return {
                     success: true,
                     refundId: response.data.Data.RefundId,
-                    refundReference: response.data.Data.RefundReference
+                    refundReference: response.data.Data.RefundReference,
+                    requiresApproval: true // Flag to indicate manual approval needed
                 };
             } else {
                 throw new Error(response.data.Message || 'Refund failed');

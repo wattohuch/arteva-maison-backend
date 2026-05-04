@@ -46,6 +46,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
         items: cart.items.map(item => ({
             product: item.product._id,
             name: item.product.name,
+            nameAr: item.product.nameAr,
             price: item.product.price,
             quantity: item.quantity,
             image: item.product.images[0]?.url
@@ -142,6 +143,7 @@ const executePayment = asyncHandler(async (req, res) => {
         order.items = cart.items.map(item => ({
             product: item.product._id,
             name: item.product.name,
+            nameAr: item.product.nameAr,
             price: item.product.price,
             quantity: item.quantity,
             image: item.product.images[0]?.url
@@ -159,6 +161,7 @@ const executePayment = asyncHandler(async (req, res) => {
             items: cart.items.map(item => ({
                 product: item.product._id,
                 name: item.product.name,
+                nameAr: item.product.nameAr,
                 price: item.product.price,
                 quantity: item.quantity,
                 image: item.product.images[0]?.url
@@ -294,6 +297,14 @@ const verifyPayment = asyncHandler(async (req, res) => {
             // Don't fail the payment verification if email fails
         }
 
+        // Send WhatsApp notification to OWNER
+        try {
+            const whatsapp = require('../services/whatsappService');
+            await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+        } catch (whatsappErr) {
+            console.error('WhatsApp notification error:', whatsappErr);
+        }
+
         await order.save();
 
         res.json({
@@ -357,6 +368,12 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 await sendOrderConfirmation(order, order.user);
             } catch (emailErr) { /* silent */ }
 
+            // Send WhatsApp notification to OWNER
+            try {
+                const whatsapp = require('../services/whatsappService');
+                await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+            } catch (whatsappErr) { /* silent */ }
+
             await order.save();
         }
     }
@@ -392,6 +409,7 @@ const processCOD = asyncHandler(async (req, res) => {
         items: cart.items.map(item => ({
             product: item.product._id,
             name: item.product.name,
+            nameAr: item.product.nameAr,
             price: item.product.price,
             quantity: item.quantity,
             image: item.product.images[0]?.url
@@ -414,6 +432,14 @@ const processCOD = asyncHandler(async (req, res) => {
 
     // Send confirmation email
     await sendOrderConfirmation(order, req.user);
+
+    // Send WhatsApp notification to OWNER
+    try {
+        const whatsapp = require('../services/whatsappService');
+        await whatsapp.notifyOwnerNewOrder(order, req.user);
+    } catch (whatsappErr) {
+        console.error('WhatsApp notification error:', whatsappErr);
+    }
 
     // Clear cart
     cart.items = [];
@@ -504,6 +530,14 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 await sendOrderConfirmation(order, order.user);
             } catch (emailErr) {
                 console.error('Email send failed:', emailErr);
+            }
+
+            // Send WhatsApp notification to OWNER
+            try {
+                const whatsapp = require('../services/whatsappService');
+                await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+            } catch (whatsappErr) {
+                console.error('WhatsApp notification error:', whatsappErr);
             }
 
             await order.save();

@@ -14,7 +14,13 @@ const {
     deleteUser,
     sendOfferEmail,
     getProductViewAnalytics,
-    getRevenueHistory
+    getRevenueHistory,
+    checkSuperuser,
+    authenticateRevenueAccess,
+    requestRevenueOTP,
+    verifyRevenueOTP,
+    generateReceipt,
+    setRevenuePassword
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -22,8 +28,22 @@ const upload = require('../middleware/upload');
 // Stats
 router.get('/stats', protect, admin, getDashboardStats);
 
-// Revenue History (owner only - auth check in controller)
+// Superuser check
+router.get('/check-superuser', protect, checkSuperuser);
+
+// Revenue password setup (first time)
+router.post('/set-revenue-password', protect, setRevenuePassword);
+
+// Revenue access authentication
+router.post('/revenue-auth', protect, authenticateRevenueAccess);
+router.post('/revenue-otp/request', protect, requestRevenueOTP);
+router.post('/revenue-otp/verify', protect, verifyRevenueOTP);
+
+// Revenue History (superuser only)
 router.get('/revenue-history', protect, admin, getRevenueHistory);
+
+// Receipt generation (superuser only)
+router.get('/receipt/:orderId', protect, generateReceipt);
 
 // Analytics
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);

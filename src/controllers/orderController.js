@@ -35,6 +35,7 @@ const createOrder = asyncHandler(async (req, res) => {
         orderItems.push({
             product: product._id,
             name: product.name,
+            nameAr: product.nameAr, // Include Arabic name
             image: product.images[0]?.url || '',
             price: product.price,
             quantity: item.quantity
@@ -71,6 +72,14 @@ const createOrder = asyncHandler(async (req, res) => {
         emitNewOrder(order);
     } catch (e) {
         console.error('Socket notification error:', e.message);
+    }
+
+    // Send WhatsApp notification to OWNER
+    try {
+        const whatsapp = require('../services/whatsappService');
+        await whatsapp.notifyOwnerNewOrder(order, req.user);
+    } catch (e) {
+        console.error('WhatsApp notification error:', e.message);
     }
 
     res.status(201).json({
@@ -233,11 +242,141 @@ const getOrderByNumber = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Cancel order and initiate refund
+// @route   POST /api/orders/:id/cancel
+// @access  Private
+const cancelOrder = asyncHandler(async (req, res) => {
+    const { reason } = req.body;
+    const order = await Order.findById(req.params.id).populate('user', 'name email phone language');
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    // Check if user owns the order
+    if (order.user._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+        res.status(403);
+        throw new Error('Not authorized to cancel this order');
+    }
+
+    // Check if order can be cancelled
+    if (order.orderStatus === 'delivered') {
+        res.status(400);
+        throw new Error('Cannot cancel delivered orders');
+    }
+
+    if (order.orderStatus === 'cancelled') {
+        res.status(400);
+        throw new Error('Order is already cancelled');
+    }
+
+    // Check 14-day cancellation period
+    const daysSinceOrder = Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000));
+    if (daysSinceOrder > 14) {
+        res.status(400);
+        throw new Error('Cancellation period expired. Orders can only be cancelled within 14 days.');
+    }
+
+    // Update order status
+    order.updateStatus('cancelled', reason || 'Cancelled by customer', req.user._id);
+    order.cancelledAt = new Date();
+
+    // Restore stock
+    for (const item of order.items) {
+        const product = await Product.findById(item.product);
+        if (product) {
+            product.stock += item.quantity;
+            await product.save();
+        }
+    }
+
+    // Update payment status - no automatic refund
+    if (order.paymentStatus === 'paid') {
+        // Mark as cancelled but keep payment status as paid
+        // Customer must contact via WhatsApp for refund
+        order.notes = (order.notes || '') + `\n[REFUND REQUIRED] Customer cancelled order within ${daysSinceOrder} days. Contact customer for refund: ${order.user.phone || order.user.email}`;
+        console.log(`[CANCELLATION] Order ${order.orderNumber} cancelled within 14-day period. Manual refund required.`);
+    }
+
+    await order.save();
+
+    // Send notification email
+    try {
+        const { sendOrderStatusUpdate } = require('../services/emailService');
+        await sendOrderStatusUpdate(order, order.user, 'cancelled');
+    } catch (emailErr) {
+        console.error('Failed to send cancellation email:', emailErr);
+    }
+
+    // Send WhatsApp notification to OWNER
+    try {
+        const whatsapp = require('../services/whatsappService');
+        await whatsapp.notifyOwnerOrderCancellation(order, order.user, reason);
+    } catch (whatsappErr) {
+        console.error('Failed to send WhatsApp notification:', whatsappErr);
+    }
+
+    // Emit real-time update
+    const { emitOrderStatusUpdate } = require('../socketHandler');
+    emitOrderStatusUpdate(order.orderNumber, {
+        status: order.orderStatus,
+        paymentStatus: order.paymentStatus,
+        statusHistory: order.statusHistory,
+        orderId: order._id.toString(),
+        userId: order.user._id.toString()
+    });
+
+    res.json({
+        success: true,
+        message: 'Order cancelled successfully',
+        data: order
+    });
+});
+
+// @desc    Check if order can be cancelled
+// @route   GET /api/orders/:id/can-cancel
+// @access  Private
+const checkCanCancel = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    // Check if user owns the order
+    if (order.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+        res.status(403);
+        throw new Error('Not authorized');
+    }
+
+    const daysSinceOrder = Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000));
+    const canCancel = daysSinceOrder <= 14 && 
+                      order.orderStatus !== 'delivered' && 
+                      order.orderStatus !== 'cancelled';
+
+    res.json({
+        success: true,
+        canCancel,
+        daysSinceOrder,
+        daysRemaining: canCancel ? 14 - daysSinceOrder : 0,
+        reason: !canCancel ? (
+            daysSinceOrder > 14 ? 'Cancellation period expired (14 days)' :
+            order.orderStatus === 'delivered' ? 'Order already delivered' :
+            order.orderStatus === 'cancelled' ? 'Order already cancelled' :
+            'Unknown'
+        ) : null
+    });
+});
+
 module.exports = {
     createOrder,
     getMyOrders,
     getOrder,
     getOrderByNumber,
     getAllOrders,
-    updateOrderStatus
+    updateOrderStatus,
+    cancelOrder,
+    checkCanCancel
 };

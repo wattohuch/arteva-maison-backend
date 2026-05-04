@@ -27,8 +27,12 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['user', 'admin', 'driver', 'owner'],
+        enum: ['user', 'admin', 'driver', 'owner', 'superuser'],
         default: 'user'
+    },
+    revenuePassword: {
+        type: String,
+        select: false
     },
     addresses: [{
         label: { type: String, default: 'Home' },
@@ -63,6 +67,14 @@ const userSchema = new mongoose.Schema({
         default: null
     },
     resetPasswordOTPExpiry: {
+        type: Date,
+        default: null
+    },
+    revenueOTP: {
+        type: String,
+        default: null
+    },
+    revenueOTPExpiry: {
         type: Date,
         default: null
     },

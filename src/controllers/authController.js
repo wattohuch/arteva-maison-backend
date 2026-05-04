@@ -45,9 +45,12 @@ const register = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email }).select('+password +revenuePassword');
 
     if (user && (await user.matchPassword(password))) {
+        // Check if superuser needs to set revenue password
+        const needsRevenuePassword = user.role === 'superuser' && !user.revenuePassword;
+
         res.json({
             success: true,
             data: {
@@ -57,6 +60,7 @@ const login = asyncHandler(async (req, res) => {
                 role: user.role,
                 currency: user.currency,
                 language: user.language,
+                needsRevenuePassword, // Flag for frontend to show setup modal
                 token: generateToken(user._id)
             }
         });
