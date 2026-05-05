@@ -1204,6 +1204,166 @@ function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
 }
 
 
+// @desc    Get detailed revenue analytics per product per price
+// @route   GET /api/admin/revenue-analytics
+// @access  Private (superuser only)
+const getRevenueAnalytics = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Access denied. Only superuser can access revenue analytics.');
+    }
+
+    const Order = require('../models/Order');
+    const Product = require('../models/Product');
+
+    // Get all paid orders
+    const paidOrders = await Order.find({ paymentStatus: 'paid' })
+        .select('items total createdAt orderNumber orderStatus')
+        .sort({ createdAt: -1 })
+        .lean();
+
+    // Build per-product analytics
+    const productMap = {};
+
+    paidOrders.forEach(order => {
+        order.items.forEach(item => {
+            const productId = item.product ? item.product.toString() : item.name;
+            
+            if (!productMap[productId]) {
+                productMap[productId] = {
+                    productId,
+                    name: item.name,
+                    image: item.image || null,
+                    totalRevenue: 0,
+                    totalQuantitySold: 0,
+                    orderCount: 0,
+                    pricePoints: {},
+                    orders: []
+                };
+            }
+
+            const p = productMap[productId];
+            const revenue = item.price * item.quantity;
+            p.totalRevenue += revenue;
+            p.totalQuantitySold += item.quantity;
+            p.orderCount++;
+
+            // Track per price point
+            const priceKey = item.price.toFixed(3);
+            if (!p.pricePoints[priceKey]) {
+                p.pricePoints[priceKey] = {
+                    price: item.price,
+                    revenue: 0,
+                    quantity: 0,
+                    orderCount: 0
+                };
+            }
+            p.pricePoints[priceKey].revenue += revenue;
+            p.pricePoints[priceKey].quantity += item.quantity;
+            p.pricePoints[priceKey].orderCount++;
+
+            // Track order references
+            p.orders.push({
+                orderNumber: order.orderNumber,
+                date: order.createdAt,
+                price: item.price,
+                quantity: item.quantity,
+                revenue: revenue,
+                status: order.orderStatus
+            });
+        });
+    });
+
+    // Convert to sorted array
+    const products = Object.values(productMap).map(p => ({
+        ...p,
+        pricePoints: Object.values(p.pricePoints).sort((a, b) => b.revenue - a.revenue),
+        orders: p.orders.slice(0, 50) // Limit to last 50 orders per product
+    })).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    // Get current product prices and discount info
+    const allProducts = await Product.find({})
+        .select('name price compareAtPrice discountPercentage priceHistory')
+        .lean();
+
+    const productPriceMap = {};
+    allProducts.forEach(p => {
+        productPriceMap[p._id.toString()] = {
+            currentPrice: p.price,
+            compareAtPrice: p.compareAtPrice,
+            discountPercentage: p.discountPercentage,
+            priceHistory: p.priceHistory || []
+        };
+    });
+
+    // Summary stats
+    const totalRevenue = products.reduce((sum, p) => sum + p.totalRevenue, 0);
+    const totalOrders = paidOrders.length;
+    const bestProduct = products[0] || null;
+
+    // Monthly revenue trend
+    const monthlyMap = {};
+    paidOrders.forEach(order => {
+        const d = new Date(order.createdAt);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (!monthlyMap[key]) monthlyMap[key] = { revenue: 0, orders: 0 };
+        monthlyMap[key].revenue += order.total;
+        monthlyMap[key].orders++;
+    });
+
+    const monthlyTrend = Object.entries(monthlyMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, data]) => ({ month, ...data }));
+
+    res.json({
+        success: true,
+        data: {
+            summary: {
+                totalRevenue,
+                totalOrders,
+                totalProducts: products.length,
+                bestProduct: bestProduct ? { name: bestProduct.name, revenue: bestProduct.totalRevenue } : null,
+                averageOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0
+            },
+            products,
+            productPriceMap,
+            monthlyTrend
+        }
+    });
+});
+
+// @desc    Update product discount (set compareAtPrice)
+// @route   PUT /api/admin/products/:id/discount
+// @access  Private (superuser/owner/admin)
+const updateProductDiscount = asyncHandler(async (req, res) => {
+    const Product = require('../models/Product');
+    const { discountedPrice, compareAtPrice } = req.body;
+    
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+        res.status(404);
+        throw new Error('Product not found');
+    }
+
+    // Set the compare-at price (original/strikethrough price)
+    if (compareAtPrice !== undefined) {
+        product.compareAtPrice = compareAtPrice;
+    }
+    
+    // Set the new discounted price
+    if (discountedPrice !== undefined) {
+        product.price = discountedPrice;
+    }
+
+    await product.save();
+
+    res.json({
+        success: true,
+        data: product
+    });
+});
+
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -1224,5 +1384,7 @@ module.exports = {
     requestRevenueOTP,
     verifyRevenueOTP,
     generateReceipt,
-    setRevenuePassword
+    setRevenuePassword,
+    getRevenueAnalytics,
+    updateProductDiscount
 };

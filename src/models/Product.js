@@ -112,15 +112,48 @@ const productSchema = new mongoose.Schema({
     isCollectionFeatured: {
         type: Boolean,
         default: false
+    },
+    priceHistory: [{
+        price: { type: Number, required: true },
+        compareAtPrice: { type: Number },
+        changedAt: { type: Date, default: Date.now },
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        reason: { type: String, trim: true }
+    }],
+    discountPercentage: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
     }
 }, {
     timestamps: true
 });
 
-// Generate slug before saving
+// Generate slug before saving + track price changes
 productSchema.pre('save', function () {
     if (this.isModified('name')) {
         this.slug = this.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    }
+    
+    // Auto-track price changes
+    if (this.isModified('price') || this.isModified('compareAtPrice')) {
+        // Don't log on first creation (no previous price to compare)
+        if (!this.isNew) {
+            this.priceHistory.push({
+                price: this.price,
+                compareAtPrice: this.compareAtPrice || null,
+                changedAt: new Date(),
+                reason: this.compareAtPrice && this.compareAtPrice > this.price ? 'discount' : 'price_update'
+            });
+        }
+    }
+    
+    // Auto-calculate discount percentage
+    if (this.compareAtPrice && this.compareAtPrice > this.price) {
+        this.discountPercentage = Math.round(((this.compareAtPrice - this.price) / this.compareAtPrice) * 100);
+    } else {
+        this.discountPercentage = 0;
     }
 });
 

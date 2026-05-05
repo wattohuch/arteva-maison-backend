@@ -20,7 +20,9 @@ const {
     requestRevenueOTP,
     verifyRevenueOTP,
     generateReceipt,
-    setRevenuePassword
+    setRevenuePassword,
+    getRevenueAnalytics,
+    updateProductDiscount
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -47,6 +49,12 @@ router.get('/receipt/:orderId', protect, generateReceipt);
 
 // Analytics
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
+
+// Revenue Analytics (superuser only - detailed per-product breakdown)
+router.get('/revenue-analytics', protect, admin, getRevenueAnalytics);
+
+// Product Discounts
+router.put('/products/:id/discount', protect, admin, updateProductDiscount);
 
 // Products
 router.route('/products')
