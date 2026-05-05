@@ -230,6 +230,7 @@ const getOrderTracking = asyncHandler(async (req, res) => {
             deliveryLocation: order.deliveryLocation,
             deliveryPilot: order.deliveryPilot ? {
                 name: order.deliveryPilot.name,
+                phone: order.deliveryPilot.phone,
                 location: order.deliveryPilot.currentLocation
             } : null,
             shippingAddress: {
