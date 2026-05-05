@@ -82,6 +82,16 @@ const createOrder = asyncHandler(async (req, res) => {
         console.error('WhatsApp notification error:', e.message);
     }
 
+    // Send email notification to admin
+    try {
+        const { sendAdminNewOrderNotification } = require('../services/emailService');
+        sendAdminNewOrderNotification(order, req.user).catch(e => {
+            console.error('Admin email notification error:', e.message);
+        });
+    } catch (e) {
+        console.error('Email notification error:', e.message);
+    }
+
     res.status(201).json({
         success: true,
         data: order
