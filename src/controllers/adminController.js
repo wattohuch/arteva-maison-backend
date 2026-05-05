@@ -1216,9 +1216,10 @@ const getRevenueAnalytics = asyncHandler(async (req, res) => {
     const Order = require('../models/Order');
     const Product = require('../models/Product');
 
-    // Get all paid orders
+    // Get all paid orders with customer info
     const paidOrders = await Order.find({ paymentStatus: 'paid' })
-        .select('items total createdAt orderNumber orderStatus')
+        .select('items total createdAt orderNumber orderStatus user shippingAddress')
+        .populate('user', 'name email phone language')
         .sort({ createdAt: -1 })
         .lean();
 
@@ -1255,21 +1256,46 @@ const getRevenueAnalytics = asyncHandler(async (req, res) => {
                     price: item.price,
                     revenue: 0,
                     quantity: 0,
-                    orderCount: 0
+                    orderCount: 0,
+                    orders: []
                 };
             }
             p.pricePoints[priceKey].revenue += revenue;
             p.pricePoints[priceKey].quantity += item.quantity;
             p.pricePoints[priceKey].orderCount++;
+            p.pricePoints[priceKey].orders.push({
+                orderId: order._id,
+                orderNumber: order.orderNumber,
+                date: order.createdAt,
+                quantity: item.quantity,
+                revenue: revenue,
+                status: order.orderStatus,
+                customer: order.user ? {
+                    name: order.user.name,
+                    email: order.user.email,
+                    phone: order.user.phone || 'N/A',
+                    language: order.user.language
+                } : { name: 'Guest', email: 'N/A', phone: 'N/A' },
+                shippingAddress: order.shippingAddress ? {
+                    city: order.shippingAddress.city,
+                    country: order.shippingAddress.country
+                } : null
+            });
 
             // Track order references
             p.orders.push({
+                orderId: order._id,
                 orderNumber: order.orderNumber,
                 date: order.createdAt,
                 price: item.price,
                 quantity: item.quantity,
                 revenue: revenue,
-                status: order.orderStatus
+                status: order.orderStatus,
+                customer: order.user ? {
+                    name: order.user.name,
+                    email: order.user.email,
+                    phone: order.user.phone || 'N/A'
+                } : { name: 'Guest', email: 'N/A', phone: 'N/A' }
             });
         });
     });
@@ -1278,7 +1304,7 @@ const getRevenueAnalytics = asyncHandler(async (req, res) => {
     const products = Object.values(productMap).map(p => ({
         ...p,
         pricePoints: Object.values(p.pricePoints).sort((a, b) => b.revenue - a.revenue),
-        orders: p.orders.slice(0, 50) // Limit to last 50 orders per product
+        orders: p.orders.slice(0, 100) // Limit to last 100 orders per product
     })).sort((a, b) => b.totalRevenue - a.totalRevenue);
 
     // Get current product prices and discount info
