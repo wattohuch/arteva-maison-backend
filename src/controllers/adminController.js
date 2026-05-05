@@ -385,19 +385,31 @@ const updateUserRole = asyncHandler(async (req, res) => {
     }
 
     // Role change restrictions
-    // Only owner can assign owner role
-    if (role === 'owner' && req.user.role !== 'owner') {
+    // Only owner/superuser can assign owner role
+    if (role === 'owner' && req.user.role !== 'owner' && req.user.role !== 'superuser') {
         res.status(403);
         throw new Error('Only owners can assign owner role');
     }
 
-    // Admin cannot change owner's role
-    if (user.role === 'owner' && req.user.role !== 'owner') {
+    // Only superuser can assign superuser role
+    if (role === 'superuser' && req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Only superuser can assign superuser role');
+    }
+
+    // Cannot change owner's role unless you are owner or superuser
+    if (user.role === 'owner' && req.user.role !== 'owner' && req.user.role !== 'superuser') {
         res.status(403);
         throw new Error('Cannot change owner role');
     }
 
-    // Admin can only assign admin or driver roles
+    // Cannot change superuser's role unless you are superuser
+    if (user.role === 'superuser' && req.user.role !== 'superuser') {
+        res.status(403);
+        throw new Error('Cannot change superuser role');
+    }
+
+    // Admin can only assign admin, driver, or user roles
     if (req.user.role === 'admin' && !['admin', 'driver', 'user'].includes(role)) {
         res.status(403);
         throw new Error('Admins can only assign admin, driver, or user roles');
@@ -745,7 +757,9 @@ const authenticateRevenueAccess = asyncHandler(async (req, res) => {
         throw new Error('Revenue password not set. Please contact administrator.');
     }
 
-    const isMatch = await user.matchPassword(revenuePassword);
+    // Compare directly against revenuePassword (not the login password)
+    const bcrypt = require('bcryptjs');
+    const isMatch = await bcrypt.compare(revenuePassword, user.revenuePassword);
 
     if (!isMatch) {
         res.status(401);

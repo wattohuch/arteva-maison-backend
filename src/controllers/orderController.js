@@ -129,8 +129,8 @@ const getOrder = asyncHandler(async (req, res) => {
         throw new Error('Order not found');
     }
 
-    // Check if user owns the order or is admin
-    if (order.user._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    // Check if user owns the order or is admin/owner/superuser
+    if (order.user._id.toString() !== req.user._id.toString() && !['admin', 'owner', 'superuser'].includes(req.user.role)) {
         res.status(403);
         throw new Error('Not authorized');
     }
@@ -230,8 +230,8 @@ const getOrderByNumber = asyncHandler(async (req, res) => {
         throw new Error('Order not found');
     }
 
-    // Check if user owns the order or is admin
-    if (order.user._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    // Check if user owns the order or is admin/owner/superuser
+    if (order.user._id.toString() !== req.user._id.toString() && !['admin', 'owner', 'superuser'].includes(req.user.role)) {
         res.status(403);
         throw new Error('Not authorized');
     }
@@ -255,7 +255,7 @@ const cancelOrder = asyncHandler(async (req, res) => {
     }
 
     // Check if user owns the order
-    if (order.user._id.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (order.user._id.toString() !== req.user._id.toString() && !['admin', 'owner', 'superuser'].includes(req.user.role)) {
         res.status(403);
         throw new Error('Not authorized to cancel this order');
     }
@@ -346,7 +346,7 @@ const checkCanCancel = asyncHandler(async (req, res) => {
     }
 
     // Check if user owns the order
-    if (order.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+    if (order.user.toString() !== req.user._id.toString() && !['admin', 'owner', 'superuser'].includes(req.user.role)) {
         res.status(403);
         throw new Error('Not authorized');
     }

@@ -61,7 +61,7 @@ const orderSchema = new mongoose.Schema({
     },
     paymentStatus: {
         type: String,
-        enum: ['pending', 'awaiting_payment', 'paid', 'failed', 'cancelled', 'refunded'],
+        enum: ['pending', 'awaiting_payment', 'paid', 'failed', 'cancelled', 'refunded', 'payment_expired'],
         default: 'pending'
     },
     // Updated order statuses to match delivery workflow
