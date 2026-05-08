@@ -8,6 +8,7 @@ const orderItemSchema = new mongoose.Schema({
     },
     name: { type: String, required: true },
     nameAr: { type: String }, // Arabic name
+    sku: { type: String }, // Product SKU / number
     image: String,
     price: { type: Number, required: true },
     quantity: { type: Number, required: true, min: 1 }

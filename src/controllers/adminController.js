@@ -934,7 +934,7 @@ const setRevenuePassword = asyncHandler(async (req, res) => {
     });
 });
 
-// Helper function to generate receipt HTML
+// Helper function to generate receipt HTML (compact, single-page print)
 function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
     const dir = isArabic ? 'rtl' : 'ltr';
     const align = isArabic ? 'right' : 'left';
@@ -949,21 +949,22 @@ function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
         phone: 'الهاتف',
         shippingAddress: 'عنوان الشحن',
         items: 'المنتجات',
+        sku: 'رقم',
         product: 'المنتج',
         quantity: 'الكمية',
         price: 'السعر',
         total: 'المجموع',
         subtotal: 'المجموع الفرعي',
-        shipping: 'الشحن',
-        grandTotal: 'المجموع الكلي',
+        shipping: 'التوصيل',
+        grandTotal: 'المبلغ المدفوع',
         paymentMethod: 'طريقة الدفع',
         paymentStatus: 'حالة الدفع',
         paid: 'مدفوع',
-        refundPolicy: 'سياسة الاسترجاع',
-        refundNotice: `يمكن استرجاع المنتجات غير المفتوحة خلال 14 يومًا من تاريخ الطلب. (${daysSinceOrder} يوم منذ الطلب)`,
-        refundExpired: `انتهت فترة الاسترجاع (14 يومًا). مر ${daysSinceOrder} يومًا منذ الطلب.`,
-        contactUs: 'للاستفسارات، تواصل معنا عبر واتساب: +965656115663',
-        thankYou: 'شكراً لتسوقك معنا!'
+        refundPolicy: 'سياسة الإرجاع',
+        refundNotice: `إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة (${daysSinceOrder} يوم منذ الطلب)`,
+        refundExpired: `انتهت فترة الإرجاع (${daysSinceOrder} يومًا)`,
+        contactUs: 'واتساب: 965565611563+',
+        thankYou: 'شكراً لتسوقكم!'
     } : {
         title: 'Order Receipt',
         orderNumber: 'Order Number',
@@ -973,41 +974,44 @@ function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
         phone: 'Phone',
         shippingAddress: 'Shipping Address',
         items: 'Items',
+        sku: 'SKU',
         product: 'Product',
-        quantity: 'Quantity',
+        quantity: 'Qty',
         price: 'Price',
         total: 'Total',
         subtotal: 'Subtotal',
-        shipping: 'Shipping',
-        grandTotal: 'Grand Total',
-        paymentMethod: 'Payment Method',
-        paymentStatus: 'Payment Status',
+        shipping: 'Delivery',
+        grandTotal: 'Total Paid',
+        paymentMethod: 'Payment',
+        paymentStatus: 'Status',
         paid: 'Paid',
-        refundPolicy: 'Refund Policy',
-        refundNotice: `Unopened products can be refunded within 14 days of order date. (${daysSinceOrder} days since order)`,
-        refundExpired: `Refund period expired (14 days). ${daysSinceOrder} days have passed since order.`,
-        contactUs: 'For inquiries, contact us via WhatsApp: +965656115663',
+        refundPolicy: 'Return Policy',
+        refundNotice: `14-day return on unopened items (${daysSinceOrder} days since order)`,
+        refundExpired: `Return period expired (${daysSinceOrder} days)`,
+        contactUs: 'WhatsApp: +965656115663',
         thankYou: 'Thank you for shopping with us!'
     };
 
-    const refundBgColor = canCancel ? '#d4edda' : '#fff3cd';
-    const refundTextColor = canCancel ? '#155724' : '#856404';
+    const refundBgColor = canCancel ? '#d1fae5' : '#fef3c7';
+    const refundTextColor = canCancel ? '#065f46' : '#92400e';
     const refundMessage = canCancel ? texts.refundNotice : texts.refundExpired;
 
     const itemsHtml = order.items.map(item => {
         const productName = isArabic && item.nameAr ? item.nameAr : item.name;
+        const sku = item.sku || '—';
         return `
             <tr>
-                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: ${align};">${productName}</td>
-                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: center;">${item.quantity}</td>
-                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign};">${item.price.toFixed(3)} ${order.currency}</td>
-                <td style="padding: 12px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign}; font-weight: bold;">${(item.price * item.quantity).toFixed(3)} ${order.currency}</td>
+                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; font-size: 10px; font-family: monospace; color: #888;">${sku}</td>
+                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: ${align}; font-size: 12px;">${productName}</td>
+                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: center; font-size: 12px;">${item.quantity}</td>
+                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign}; font-size: 12px;">${item.price.toFixed(3)}</td>
+                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign}; font-weight: 600; font-size: 12px;">${(item.price * item.quantity).toFixed(3)} ${order.currency}</td>
             </tr>
         `;
     }).join('');
 
     const shippingAddress = order.shippingAddress;
-    const addressText = `${shippingAddress.street}, ${shippingAddress.city}, ${shippingAddress.state || ''} ${shippingAddress.zipCode || ''}, ${shippingAddress.country}`;
+    const addressText = `${shippingAddress.street}, ${shippingAddress.city}${shippingAddress.state ? ', ' + shippingAddress.state : ''}, ${shippingAddress.country}`;
 
     return `
 <!DOCTYPE html>
@@ -1017,186 +1021,98 @@ function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${texts.title} - ${order.orderNumber}</title>
     <style>
+        @page { size: A4; margin: 8mm 10mm; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             font-family: ${isArabic ? "'Tajawal', 'Arial', sans-serif" : "'Arial', sans-serif"}; 
-            background-color: #f5f5f5; 
-            padding: 20px;
+            background: #fff; 
+            padding: 12px;
             direction: ${dir};
-        }
-        .receipt-container { 
-            max-width: 800px; 
-            margin: 0 auto; 
-            background: white; 
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            font-size: 12px;
+            color: #333;
         }
         .header { 
-            background: linear-gradient(135deg, #8b7355 0%, #6d5a45 100%); 
-            color: white; 
-            padding: 30px; 
-            text-align: center;
-        }
-        .header h1 { font-size: 32px; margin-bottom: 10px; letter-spacing: 2px; }
-        .header p { font-size: 14px; opacity: 0.9; }
-        .content { padding: 30px; }
-        .section { margin-bottom: 25px; }
-        .section-title { 
-            font-size: 18px; 
-            font-weight: bold; 
-            color: #8b7355; 
-            margin-bottom: 12px; 
-            padding-bottom: 8px; 
-            border-bottom: 2px solid #8b7355;
-        }
-        .info-row { 
-            display: flex; 
-            justify-content: space-between; 
-            padding: 8px 0; 
-            border-bottom: 1px solid #f0f0f0;
-        }
-        .info-label { font-weight: bold; color: #555; }
-        .info-value { color: #333; text-align: ${oppositeAlign}; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th { 
-            background-color: #8b7355; 
-            color: white; 
-            padding: 12px; 
-            text-align: ${align}; 
-            font-weight: bold;
-        }
-        th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: center; }
-        .totals { margin-top: 20px; }
-        .totals-row { 
-            display: flex; 
-            justify-content: space-between; 
-            padding: 10px 0; 
-            font-size: 16px;
-        }
-        .totals-row.grand { 
-            font-size: 20px; 
-            font-weight: bold; 
-            color: #8b7355; 
-            border-top: 2px solid #8b7355; 
-            padding-top: 15px; 
-            margin-top: 10px;
-        }
-        .refund-notice { 
-            background-color: ${refundBgColor}; 
-            color: ${refundTextColor}; 
-            padding: 15px; 
-            border-radius: 8px; 
-            margin: 20px 0; 
-            border-left: 4px solid ${refundTextColor};
-            text-align: ${align};
-        }
-        .footer { 
-            background-color: #f9f7f2; 
-            padding: 20px; 
             text-align: center; 
-            color: #666; 
-            border-top: 1px solid #e6e1d6;
+            border-bottom: 2px solid #D4AF37;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
         }
-        .footer p { margin: 5px 0; }
+        .header h1 { font-size: 22px; letter-spacing: 2px; margin-bottom: 2px; }
+        .header p { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .meta-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; }
+        .meta-item .label { font-size: 9px; color: #888; text-transform: uppercase; }
+        .meta-item .value { font-weight: 600; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        .info-box { background: #fafaf8; border: 1px solid #e6e1d6; border-radius: 4px; padding: 8px; }
+        .info-box .label { font-size: 9px; color: #888; text-transform: uppercase; margin-bottom: 2px; }
+        .info-box p { font-size: 11px; line-height: 1.4; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        th { background: #f5f2ec; padding: 4px 3px; text-align: ${align}; font-size: 10px; text-transform: uppercase; color: #888; }
+        .totals { width: 220px; margin-${isArabic ? 'right' : 'left'}: auto; }
+        .total-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+        .total-row.grand { border-top: 2px solid #D4AF37; margin-top: 4px; padding-top: 4px; font-size: 14px; font-weight: bold; }
+        .refund { background: ${refundBgColor}; color: ${refundTextColor}; padding: 6px 8px; border-radius: 4px; margin: 8px 0; border-left: 3px solid ${refundTextColor}; font-size: 10px; text-align: ${align}; }
+        .footer { text-align: center; font-size: 9px; color: #888; border-top: 1px solid #e6e1d6; padding-top: 6px; margin-top: 8px; }
         @media print {
-            body { padding: 0; background: white; }
-            .receipt-container { box-shadow: none; }
+            body { padding: 0; }
+            .info-grid, .info-box, .refund { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
     </style>
 </head>
 <body>
-    <div class="receipt-container">
-        <div class="header">
-            <h1>ARTÉVA MAISON</h1>
-            <p>${texts.title}</p>
+    <div class="header">
+        <h1>ARTÉVA MAISON</h1>
+        <p>${texts.title}</p>
+    </div>
+    
+    <div class="meta-row">
+        <div class="meta-item"><div class="label">${texts.orderNumber}</div><div class="value">${order.orderNumber}</div></div>
+        <div class="meta-item"><div class="label">${texts.orderDate}</div><div class="value">${new Date(order.createdAt).toLocaleDateString(isArabic ? 'ar-KW' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</div></div>
+        <div class="meta-item"><div class="label">${texts.paymentMethod}</div><div class="value">${order.paymentMethod}</div></div>
+        <div class="meta-item"><div class="label">${texts.paymentStatus}</div><div class="value" style="color: #16a34a; font-weight: 700;">✓ ${texts.paid}</div></div>
+    </div>
+
+    <div class="info-grid">
+        <div class="info-box">
+            <div class="label">${texts.customer}</div>
+            <p style="font-weight: 600;">${order.user.name}</p>
+            <p>${order.user.email}</p>
+            <p>${order.user.phone || ''}</p>
         </div>
-        
-        <div class="content">
-            <div class="section">
-                <div class="info-row">
-                    <span class="info-label">${texts.orderNumber}:</span>
-                    <span class="info-value">${order.orderNumber}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">${texts.orderDate}:</span>
-                    <span class="info-value">${new Date(order.createdAt).toLocaleDateString(isArabic ? 'ar-KW' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title">${texts.customer}</div>
-                <div class="info-row">
-                    <span class="info-label">${texts.customer}:</span>
-                    <span class="info-value">${order.user.name}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">${texts.email}:</span>
-                    <span class="info-value">${order.user.email}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">${texts.phone}:</span>
-                    <span class="info-value">${order.user.phone || 'N/A'}</span>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title">${texts.shippingAddress}</div>
-                <p style="color: #333; line-height: 1.6;">${addressText}</p>
-            </div>
-
-            <div class="section">
-                <div class="section-title">${texts.items}</div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>${texts.product}</th>
-                            <th>${texts.quantity}</th>
-                            <th>${texts.price}</th>
-                            <th>${texts.total}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${itemsHtml}
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="totals">
-                <div class="totals-row">
-                    <span>${texts.subtotal}:</span>
-                    <span>${order.subtotal.toFixed(3)} ${order.currency}</span>
-                </div>
-                <div class="totals-row">
-                    <span>${texts.shipping}:</span>
-                    <span>${order.shippingCost.toFixed(3)} ${order.currency}</span>
-                </div>
-                <div class="totals-row grand">
-                    <span>${texts.grandTotal}:</span>
-                    <span>${order.total.toFixed(3)} ${order.currency}</span>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="info-row">
-                    <span class="info-label">${texts.paymentMethod}:</span>
-                    <span class="info-value">${order.paymentMethod}</span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">${texts.paymentStatus}:</span>
-                    <span class="info-value" style="color: #28a745; font-weight: bold;">${texts.paid}</span>
-                </div>
-            </div>
-
-            <div class="refund-notice">
-                <strong>${texts.refundPolicy}:</strong><br>
-                ${refundMessage}
-            </div>
+        <div class="info-box">
+            <div class="label">${texts.shippingAddress}</div>
+            <p>${addressText}</p>
         </div>
+    </div>
 
-        <div class="footer">
-            <p style="font-weight: bold; color: #8b7355; font-size: 16px;">${texts.thankYou}</p>
-            <p style="margin-top: 10px;">${texts.contactUs}</p>
-            <p style="margin-top: 5px; font-size: 12px;">www.artevamaisonkw.com</p>
-        </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 12%;">${texts.sku}</th>
+                <th style="width: 38%;">${texts.product}</th>
+                <th style="text-align: center; width: 10%;">${texts.quantity}</th>
+                <th style="text-align: ${oppositeAlign}; width: 18%;">${texts.price}</th>
+                <th style="text-align: ${oppositeAlign}; width: 22%;">${texts.total}</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${itemsHtml}
+        </tbody>
+    </table>
+
+    <div class="totals">
+        <div class="total-row"><span>${texts.subtotal}</span><span>${order.subtotal.toFixed(3)} ${order.currency}</span></div>
+        <div class="total-row"><span>${texts.shipping}</span><span>${order.shippingCost.toFixed(3)} ${order.currency}</span></div>
+        <div class="total-row grand"><span>${texts.grandTotal}</span><span>${order.total.toFixed(3)} ${order.currency}</span></div>
+    </div>
+
+    <div class="refund">
+        <strong>${texts.refundPolicy}:</strong> ${refundMessage}
+    </div>
+
+    <div class="footer">
+        <p style="font-weight: 600; color: #D4AF37;">${texts.thankYou}</p>
+        <p>${texts.contactUs} • www.artevamaisonkw.com</p>
     </div>
 </body>
 </html>
@@ -1389,6 +1305,66 @@ const updateProductDiscount = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get all orders for a specific customer (by email)
+// @route   GET /api/admin/customer-orders/:email
+// @access  Private (admin/superuser)
+const getCustomerOrderHistory = asyncHandler(async (req, res) => {
+    const email = decodeURIComponent(req.params.email);
+
+    // Find user by email
+    const user = await User.findOne({ email }).select('name email phone createdAt');
+    if (!user) {
+        res.status(404);
+        throw new Error('Customer not found');
+    }
+
+    // Get all orders for this user
+    const orders = await Order.find({ user: user._id })
+        .sort({ createdAt: -1 })
+        .lean();
+
+    // Calculate lifetime stats
+    const paidOrders = orders.filter(o => o.paymentStatus === 'paid');
+    const lifetimeValue = paidOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const totalOrders = orders.length;
+    const paidOrderCount = paidOrders.length;
+
+    res.json({
+        success: true,
+        data: {
+            customer: {
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                memberSince: user.createdAt
+            },
+            stats: {
+                totalOrders,
+                paidOrders: paidOrderCount,
+                lifetimeValue,
+                averageOrderValue: paidOrderCount > 0 ? lifetimeValue / paidOrderCount : 0
+            },
+            orders: orders.map(o => ({
+                _id: o._id,
+                orderNumber: o.orderNumber,
+                createdAt: o.createdAt,
+                orderStatus: o.orderStatus,
+                paymentStatus: o.paymentStatus,
+                paymentMethod: o.paymentMethod,
+                total: o.total,
+                currency: o.currency,
+                itemCount: o.items ? o.items.length : 0,
+                items: o.items ? o.items.map(i => ({
+                    name: i.name,
+                    sku: i.sku,
+                    quantity: i.quantity,
+                    price: i.price
+                })) : []
+            }))
+        }
+    });
+});
+
 
 module.exports = {
     getDashboardStats,
@@ -1412,5 +1388,6 @@ module.exports = {
     generateReceipt,
     setRevenuePassword,
     getRevenueAnalytics,
-    updateProductDiscount
+    updateProductDiscount,
+    getCustomerOrderHistory
 };

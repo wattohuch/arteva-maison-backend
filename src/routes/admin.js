@@ -22,7 +22,8 @@ const {
     generateReceipt,
     setRevenuePassword,
     getRevenueAnalytics,
-    updateProductDiscount
+    updateProductDiscount,
+    getCustomerOrderHistory
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -55,6 +56,20 @@ router.get('/revenue-analytics', protect, admin, getRevenueAnalytics);
 
 // Product Discounts
 router.put('/products/:id/discount', protect, admin, updateProductDiscount);
+
+// Customer order history (for revenue modal drill-down)
+router.get('/customer-orders/:email', protect, admin, getCustomerOrderHistory);
+
+// Manual receipt re-print
+router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
+    try {
+        const { printExistingOrderReceipt } = require('../services/printService');
+        const result = await printExistingOrderReceipt(req.params.orderId);
+        res.json({ success: result.success, message: result.success ? 'Receipt sent to printer' : result.error });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
 
 // Products
 router.route('/products')

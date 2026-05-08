@@ -36,6 +36,7 @@ const createOrder = asyncHandler(async (req, res) => {
             product: product._id,
             name: product.name,
             nameAr: product.nameAr, // Include Arabic name
+            sku: product.sku || '', // Include product SKU / number
             image: product.images[0]?.url || '',
             price: product.price,
             quantity: item.quantity
@@ -90,6 +91,16 @@ const createOrder = asyncHandler(async (req, res) => {
         });
     } catch (e) {
         console.error('Email notification error:', e.message);
+    }
+
+    // Auto-print receipt via HP ePrint (background, non-blocking)
+    try {
+        const { autoPrintReceipt } = require('../services/printService');
+        autoPrintReceipt(order, req.user).catch(e => {
+            console.error('Auto-print error:', e.message);
+        });
+    } catch (e) {
+        console.error('Print service error:', e.message);
     }
 
     res.status(201).json({
