@@ -1,27 +1,157 @@
 /**
- * ARTEVA Maison - Auto-Print Service (HP ePrint)
+ * ARTEVA Maison - Auto-Print Service (IPP over Internet)
  * 
- * Sends receipt HTML to the printer's HP ePrint email address.
- * The HP Smart Tank 790 supports ePrint — it has a unique email address.
- * When an email is sent to that address, the printer prints the body/attachment.
+ * Sends receipts directly to the HP Smart Tank 790 via IPP protocol
+ * over the internet using port forwarding.
  * 
- * How to set up:
- * 1. Open HP Smart app on your phone
- * 2. Go to Printer Settings → HP ePrint
- * 3. Enable ePrint and note the printer's email (e.g., abc123@hpeprint.com)
- * 4. Set HP_EPRINT_EMAIL in your .env file
+ * Setup required:
+ * 1. On your router, forward an external port (e.g. 9631) to 192.168.118.89:631
+ * 2. Set PRINTER_IPP_URL in .env to: http://YOUR_PUBLIC_IP:9631/ipp/print
+ * 3. Set PRINTER_IPP_SECRET in .env for basic security
  * 
- * This service is 100% free — no extra software needed.
- * The printer just needs to be connected to the internet.
+ * The printer must be on and connected to WiFi.
  */
 
-const { sendEmail } = require('./emailService');
+const http = require('http');
+const https = require('https');
 
 /**
- * Generate a compact, print-optimized receipt HTML for the printer
+ * Build a minimal IPP request to print a document
+ * IPP 2.0 spec: RFC 8011
+ */
+function buildIppPrintRequest(documentData, jobName) {
+    // IPP operation: Print-Job (0x0002)
+    const operationId = 0x0002;
+    const requestId = Math.floor(Math.random() * 0xFFFF);
+
+    // Build attributes
+    const attributes = [];
+
+    // --- Operation attributes group (0x01) ---
+    attributes.push(Buffer.from([0x01])); // operation-attributes-tag
+
+    // charset
+    attributes.push(ippAttribute(0x47, 'attributes-charset', 'utf-8'));
+    // natural language
+    attributes.push(ippAttribute(0x48, 'attributes-natural-language', 'en'));
+    // printer-uri
+    attributes.push(ippAttribute(0x45, 'printer-uri', 'ipp://localhost/ipp/print'));
+    // document-format
+    attributes.push(ippAttribute(0x49, 'document-format', 'text/html'));
+    // job-name
+    attributes.push(ippAttribute(0x42, 'job-name', jobName || 'ARTEVA Receipt'));
+
+    // --- Job attributes group (0x02) ---
+    attributes.push(Buffer.from([0x02])); // job-attributes-tag
+
+    // copies
+    attributes.push(ippIntAttribute(0x21, 'copies', 1));
+    // media (A4)
+    attributes.push(ippAttribute(0x44, 'media', 'iso_a4_210x297mm'));
+
+    // --- End of attributes (0x03) ---
+    attributes.push(Buffer.from([0x03]));
+
+    // Build header: version (2.0), operation, request-id
+    const header = Buffer.alloc(8);
+    header.writeUInt8(2, 0);    // version major
+    header.writeUInt8(0, 1);    // version minor
+    header.writeUInt16BE(operationId, 2);
+    header.writeUInt32BE(requestId, 4);
+
+    // Combine: header + attributes + document data
+    const attrBuf = Buffer.concat(attributes);
+    const docBuf = Buffer.from(documentData, 'utf-8');
+
+    return Buffer.concat([header, attrBuf, docBuf]);
+}
+
+/**
+ * Create an IPP string attribute
+ */
+function ippAttribute(tag, name, value) {
+    const nameBuf = Buffer.from(name, 'utf-8');
+    const valueBuf = Buffer.from(value, 'utf-8');
+    const buf = Buffer.alloc(1 + 2 + nameBuf.length + 2 + valueBuf.length);
+    let offset = 0;
+    buf.writeUInt8(tag, offset); offset += 1;
+    buf.writeUInt16BE(nameBuf.length, offset); offset += 2;
+    nameBuf.copy(buf, offset); offset += nameBuf.length;
+    buf.writeUInt16BE(valueBuf.length, offset); offset += 2;
+    valueBuf.copy(buf, offset);
+    return buf;
+}
+
+/**
+ * Create an IPP integer attribute
+ */
+function ippIntAttribute(tag, name, value) {
+    const nameBuf = Buffer.from(name, 'utf-8');
+    const buf = Buffer.alloc(1 + 2 + nameBuf.length + 2 + 4);
+    let offset = 0;
+    buf.writeUInt8(tag, offset); offset += 1;
+    buf.writeUInt16BE(nameBuf.length, offset); offset += 2;
+    nameBuf.copy(buf, offset); offset += nameBuf.length;
+    buf.writeUInt16BE(4, offset); offset += 2;
+    buf.writeInt32BE(value, offset);
+    return buf;
+}
+
+/**
+ * Send IPP print request to printer
+ */
+function sendIppRequest(printerUrl, ippData) {
+    return new Promise((resolve, reject) => {
+        const url = new URL(printerUrl);
+        const options = {
+            hostname: url.hostname,
+            port: url.port || 631,
+            path: url.pathname || '/ipp/print',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/ipp',
+                'Content-Length': ippData.length
+            },
+            timeout: 30000
+        };
+
+        const client = url.protocol === 'https:' ? https : http;
+        const req = client.request(options, (res) => {
+            const chunks = [];
+            res.on('data', chunk => chunks.push(chunk));
+            res.on('end', () => {
+                const response = Buffer.concat(chunks);
+                // Parse IPP response status
+                if (response.length >= 4) {
+                    const statusCode = response.readUInt16BE(2);
+                    if (statusCode <= 0x00FF) {
+                        // Successful
+                        resolve({ success: true, statusCode, message: 'Print job accepted' });
+                    } else {
+                        resolve({ success: false, statusCode, message: `IPP error: 0x${statusCode.toString(16)}` });
+                    }
+                } else {
+                    resolve({ success: true, message: 'Request sent (no IPP response parsed)' });
+                }
+            });
+        });
+
+        req.on('error', (err) => reject(err));
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('IPP request timeout'));
+        });
+
+        req.write(ippData);
+        req.end();
+    });
+}
+
+/**
+ * Generate compact receipt HTML for printing
  */
 function generatePrintReceiptHTML(order, customer) {
-    const orderDate = new Date(order.createdAt).toLocaleDateString('en-US', {
+    const orderDate = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', {
         year: 'numeric', month: 'short', day: 'numeric'
     });
 
@@ -39,160 +169,70 @@ function generatePrintReceiptHTML(order, customer) {
 
     const addr = order.shippingAddress || {};
     const addressParts = [addr.street, addr.city, addr.state, addr.country].filter(Boolean);
+    const customerName = customer ? customer.name : (addr.fullName || 'Guest');
+    const customerEmail = customer ? customer.email : '';
 
-    return `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        @page { size: A4; margin: 10mm; }
-        body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #333; margin: 0; padding: 10px; }
-        .header { text-align: center; border-bottom: 2px solid #D4AF37; padding-bottom: 8px; margin-bottom: 10px; }
-        .logo { font-size: 22px; font-weight: bold; letter-spacing: 2px; margin: 0; }
-        .subtitle { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin: 2px 0; }
-        .meta { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; }
-        .meta-item { }
-        .meta-item .label { font-size: 9px; color: #888; text-transform: uppercase; }
-        .meta-item .value { font-weight: 600; margin-top: 1px; }
-        .info-box { background: #f9f7f4; border: 1px solid #e6e1d6; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 11px; }
-        .info-box .label { font-size: 9px; color: #888; text-transform: uppercase; margin-bottom: 2px; }
-        .items-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-        .items-table th { background: #f5f2ec; padding: 4px; font-size: 9px; text-transform: uppercase; color: #888; text-align: left; }
-        .totals { width: 200px; margin-left: auto; }
-        .total-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
-        .total-row.grand { border-top: 2px solid #D4AF37; margin-top: 4px; padding-top: 4px; font-size: 14px; font-weight: bold; }
-        .footer { text-align: center; font-size: 9px; color: #888; margin-top: 10px; border-top: 1px solid #ddd; padding-top: 6px; }
-        .policy { background: #fffbeb; border: 1px solid #f0e6c0; border-radius: 4px; padding: 6px; margin-top: 8px; font-size: 9px; color: #666; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <p class="logo">ARTÉVA MAISON</p>
-        <p class="subtitle">Order Receipt / إيصال الطلب</p>
-    </div>
-
-    <div class="meta">
-        <div class="meta-item">
-            <div class="label">Order / رقم الطلب</div>
-            <div class="value">${order.orderNumber}</div>
-        </div>
-        <div class="meta-item">
-            <div class="label">Date / التاريخ</div>
-            <div class="value">${orderDate}</div>
-        </div>
-        <div class="meta-item">
-            <div class="label">Payment / الدفع</div>
-            <div class="value">${(order.paymentMethod || 'N/A').toUpperCase()}</div>
-        </div>
-    </div>
-
-    <div style="display:flex;gap:8px;">
-        <div class="info-box" style="flex:1;">
-            <div class="label">Customer / العميل</div>
-            <div style="font-weight:600;">${customer ? customer.name : 'Guest'}</div>
-            <div>${customer ? customer.email : ''}</div>
-            <div>${customer ? (customer.phone || '') : ''}</div>
-        </div>
-        <div class="info-box" style="flex:1;">
-            <div class="label">Shipping / الشحن</div>
-            <div>${addressParts.join(', ')}</div>
-            ${addr.phone ? '<div>📞 ' + addr.phone + '</div>' : ''}
-        </div>
-    </div>
-
-    <table class="items-table">
-        <thead>
-            <tr>
-                <th style="width:12%;">SKU</th>
-                <th style="width:38%;">Item / المنتج</th>
-                <th style="width:10%;text-align:center;">Qty</th>
-                <th style="width:18%;text-align:right;">Price</th>
-                <th style="width:22%;text-align:right;">Total</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${itemsHtml}
-        </tbody>
-    </table>
-
-    <div class="totals">
-        <div class="total-row">
-            <span>Subtotal</span>
-            <span>${(order.subtotal || 0).toFixed(3)} KWD</span>
-        </div>
-        <div class="total-row">
-            <span>Delivery</span>
-            <span>${(order.shippingCost || 0).toFixed(3)} KWD</span>
-        </div>
-        <div class="total-row grand">
-            <span>TOTAL</span>
-            <span>${(order.total || 0).toFixed(3)} KWD</span>
-        </div>
-    </div>
-
-    <div class="policy">
-        <strong>Return Policy / سياسة الإرجاع:</strong> 14-day return on unopened items. / إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة.<br>
-        WhatsApp: +965 5563 6321
-    </div>
-
-    <div class="footer">
-        <p>Thank you for shopping with ARTÉVA Maison! / شكراً لتسوقكم مع أرتيفا ميزون</p>
-        <p>www.artevamaisonkw.com • artevamaison@gmail.com</p>
-    </div>
-</body>
-</html>`;
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:12px;color:#333;margin:0;padding:10px}
+.h{text-align:center;border-bottom:2px solid #D4AF37;padding-bottom:8px;margin-bottom:10px}
+.h h1{font-size:22px;letter-spacing:2px;margin:0}.h p{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin:2px 0}
+.m{display:flex;justify-content:space-between;margin-bottom:8px;font-size:11px}
+.m .l{font-size:9px;color:#888;text-transform:uppercase}.m .v{font-weight:600}
+.b{background:#f9f7f4;border:1px solid #e6e1d6;border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px}
+.b .l{font-size:9px;color:#888;text-transform:uppercase;margin-bottom:2px}
+table{width:100%;border-collapse:collapse;margin-bottom:8px}th{background:#f5f2ec;padding:4px;font-size:9px;text-transform:uppercase;color:#888;text-align:left}
+.t{width:200px;margin-left:auto}.tr{display:flex;justify-content:space-between;font-size:11px;padding:2px 0}
+.tg{border-top:2px solid #D4AF37;margin-top:4px;padding-top:4px;font-size:14px;font-weight:bold}
+.f{text-align:center;font-size:9px;color:#888;margin-top:10px;border-top:1px solid #ddd;padding-top:6px}
+</style></head><body>
+<div class="h"><h1>ARTÉVA MAISON</h1><p>Order Receipt / إيصال الطلب</p></div>
+<div class="m"><div><div class="l">Order</div><div class="v">${order.orderNumber || 'N/A'}</div></div><div><div class="l">Date</div><div class="v">${orderDate}</div></div><div><div class="l">Payment</div><div class="v">${(order.paymentMethod || 'N/A').toUpperCase()}</div></div></div>
+<div style="display:flex;gap:8px"><div class="b" style="flex:1"><div class="l">Customer</div><div style="font-weight:600">${customerName}</div><div>${customerEmail}</div></div>
+<div class="b" style="flex:1"><div class="l">Shipping</div><div>${addressParts.join(', ') || 'N/A'}</div></div></div>
+<table><thead><tr><th style="width:12%">SKU</th><th style="width:38%">Item</th><th style="width:10%;text-align:center">Qty</th><th style="width:18%;text-align:right">Price</th><th style="width:22%;text-align:right">Total</th></tr></thead><tbody>${itemsHtml}</tbody></table>
+<div class="t"><div class="tr"><span>Subtotal</span><span>${(order.subtotal || 0).toFixed(3)} KWD</span></div><div class="tr"><span>Delivery</span><span>${(order.shippingCost || 0).toFixed(3)} KWD</span></div><div class="tr tg"><span>TOTAL</span><span>${(order.total || 0).toFixed(3)} KWD</span></div></div>
+<div style="background:#fffbeb;border:1px solid #f0e6c0;border-radius:4px;padding:6px;margin-top:8px;font-size:9px;color:#666"><strong>Return Policy:</strong> 14-day return on unopened items. WhatsApp: +965 5563 6321</div>
+<div class="f"><p>Thank you! / شكراً لتسوقكم • www.artevamaisonkw.com</p></div></body></html>`;
 }
 
 /**
- * Auto-print receipt via HP ePrint
- * Sends the receipt HTML as an email to the printer's ePrint address
- * 
- * @param {Object} order - The order document
- * @param {Object} customer - The customer/user document
+ * Auto-print receipt via IPP over internet
  */
 async function autoPrintReceipt(order, customer) {
-    const printerEmail = process.env.HP_EPRINT_EMAIL;
+    const printerUrl = process.env.PRINTER_IPP_URL;
 
-    if (!printerEmail) {
-        console.log('[PRINT] HP_EPRINT_EMAIL not configured — skipping auto-print');
-        return { success: false, reason: 'HP ePrint email not configured' };
+    if (!printerUrl) {
+        console.log('[PRINT] PRINTER_IPP_URL not configured — skipping auto-print');
+        return { success: false, reason: 'IPP URL not configured' };
     }
 
     try {
-        console.log(`[PRINT] 🖨️ Sending receipt for order ${order.orderNumber} to printer: ${printerEmail}`);
+        console.log(`[PRINT] 🖨️ Sending receipt for ${order.orderNumber} via IPP to ${printerUrl}`);
 
         const receiptHtml = generatePrintReceiptHTML(order, customer);
-
-        const result = await sendEmail({
-            to: printerEmail,
-            subject: `Receipt - ${order.orderNumber}`,
-            html: receiptHtml
-        });
+        const ippData = buildIppPrintRequest(receiptHtml, `Receipt-${order.orderNumber}`);
+        const result = await sendIppRequest(printerUrl, ippData);
 
         if (result.success) {
-            console.log(`[PRINT] ✅ Receipt sent to printer for order ${order.orderNumber}`);
+            console.log(`[PRINT] ✅ Receipt printed for ${order.orderNumber}`);
         } else {
-            console.error(`[PRINT] ❌ Failed to send to printer: ${result.error}`);
+            console.error(`[PRINT] ❌ IPP error: ${result.message}`);
         }
 
         return result;
     } catch (error) {
-        console.error(`[PRINT] ❌ Auto-print error for order ${order.orderNumber}:`, error.message);
+        console.error(`[PRINT] ❌ Auto-print error: ${error.message}`);
         return { success: false, error: error.message };
     }
 }
 
 /**
- * Manually trigger a receipt print (for admin use)
+ * Manually trigger a receipt print
  */
 async function printExistingOrderReceipt(orderId) {
     const Order = require('../models/Order');
     const order = await Order.findById(orderId).populate('user', 'name email phone').lean();
-
-    if (!order) {
-        return { success: false, error: 'Order not found' };
-    }
-
+    if (!order) return { success: false, error: 'Order not found' };
     return autoPrintReceipt(order, order.user);
 }
 
