@@ -1,74 +1,284 @@
 /**
- * ARTEVA Maison - Auto-Print Service (IPP over Internet)
+ * ARTEVA Maison - Auto-Print Service (IPP + JPEG)
  * 
- * Sends receipts directly to the HP Smart Tank 790 via IPP protocol
- * over the internet using port forwarding.
+ * Renders receipts as JPEG images using canvas,
+ * then sends them to the HP Smart Tank 790 via IPP.
  * 
- * Setup required:
- * 1. On your router, forward an external port (e.g. 9631) to 192.168.118.89:631
- * 2. Set PRINTER_IPP_URL in .env to: http://YOUR_PUBLIC_IP:9631/ipp/print
- * 3. Set PRINTER_IPP_SECRET in .env for basic security
+ * Works over the internet via port forwarding:
+ *   Router forwards external:9631 → printer:631
  * 
- * The printer must be on and connected to WiFi.
+ * No PC needed — just the printer on WiFi.
  */
 
 const http = require('http');
 const https = require('https');
+const { createCanvas } = require('canvas');
 
-/**
- * Build a minimal IPP request to print a document
- * IPP 2.0 spec: RFC 8011
- */
-function buildIppPrintRequest(documentData, jobName) {
-    // IPP operation: Print-Job (0x0002)
-    const operationId = 0x0002;
-    const requestId = Math.floor(Math.random() * 0xFFFF);
+// ═══════════════════════════════════════
+// RECEIPT IMAGE RENDERER (Canvas → JPEG)
+// ═══════════════════════════════════════
 
-    // Build attributes
-    const attributes = [];
+function renderReceiptToJpeg(order, customer) {
+    const W = 595;  // A4 width at 72dpi
+    const H = 842;  // A4 height at 72dpi
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
 
-    // --- Operation attributes group (0x01) ---
-    attributes.push(Buffer.from([0x01])); // operation-attributes-tag
+    // Background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
 
-    // charset
-    attributes.push(ippAttribute(0x47, 'attributes-charset', 'utf-8'));
-    // natural language
-    attributes.push(ippAttribute(0x48, 'attributes-natural-language', 'en'));
-    // printer-uri
-    attributes.push(ippAttribute(0x45, 'printer-uri', 'ipp://localhost/ipp/print'));
-    // document-format
-    attributes.push(ippAttribute(0x49, 'document-format', 'text/html'));
-    // job-name
-    attributes.push(ippAttribute(0x42, 'job-name', jobName || 'ARTEVA Receipt'));
+    let y = 30;
+    const LM = 30;  // left margin
+    const RM = W - 30; // right edge
+    const CW = RM - LM; // content width
 
-    // --- Job attributes group (0x02) ---
-    attributes.push(Buffer.from([0x02])); // job-attributes-tag
+    // ── HEADER ──
+    ctx.fillStyle = '#333333';
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('ARTÉVA MAISON', W / 2, y + 20);
+    y += 30;
 
-    // copies
-    attributes.push(ippIntAttribute(0x21, 'copies', 1));
-    // media (A4)
-    attributes.push(ippAttribute(0x44, 'media', 'iso_a4_210x297mm'));
+    ctx.font = '10px Arial';
+    ctx.fillStyle = '#888888';
+    ctx.fillText('Order Receipt / إيصال الطلب', W / 2, y + 10);
+    y += 20;
 
-    // --- End of attributes (0x03) ---
-    attributes.push(Buffer.from([0x03]));
+    // Gold line
+    ctx.strokeStyle = '#D4AF37';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(LM, y);
+    ctx.lineTo(RM, y);
+    ctx.stroke();
+    y += 15;
 
-    // Build header: version (2.0), operation, request-id
-    const header = Buffer.alloc(8);
-    header.writeUInt8(2, 0);    // version major
-    header.writeUInt8(0, 1);    // version minor
-    header.writeUInt16BE(operationId, 2);
-    header.writeUInt32BE(requestId, 4);
+    // ── ORDER META ──
+    ctx.textAlign = 'left';
+    ctx.font = '9px Arial';
+    ctx.fillStyle = '#888888';
 
-    // Combine: header + attributes + document data
-    const attrBuf = Buffer.concat(attributes);
-    const docBuf = Buffer.from(documentData, 'utf-8');
+    const orderDate = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric'
+    });
+    const payment = (order.paymentMethod || 'N/A').toUpperCase();
 
-    return Buffer.concat([header, attrBuf, docBuf]);
+    // Meta row
+    const metaCols = [
+        { label: 'ORDER', value: order.orderNumber || 'N/A' },
+        { label: 'DATE', value: orderDate },
+        { label: 'PAYMENT', value: payment }
+    ];
+    const colW = CW / metaCols.length;
+    metaCols.forEach((col, i) => {
+        const x = LM + (i * colW);
+        ctx.fillStyle = '#888888';
+        ctx.font = '8px Arial';
+        ctx.fillText(col.label, x, y);
+        ctx.fillStyle = '#333333';
+        ctx.font = 'bold 11px Arial';
+        ctx.fillText(col.value, x, y + 13);
+    });
+    y += 30;
+
+    // ── CUSTOMER & SHIPPING ──
+    const boxW = (CW - 10) / 2;
+    const customerName = customer ? customer.name : 'Guest';
+    const customerEmail = customer ? customer.email : '';
+    const customerPhone = customer ? (customer.phone || '') : '';
+    const addr = order.shippingAddress || {};
+    const addressParts = [addr.street, addr.city, addr.state, addr.country].filter(Boolean).join(', ');
+
+    // Customer box
+    ctx.fillStyle = '#f9f7f4';
+    ctx.fillRect(LM, y, boxW, 55);
+    ctx.strokeStyle = '#e6e1d6';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(LM, y, boxW, 55);
+
+    ctx.fillStyle = '#888888';
+    ctx.font = '8px Arial';
+    ctx.fillText('CUSTOMER', LM + 6, y + 12);
+    ctx.fillStyle = '#333333';
+    ctx.font = 'bold 11px Arial';
+    ctx.fillText(customerName, LM + 6, y + 26);
+    ctx.font = '10px Arial';
+    ctx.fillStyle = '#555555';
+    ctx.fillText(customerEmail, LM + 6, y + 38);
+    ctx.fillText(customerPhone, LM + 6, y + 50);
+
+    // Shipping box
+    const shipX = LM + boxW + 10;
+    ctx.fillStyle = '#f9f7f4';
+    ctx.fillRect(shipX, y, boxW, 55);
+    ctx.strokeStyle = '#e6e1d6';
+    ctx.strokeRect(shipX, y, boxW, 55);
+
+    ctx.fillStyle = '#888888';
+    ctx.font = '8px Arial';
+    ctx.fillText('SHIPPING', shipX + 6, y + 12);
+    ctx.fillStyle = '#555555';
+    ctx.font = '10px Arial';
+    // Wrap address text
+    const addrWords = (addressParts || 'N/A').split(' ');
+    let addrLine = '';
+    let addrY = y + 26;
+    addrWords.forEach(word => {
+        const test = addrLine + word + ' ';
+        if (ctx.measureText(test).width > boxW - 12) {
+            ctx.fillText(addrLine.trim(), shipX + 6, addrY);
+            addrLine = word + ' ';
+            addrY += 12;
+        } else {
+            addrLine = test;
+        }
+    });
+    ctx.fillText(addrLine.trim(), shipX + 6, addrY);
+
+    y += 70;
+
+    // ── ITEMS TABLE ──
+    const items = order.items || [];
+    const cols = [
+        { label: 'SKU', x: LM, w: 60 },
+        { label: 'ITEM', x: LM + 65, w: 200 },
+        { label: 'QTY', x: LM + 270, w: 40, align: 'center' },
+        { label: 'PRICE', x: LM + 320, w: 80, align: 'right' },
+        { label: 'TOTAL', x: LM + 420, w: 100, align: 'right' }
+    ];
+
+    // Header
+    ctx.fillStyle = '#f5f2ec';
+    ctx.fillRect(LM, y, CW, 18);
+    ctx.fillStyle = '#888888';
+    ctx.font = '8px Arial';
+    cols.forEach(col => {
+        ctx.textAlign = col.align || 'left';
+        const tx = col.align === 'right' ? col.x + col.w : col.x;
+        ctx.fillText(col.label, tx, y + 12);
+    });
+    y += 22;
+
+    // Rows
+    items.forEach(item => {
+        const sku = item.sku || '—';
+        const total = (item.price * item.quantity).toFixed(3);
+
+        ctx.textAlign = 'left';
+
+        // SKU
+        ctx.fillStyle = '#888888';
+        ctx.font = '9px Courier New';
+        ctx.fillText(sku, cols[0].x, y + 4);
+
+        // Name
+        ctx.fillStyle = '#333333';
+        ctx.font = '11px Arial';
+        const name = item.name || 'Product';
+        const displayName = ctx.measureText(name).width > cols[1].w ? name.substring(0, 25) + '...' : name;
+        ctx.fillText(displayName, cols[1].x, y + 4);
+
+        // Qty
+        ctx.textAlign = 'center';
+        ctx.fillText(String(item.quantity), cols[2].x + cols[2].w / 2, y + 4);
+
+        // Price
+        ctx.textAlign = 'right';
+        ctx.fillText(item.price.toFixed(3), cols[3].x + cols[3].w, y + 4);
+
+        // Total
+        ctx.font = 'bold 11px Arial';
+        ctx.fillText(total, cols[4].x + cols[4].w, y + 4);
+
+        // Separator
+        y += 6;
+        ctx.strokeStyle = '#eeeeee';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(LM, y + 4);
+        ctx.lineTo(RM, y + 4);
+        ctx.stroke();
+        y += 12;
+    });
+
+    y += 5;
+
+    // ── TOTALS ──
+    ctx.textAlign = 'left';
+    const totX = RM - 180;
+
+    ctx.font = '11px Arial';
+    ctx.fillStyle = '#555555';
+    ctx.fillText('Subtotal', totX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${(order.subtotal || 0).toFixed(3)} KWD`, RM, y);
+    y += 16;
+
+    ctx.textAlign = 'left';
+    ctx.fillText('Delivery', totX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${(order.shippingCost || 0).toFixed(3)} KWD`, RM, y);
+    y += 8;
+
+    // Gold line
+    ctx.strokeStyle = '#D4AF37';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(totX, y);
+    ctx.lineTo(RM, y);
+    ctx.stroke();
+    y += 16;
+
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillStyle = '#333333';
+    ctx.fillText('TOTAL', totX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${(order.total || 0).toFixed(3)} KWD`, RM, y);
+    y += 25;
+
+    // ── RETURN POLICY ──
+    ctx.fillStyle = '#fffbeb';
+    ctx.fillRect(LM, y, CW, 28);
+    ctx.strokeStyle = '#f0e6c0';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(LM, y, CW, 28);
+
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 8px Arial';
+    ctx.fillStyle = '#666666';
+    ctx.fillText('Return Policy: 14-day return on unopened items. WhatsApp: +965 5563 6321', LM + 6, y + 12);
+    ctx.font = '8px Arial';
+    ctx.fillText('سياسة الإرجاع: إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة', LM + 6, y + 23);
+    y += 38;
+
+    // ── FOOTER ──
+    ctx.strokeStyle = '#e6e1d6';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(LM, y);
+    ctx.lineTo(RM, y);
+    ctx.stroke();
+    y += 12;
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#D4AF37';
+    ctx.font = 'bold 10px Arial';
+    ctx.fillText('Thank you for shopping with ARTÉVA Maison!', W / 2, y);
+    y += 12;
+    ctx.fillStyle = '#888888';
+    ctx.font = '9px Arial';
+    ctx.fillText('www.artevamaisonkw.com • artevamaison@gmail.com', W / 2, y);
+
+    // Convert to JPEG buffer
+    return canvas.toBuffer('image/jpeg', { quality: 0.92 });
 }
 
-/**
- * Create an IPP string attribute
- */
+// ═══════════════════════════════════════
+// IPP PROTOCOL IMPLEMENTATION
+// ═══════════════════════════════════════
+
 function ippAttribute(tag, name, value) {
     const nameBuf = Buffer.from(name, 'utf-8');
     const valueBuf = Buffer.from(value, 'utf-8');
@@ -82,9 +292,6 @@ function ippAttribute(tag, name, value) {
     return buf;
 }
 
-/**
- * Create an IPP integer attribute
- */
 function ippIntAttribute(tag, name, value) {
     const nameBuf = Buffer.from(name, 'utf-8');
     const buf = Buffer.alloc(1 + 2 + nameBuf.length + 2 + 4);
@@ -97,13 +304,33 @@ function ippIntAttribute(tag, name, value) {
     return buf;
 }
 
-/**
- * Send IPP print request to printer
- */
+function buildIppPrintJob(jpegBuffer, jobName) {
+    const attrs = [];
+    attrs.push(Buffer.from([0x01])); // operation-attributes-tag
+    attrs.push(ippAttribute(0x47, 'attributes-charset', 'utf-8'));
+    attrs.push(ippAttribute(0x48, 'attributes-natural-language', 'en'));
+    attrs.push(ippAttribute(0x45, 'printer-uri', 'ipp://localhost/ipp/print'));
+    attrs.push(ippAttribute(0x49, 'document-format', 'image/jpeg'));
+    attrs.push(ippAttribute(0x42, 'job-name', jobName || 'ARTEVA Receipt'));
+    attrs.push(Buffer.from([0x02])); // job-attributes-tag
+    attrs.push(ippIntAttribute(0x21, 'copies', 1));
+    attrs.push(Buffer.from([0x03])); // end-of-attributes
+
+    const header = Buffer.alloc(8);
+    header.writeUInt8(2, 0);    // IPP 2.0
+    header.writeUInt8(0, 1);
+    header.writeUInt16BE(0x0002, 2); // Print-Job
+    header.writeUInt32BE(Math.floor(Math.random() * 0xFFFF), 4);
+
+    return Buffer.concat([header, Buffer.concat(attrs), jpegBuffer]);
+}
+
 function sendIppRequest(printerUrl, ippData) {
     return new Promise((resolve, reject) => {
         const url = new URL(printerUrl);
-        const options = {
+        const client = url.protocol === 'https:' ? https : http;
+
+        const req = client.request({
             hostname: url.hostname,
             port: url.port || 631,
             path: url.pathname || '/ipp/print',
@@ -113,122 +340,64 @@ function sendIppRequest(printerUrl, ippData) {
                 'Content-Length': ippData.length
             },
             timeout: 30000
-        };
-
-        const client = url.protocol === 'https:' ? https : http;
-        const req = client.request(options, (res) => {
+        }, (res) => {
             const chunks = [];
             res.on('data', chunk => chunks.push(chunk));
             res.on('end', () => {
                 const response = Buffer.concat(chunks);
-                // Parse IPP response status
                 if (response.length >= 4) {
                     const statusCode = response.readUInt16BE(2);
-                    if (statusCode <= 0x00FF) {
-                        // Successful
-                        resolve({ success: true, statusCode, message: 'Print job accepted' });
-                    } else {
-                        resolve({ success: false, statusCode, message: `IPP error: 0x${statusCode.toString(16)}` });
-                    }
+                    resolve({
+                        success: statusCode <= 0x00FF,
+                        statusCode: `0x${statusCode.toString(16).padStart(4, '0')}`,
+                        message: statusCode <= 0x00FF ? 'Print job accepted' : `IPP error: 0x${statusCode.toString(16)}`
+                    });
                 } else {
-                    resolve({ success: true, message: 'Request sent (no IPP response parsed)' });
+                    resolve({ success: true, message: 'Request sent' });
                 }
             });
         });
 
         req.on('error', (err) => reject(err));
-        req.on('timeout', () => {
-            req.destroy();
-            reject(new Error('IPP request timeout'));
-        });
-
+        req.on('timeout', () => { req.destroy(); reject(new Error('IPP timeout')); });
         req.write(ippData);
         req.end();
     });
 }
 
-/**
- * Generate compact receipt HTML for printing
- */
-function generatePrintReceiptHTML(order, customer) {
-    const orderDate = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric'
-    });
+// ═══════════════════════════════════════
+// PUBLIC API
+// ═══════════════════════════════════════
 
-    const itemsHtml = (order.items || []).map(item => {
-        const sku = item.sku || '—';
-        const total = (item.price * item.quantity).toFixed(3);
-        return `<tr>
-            <td style="padding:4px 2px;border-bottom:1px solid #ddd;font-size:10px;color:#888;font-family:monospace;">${sku}</td>
-            <td style="padding:4px 2px;border-bottom:1px solid #ddd;font-size:11px;">${item.name}${item.nameAr ? '<br><span style="font-size:9px;color:#888;">' + item.nameAr + '</span>' : ''}</td>
-            <td style="padding:4px 2px;border-bottom:1px solid #ddd;text-align:center;font-size:11px;">${item.quantity}</td>
-            <td style="padding:4px 2px;border-bottom:1px solid #ddd;text-align:right;font-size:11px;">${item.price.toFixed(3)}</td>
-            <td style="padding:4px 2px;border-bottom:1px solid #ddd;text-align:right;font-size:11px;font-weight:600;">${total}</td>
-        </tr>`;
-    }).join('');
-
-    const addr = order.shippingAddress || {};
-    const addressParts = [addr.street, addr.city, addr.state, addr.country].filter(Boolean);
-    const customerName = customer ? customer.name : (addr.fullName || 'Guest');
-    const customerEmail = customer ? customer.email : '';
-
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<style>@page{size:A4;margin:10mm}body{font-family:Arial,sans-serif;font-size:12px;color:#333;margin:0;padding:10px}
-.h{text-align:center;border-bottom:2px solid #D4AF37;padding-bottom:8px;margin-bottom:10px}
-.h h1{font-size:22px;letter-spacing:2px;margin:0}.h p{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin:2px 0}
-.m{display:flex;justify-content:space-between;margin-bottom:8px;font-size:11px}
-.m .l{font-size:9px;color:#888;text-transform:uppercase}.m .v{font-weight:600}
-.b{background:#f9f7f4;border:1px solid #e6e1d6;border-radius:4px;padding:8px;margin-bottom:8px;font-size:11px}
-.b .l{font-size:9px;color:#888;text-transform:uppercase;margin-bottom:2px}
-table{width:100%;border-collapse:collapse;margin-bottom:8px}th{background:#f5f2ec;padding:4px;font-size:9px;text-transform:uppercase;color:#888;text-align:left}
-.t{width:200px;margin-left:auto}.tr{display:flex;justify-content:space-between;font-size:11px;padding:2px 0}
-.tg{border-top:2px solid #D4AF37;margin-top:4px;padding-top:4px;font-size:14px;font-weight:bold}
-.f{text-align:center;font-size:9px;color:#888;margin-top:10px;border-top:1px solid #ddd;padding-top:6px}
-</style></head><body>
-<div class="h"><h1>ARTÉVA MAISON</h1><p>Order Receipt / إيصال الطلب</p></div>
-<div class="m"><div><div class="l">Order</div><div class="v">${order.orderNumber || 'N/A'}</div></div><div><div class="l">Date</div><div class="v">${orderDate}</div></div><div><div class="l">Payment</div><div class="v">${(order.paymentMethod || 'N/A').toUpperCase()}</div></div></div>
-<div style="display:flex;gap:8px"><div class="b" style="flex:1"><div class="l">Customer</div><div style="font-weight:600">${customerName}</div><div>${customerEmail}</div></div>
-<div class="b" style="flex:1"><div class="l">Shipping</div><div>${addressParts.join(', ') || 'N/A'}</div></div></div>
-<table><thead><tr><th style="width:12%">SKU</th><th style="width:38%">Item</th><th style="width:10%;text-align:center">Qty</th><th style="width:18%;text-align:right">Price</th><th style="width:22%;text-align:right">Total</th></tr></thead><tbody>${itemsHtml}</tbody></table>
-<div class="t"><div class="tr"><span>Subtotal</span><span>${(order.subtotal || 0).toFixed(3)} KWD</span></div><div class="tr"><span>Delivery</span><span>${(order.shippingCost || 0).toFixed(3)} KWD</span></div><div class="tr tg"><span>TOTAL</span><span>${(order.total || 0).toFixed(3)} KWD</span></div></div>
-<div style="background:#fffbeb;border:1px solid #f0e6c0;border-radius:4px;padding:6px;margin-top:8px;font-size:9px;color:#666"><strong>Return Policy:</strong> 14-day return on unopened items. WhatsApp: +965 5563 6321</div>
-<div class="f"><p>Thank you! / شكراً لتسوقكم • www.artevamaisonkw.com</p></div></body></html>`;
-}
-
-/**
- * Auto-print receipt via IPP over internet
- */
 async function autoPrintReceipt(order, customer) {
     const printerUrl = process.env.PRINTER_IPP_URL;
-
     if (!printerUrl) {
-        console.log('[PRINT] PRINTER_IPP_URL not configured — skipping auto-print');
-        return { success: false, reason: 'IPP URL not configured' };
+        console.log('[PRINT] PRINTER_IPP_URL not configured — skipping');
+        return { success: false, reason: 'Not configured' };
     }
 
     try {
-        console.log(`[PRINT] 🖨️ Sending receipt for ${order.orderNumber} via IPP to ${printerUrl}`);
+        console.log(`[PRINT] 🖨️ Rendering receipt for ${order.orderNumber}...`);
+        const jpegBuffer = renderReceiptToJpeg(order, customer);
+        console.log(`[PRINT] 📄 Receipt rendered: ${(jpegBuffer.length / 1024).toFixed(1)} KB`);
 
-        const receiptHtml = generatePrintReceiptHTML(order, customer);
-        const ippData = buildIppPrintRequest(receiptHtml, `Receipt-${order.orderNumber}`);
+        const ippData = buildIppPrintJob(jpegBuffer, `Receipt-${order.orderNumber}`);
+        console.log(`[PRINT] 📡 Sending to ${printerUrl}...`);
+
         const result = await sendIppRequest(printerUrl, ippData);
 
         if (result.success) {
-            console.log(`[PRINT] ✅ Receipt printed for ${order.orderNumber}`);
+            console.log(`[PRINT] ✅ Printed: ${order.orderNumber} (${result.statusCode})`);
         } else {
-            console.error(`[PRINT] ❌ IPP error: ${result.message}`);
+            console.error(`[PRINT] ❌ Failed: ${result.message}`);
         }
-
         return result;
     } catch (error) {
-        console.error(`[PRINT] ❌ Auto-print error: ${error.message}`);
+        console.error(`[PRINT] ❌ Error: ${error.message}`);
         return { success: false, error: error.message };
     }
 }
 
-/**
- * Manually trigger a receipt print
- */
 async function printExistingOrderReceipt(orderId) {
     const Order = require('../models/Order');
     const order = await Order.findById(orderId).populate('user', 'name email phone').lean();
@@ -236,8 +405,4 @@ async function printExistingOrderReceipt(orderId) {
     return autoPrintReceipt(order, order.user);
 }
 
-module.exports = {
-    autoPrintReceipt,
-    printExistingOrderReceipt,
-    generatePrintReceiptHTML
-};
+module.exports = { autoPrintReceipt, printExistingOrderReceipt, renderReceiptToJpeg };
