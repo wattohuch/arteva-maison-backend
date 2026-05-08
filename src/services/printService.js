@@ -166,36 +166,34 @@ async function renderReceiptToJpeg(order, customer) {
         c.textAlign='left'; c.fillText(item.price.toFixed(3)+' KWD', cols[2].x, y);
         c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
         c.textAlign='right'; c.fillText(total+' KWD', cols[4].x+cols[4].w, y);
-        y += item.nameAr?f(22):f(16);
+        y += item.nameAr?f(26):f(20);
         c.strokeStyle=BORDER; c.lineWidth=f(0.3); c.beginPath(); c.moveTo(LM,y); c.lineTo(RM,y); c.stroke();
-        y += f(4);
+        y += f(6);
     });
-    y += f(6);
+    y += f(8);
 
     // ═══ TOTALS ═══
     const tw = f(200), tx = RM-tw;
     // Subtotal
     c.textAlign='left'; c.font=`${f(9.5)}px Arial`; c.fillStyle=DARK;
     c.fillText('Subtotal', tx, y);
-    c.fillStyle=LIGHT; c.font=`${f(8)}px Arial`;
-    const stW = c.measureText('Subtotal ').width;
-    c.fillText('المجموع الفرعي', tx+stW+f(2), y+f(1));
+    c.fillStyle=LIGHT; c.font=`${f(7.5)}px Arial`;
+    c.fillText('/ المجموع الفرعي', tx+f(52), y+f(1.5));
     c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
     c.textAlign='right'; c.fillText((order.subtotal||0).toFixed(3)+' KWD', RM, y); y+=f(14);
     // Delivery
     c.textAlign='left'; c.fillText('Delivery', tx, y);
-    c.fillStyle=LIGHT; c.font=`${f(8)}px Arial`;
-    const dlW = c.measureText('Delivery ').width;
-    c.fillText('التوصيل', tx+dlW+f(2), y+f(1));
+    c.fillStyle=LIGHT; c.font=`${f(7.5)}px Arial`;
+    c.fillText('/ التوصيل', tx+f(48), y+f(1.5));
     c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
-    c.textAlign='right'; c.fillText((order.shippingCost||0).toFixed(3)+' KWD', RM, y); y+=f(8);
+    c.textAlign='right'; c.fillText((order.shippingCost||0).toFixed(3)+' KWD', RM, y); y+=f(12);
     // Divider
-    c.strokeStyle=BORDER; c.lineWidth=f(1); c.beginPath(); c.moveTo(tx,y); c.lineTo(RM,y); c.stroke(); y+=f(12);
+    c.strokeStyle=BORDER; c.lineWidth=f(1); c.beginPath(); c.moveTo(tx,y); c.lineTo(RM,y); c.stroke(); y+=f(14);
     // Total Paid
     c.textAlign='left'; c.font=`bold ${f(13)}px Arial`; c.fillStyle=DARK;
     c.fillText('Total Paid', tx, y);
-    c.fillStyle=LIGHT; c.font=`bold ${f(10)}px Arial`;
-    c.fillText('/ المبلغ المدفوع', tx+f(75), y+f(2));
+    c.fillStyle=LIGHT; c.font=`bold ${f(9)}px Arial`;
+    c.fillText('/ المبلغ المدفوع', tx+f(78), y+f(3));
     c.fillStyle=DARK; c.font=`bold ${f(13)}px Arial`;
     c.textAlign='right'; c.fillText((order.total||0).toFixed(3)+' KWD', RM, y); y+=f(24);
 
