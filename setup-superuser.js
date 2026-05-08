@@ -12,7 +12,7 @@ const User = require('./src/models/User');
 const bcrypt = require('bcryptjs');
 
 const SUPERUSER_EMAIL = 'mohammadalawaji2@gmail.com';
-const SUPERUSER_PHONE = '+965656115663';
+const SUPERUSER_PHONE = '+96550683207';
 
 async function setupSuperuser() {
     try {

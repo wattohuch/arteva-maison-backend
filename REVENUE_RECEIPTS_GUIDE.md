@@ -29,7 +29,7 @@ This will:
 - Connect to MongoDB using environment variables
 - Find user by email (mohammadalawaji2@gmail.com)
 - Upgrade role to `superuser`
-- Set phone number (+965656115663) if not already set
+- Set phone number (+96550683207) if not already set
 - Prompt for revenue password
 - Save securely hashed
 

@@ -130,18 +130,27 @@ async function renderReceiptToJpeg(order, customer) {
 
     // ═══ ITEMS TABLE ═══
     const items = order.items||[];
-    const cols = [{l:'SKU',w:f(50)},{l:'Item',w:0},{l:'Unit Price',w:f(80)},{l:'Qty',w:f(45),a:'center'},{l:'Total',w:f(90),a:'right'}];
+    const colHeaders = [
+        {en:'SKU',ar:'رقم'},{en:'Item',ar:'المنتج'},{en:'Unit Price',ar:'السعر'},{en:'Qty',ar:'الكمية'},{en:'Total',ar:'المجموع'}
+    ];
+    const cols = [{w:f(50)},{w:0},{w:f(80)},{w:f(45),a:'center'},{w:f(90),a:'right'}];
     cols[1].w = CW - cols[0].w - cols[2].w - cols[3].w - cols[4].w;
     let cx = LM;
     cols.forEach(col=>{col.x=cx; cx+=col.w;});
 
-    // Header
-    c.fillStyle=DARK; c.font=`${f(9)}px Georgia`;
+    // Table header line
     c.strokeStyle=BORDER; c.lineWidth=f(0.5);
     c.beginPath(); c.moveTo(LM,y+f(15)); c.lineTo(RM,y+f(15)); c.stroke();
-    cols.forEach(col=>{
+    // Draw EN then AR for each header
+    colHeaders.forEach((h,i)=>{
+        const col=cols[i];
+        const tx = col.a==='right'?col.x+col.w:col.a==='center'?col.x+col.w/2:col.x;
         c.textAlign=col.a||'left';
-        c.fillText(col.l, col.a==='right'?col.x+col.w:col.a==='center'?col.x+col.w/2:col.x, y+f(2));
+        c.fillStyle=DARK; c.font=`${f(9)}px Georgia`;
+        c.fillText(h.en, tx, y+f(1));
+        // Arabic label on second line
+        c.fillStyle=LIGHT; c.font=`${f(7)}px Arial`;
+        c.fillText(h.ar, tx, y+f(10));
     });
     y += f(20);
 
@@ -165,15 +174,30 @@ async function renderReceiptToJpeg(order, customer) {
 
     // ═══ TOTALS ═══
     const tw = f(200), tx = RM-tw;
+    // Subtotal
     c.textAlign='left'; c.font=`${f(9.5)}px Arial`; c.fillStyle=DARK;
     c.fillText('Subtotal', tx, y);
+    c.fillStyle=LIGHT; c.font=`${f(8)}px Arial`;
+    const stW = c.measureText('Subtotal ').width;
+    c.fillText('المجموع الفرعي', tx+stW+f(2), y+f(1));
+    c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
     c.textAlign='right'; c.fillText((order.subtotal||0).toFixed(3)+' KWD', RM, y); y+=f(14);
+    // Delivery
     c.textAlign='left'; c.fillText('Delivery', tx, y);
+    c.fillStyle=LIGHT; c.font=`${f(8)}px Arial`;
+    const dlW = c.measureText('Delivery ').width;
+    c.fillText('التوصيل', tx+dlW+f(2), y+f(1));
+    c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
     c.textAlign='right'; c.fillText((order.shippingCost||0).toFixed(3)+' KWD', RM, y); y+=f(8);
+    // Divider
     c.strokeStyle=BORDER; c.lineWidth=f(1); c.beginPath(); c.moveTo(tx,y); c.lineTo(RM,y); c.stroke(); y+=f(12);
+    // Total Paid
     c.textAlign='left'; c.font=`bold ${f(13)}px Arial`; c.fillStyle=DARK;
     c.fillText('Total Paid', tx, y);
-    c.textAlign='right'; c.font=`bold ${f(13)}px Arial`; c.fillText((order.total||0).toFixed(3)+' KWD', RM, y); y+=f(24);
+    c.fillStyle=LIGHT; c.font=`bold ${f(10)}px Arial`;
+    c.fillText('/ المبلغ المدفوع', tx+f(75), y+f(2));
+    c.fillStyle=DARK; c.font=`bold ${f(13)}px Arial`;
+    c.textAlign='right'; c.fillText((order.total||0).toFixed(3)+' KWD', RM, y); y+=f(24);
 
     // ═══ QR CODE ═══
     const qrSz=f(60), qrH=qrSz+f(14);
@@ -195,20 +219,29 @@ async function renderReceiptToJpeg(order, customer) {
     y+=qrH+f(10);
 
     // ═══ RETURN POLICY ═══
-    const rpH=f(72);
+    const rpH=f(78);
     c.fillStyle='#fffbeb'; rr(c,LM,y,CW,rpH,f(4)); c.fill();
     c.strokeStyle='rgba(245,158,11,0.2)'; c.lineWidth=f(0.5); rr(c,LM,y,CW,rpH,f(4)); c.stroke();
     c.fillStyle=GOLD; c.fillRect(LM,y,f(2),rpH); // gold left bar
 
     const rpX=LM+f(10);
+    // EN title left, AR title right
     c.textAlign='left'; c.fillStyle=DARK;
     c.font=`${f(11)}px Georgia`; c.fillText('Return & Exchange Policy', rpX, y+f(8));
-    c.font=`600 ${f(9)}px Arial`; c.fillText('سياسة الإرجاع والاستبدال', rpX, y+f(19));
-    c.fillStyle=MID; c.font=`${f(8)}px Arial`;
-    c.fillText('Products may be returned or exchanged within 14 days of delivery,', rpX, y+f(31));
-    c.fillText('provided they are unopened and in their original condition and packaging.', rpX, y+f(40));
-    c.fillText('يمكن إرجاع أو استبدال المنتجات خلال ١٤ يومًا من التسليم، بشرط أن تكون غير مفتوحة وفي حالتها الأصلي', rpX, y+f(50));
-    c.fillText('Contact WhatsApp: +965 5068 3207  |  واتساب: ٥٠٦٨٣٢٠٧+٩٦٥', rpX, y+f(62));
+    c.textAlign='right'; c.font=`600 ${f(10)}px Arial`;
+    c.fillText('سياسة الإرجاع والاستبدال', RM-f(10), y+f(9));
+    // EN policy text
+    c.textAlign='left'; c.fillStyle=MID; c.font=`${f(8)}px Arial`;
+    c.fillText('Products may be returned or exchanged within 14 days of delivery, provided they are', rpX, y+f(24));
+    c.fillText('unopened and in their original condition and packaging.', rpX, y+f(33));
+    // AR policy text (right-aligned)
+    c.textAlign='right';
+    c.fillText('يمكن إرجاع أو استبدال المنتجات خلال ١٤ يومًا من التسليم، بشرط أن تكون غير مفتوحة وفي حالتها وتغليفها الأصلي', RM-f(10), y+f(46));
+    // Contact
+    c.textAlign='left';
+    c.fillText('Contact us via WhatsApp: +965 5068 3207', rpX, y+f(60));
+    c.textAlign='right';
+    c.fillText('تواصلوا معنا عبر واتساب: ٩٦٥٥٠٦٨٣٢٠٧+', RM-f(10), y+f(60));
     y+=rpH+f(10);
 
     // ═══ FOOTER ═══

@@ -28,10 +28,10 @@ Add to your `.env` file:
 WHATSAPP_API_URL=https://graph.facebook.com/v18.0
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
 WHATSAPP_ACCESS_TOKEN=your_access_token_here
-WHATSAPP_OWNER_PHONE=+965656115663
+WHATSAPP_OWNER_PHONE=+96550683207
 ```
 
-**Important:** WhatsApp notifications are sent to the OWNER only (+965656115663), not to customers. You'll receive instant alerts about:
+**Important:** WhatsApp notifications are sent to the OWNER only (+96550683207), not to customers. You'll receive instant alerts about:
 - New orders placed
 - Payments received
 - Order cancellations
@@ -480,7 +480,7 @@ function showTrackingModal(order) {
 
 For help:
 - Email: mohammadalawaji2@gmail.com
-- Phone: +965656115663
+- Phone: +96550683207
 
 ---
 

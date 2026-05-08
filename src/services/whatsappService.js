@@ -11,7 +11,7 @@ class WhatsAppService {
         this.apiUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
         this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
         this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '+965656115663';
+        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '+96550683207';
     }
 
     /**

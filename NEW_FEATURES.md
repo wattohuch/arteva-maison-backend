@@ -166,7 +166,7 @@ Response:
 
 OTP will be sent to:
 - Email: mohammadalawaji2@gmail.com
-- Phone: +965656115663
+- Phone: +96550683207
 
 #### Verify Revenue OTP
 ```
@@ -277,7 +277,7 @@ Add to `.env`:
 WHATSAPP_API_URL=https://graph.facebook.com/v18.0
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
 WHATSAPP_ACCESS_TOKEN=your_access_token
-WHATSAPP_OWNER_PHONE=+965656115663
+WHATSAPP_OWNER_PHONE=+96550683207
 ```
 
 ### Notification Types
@@ -478,7 +478,7 @@ Add to production `.env`:
 WHATSAPP_API_URL=https://graph.facebook.com/v18.0
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
 WHATSAPP_ACCESS_TOKEN=your_access_token
-WHATSAPP_BUSINESS_PHONE=+965656115663
+WHATSAPP_BUSINESS_PHONE=+96550683207
 ```
 
 ### Database Migration
@@ -530,7 +530,7 @@ No migration needed - new fields are optional and will be added automatically.
 
 For issues or questions:
 - Email: mohammadalawaji2@gmail.com
-- Phone: +965656115663
+- Phone: +96550683207
 
 ---
 

@@ -40,7 +40,7 @@
 
 ### 4. WhatsApp Notifications (Owner Only) ✓
 - **Service:** `whatsappService.js` created
-- **Notifications Sent to Owner (+965656115663):**
+- **Notifications Sent to Owner (+96550683207):**
   - New order placed (with full order details)
   - Payment received
   - Order cancelled (with refund approval reminder)
@@ -158,7 +158,7 @@ MYFATOORAH_MODE=...
 WHATSAPP_API_URL=https://graph.facebook.com/v18.0
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
 WHATSAPP_ACCESS_TOKEN=your_access_token
-WHATSAPP_OWNER_PHONE=+965656115663
+WHATSAPP_OWNER_PHONE=+96550683207
 ```
 
 ---
@@ -339,7 +339,7 @@ No migration required. New fields are optional and will be added automatically:
 
 For issues or questions:
 - Email: mohammadalawaji2@gmail.com
-- Phone: +965656115663
+- Phone: +96550683207
 
 ---
 

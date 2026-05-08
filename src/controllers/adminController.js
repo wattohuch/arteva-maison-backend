@@ -814,7 +814,7 @@ const requestRevenueOTP = asyncHandler(async (req, res) => {
         html: emailHtml
     });
 
-    // TODO: Integrate SMS service for +965656115663
+    // TODO: Integrate SMS service for +96550683207
     console.log(`[REVENUE OTP] Generated OTP ${otp} for user ${user.email}`);
 
     res.json({
@@ -963,7 +963,7 @@ function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
         refundPolicy: 'سياسة الإرجاع',
         refundNotice: `إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة (${daysSinceOrder} يوم منذ الطلب)`,
         refundExpired: `انتهت فترة الإرجاع (${daysSinceOrder} يومًا)`,
-        contactUs: 'واتساب: 965565611563+',
+        contactUs: 'واتساب: 96550683207+',
         thankYou: 'شكراً لتسوقكم!'
     } : {
         title: 'Order Receipt',
@@ -988,7 +988,7 @@ function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
         refundPolicy: 'Return Policy',
         refundNotice: `14-day return on unopened items (${daysSinceOrder} days since order)`,
         refundExpired: `Return period expired (${daysSinceOrder} days)`,
-        contactUs: 'WhatsApp: +965656115663',
+        contactUs: 'WhatsApp: +96550683207',
         thankYou: 'Thank you for shopping with us!'
     };
 
