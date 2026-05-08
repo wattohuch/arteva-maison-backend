@@ -1,282 +1,489 @@
 /**
- * ARTEVA Maison - Auto-Print Service (IPP + JPEG)
+ * ARTEVA Maison - Auto-Print Service (IPP + High-Res JPEG)
  * 
- * Renders receipts as JPEG images using canvas,
+ * Renders receipts as 300 DPI JPEG images using canvas,
  * then sends them to the HP Smart Tank 790 via IPP.
  * 
- * Works over the internet via port forwarding:
- *   Router forwards external:9631 → printer:631
- * 
- * No PC needed — just the printer on WiFi.
+ * Features:
+ * - 300 DPI print quality (2480×3508 px for A4)
+ * - QR code with Arteva "A" logo
+ * - Full bilingual receipt (EN/AR)
+ * - SKU column
+ * - Return policy
  */
 
 const http = require('http');
 const https = require('https');
-const { createCanvas } = require('canvas');
+const { createCanvas, loadImage } = require('canvas');
+const QRCode = require('qrcode');
 
 // ═══════════════════════════════════════
-// RECEIPT IMAGE RENDERER (Canvas → JPEG)
+// CONSTANTS - 300 DPI A4
 // ═══════════════════════════════════════
+const DPI = 300;
+const W = Math.round(8.27 * DPI);   // 2481 px (A4 width)
+const H = Math.round(11.69 * DPI);  // 3507 px (A4 height)
+const SCALE = DPI / 72;             // ~4.17x scale from 72dpi
 
-function renderReceiptToJpeg(order, customer) {
-    const W = 595;  // A4 width at 72dpi
-    const H = 842;  // A4 height at 72dpi
+// Margins & spacing (in 300dpi pixels)
+const M = Math.round(15 * SCALE);   // ~62px margin
+const GOLD = '#D4AF37';
+const DARK = '#222222';
+const MID = '#555555';
+const LIGHT = '#888888';
+const VLIGHT = '#bbbbbb';
+
+// Font sizes (scaled for 300dpi)
+function fs(pt) { return Math.round(pt * SCALE); }
+
+// ═══════════════════════════════════════
+// QR CODE GENERATOR
+// ═══════════════════════════════════════
+async function generateQRWithLogo(url, size) {
+    // Generate QR as canvas
+    const qrCanvas = createCanvas(size, size);
+    await QRCode.toCanvas(qrCanvas, url, {
+        width: size,
+        margin: 1,
+        color: { dark: '#333333', light: '#ffffff' },
+        errorCorrectionLevel: 'H' // High - allows logo overlay
+    });
+
+    const ctx = qrCanvas.getContext('2d');
+
+    // Draw gold border
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = Math.round(size * 0.02);
+    ctx.strokeRect(0, 0, size, size);
+
+    // Draw "A" logo in center
+    const logoSize = Math.round(size * 0.22);
+    const logoX = (size - logoSize) / 2;
+    const logoY = (size - logoSize) / 2;
+
+    // White background circle for logo
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, logoSize * 0.65, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Gold border circle
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = Math.round(size * 0.015);
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, logoSize * 0.65, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // "A" letter
+    ctx.fillStyle = GOLD;
+    ctx.font = `bold ${logoSize}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('A', size / 2, size / 2 + Math.round(logoSize * 0.05));
+
+    return qrCanvas;
+}
+
+// ═══════════════════════════════════════
+// RECEIPT RENDERER (300 DPI)
+// ═══════════════════════════════════════
+async function renderReceiptToJpeg(order, customer) {
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
 
-    // Background
+    // White background
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, W, H);
 
-    let y = 30;
-    const LM = 30;  // left margin
-    const RM = W - 30; // right edge
-    const CW = RM - LM; // content width
+    let y = M;
+    const LM = M;
+    const RM = W - M;
+    const CW = RM - LM;
 
-    // ── HEADER ──
-    ctx.fillStyle = '#333333';
-    ctx.font = 'bold 24px Arial';
+    // ════════════════════════════════════
+    // HEADER
+    // ════════════════════════════════════
+    ctx.fillStyle = DARK;
+    ctx.font = `bold ${fs(26)}px Arial`;
     ctx.textAlign = 'center';
-    ctx.fillText('ARTÉVA MAISON', W / 2, y + 20);
-    y += 30;
+    ctx.textBaseline = 'top';
+    ctx.fillText('ARTÉVA MAISON', W / 2, y);
+    y += fs(30);
 
-    ctx.font = '10px Arial';
-    ctx.fillStyle = '#888888';
-    ctx.fillText('Order Receipt / إيصال الطلب', W / 2, y + 10);
-    y += 20;
+    ctx.font = `${fs(10)}px Arial`;
+    ctx.fillStyle = LIGHT;
+    ctx.letterSpacing = '2px';
+    ctx.fillText('ORDER RECEIPT  /  إيصال الطلب', W / 2, y);
+    y += fs(16);
 
-    // Gold line
-    ctx.strokeStyle = '#D4AF37';
-    ctx.lineWidth = 2;
+    // Gold divider
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = fs(1.5);
     ctx.beginPath();
     ctx.moveTo(LM, y);
     ctx.lineTo(RM, y);
     ctx.stroke();
-    y += 15;
+    y += fs(12);
 
-    // ── ORDER META ──
-    ctx.textAlign = 'left';
-    ctx.font = '9px Arial';
-    ctx.fillStyle = '#888888';
-
+    // ════════════════════════════════════
+    // ORDER META ROW
+    // ════════════════════════════════════
     const orderDate = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', {
         year: 'numeric', month: 'short', day: 'numeric'
     });
     const payment = (order.paymentMethod || 'N/A').toUpperCase();
+    const orderStatus = order.paymentStatus === 'paid' ? '✓ PAID' : (order.paymentStatus || 'N/A').toUpperCase();
 
-    // Meta row
     const metaCols = [
-        { label: 'ORDER', value: order.orderNumber || 'N/A' },
-        { label: 'DATE', value: orderDate },
-        { label: 'PAYMENT', value: payment }
+        { label: 'ORDER / رقم الطلب', value: order.orderNumber || 'N/A' },
+        { label: 'DATE / التاريخ', value: orderDate },
+        { label: 'PAYMENT / الدفع', value: payment },
+        { label: 'STATUS / الحالة', value: orderStatus, color: '#16a34a' }
     ];
+
     const colW = CW / metaCols.length;
+    ctx.textAlign = 'left';
     metaCols.forEach((col, i) => {
         const x = LM + (i * colW);
-        ctx.fillStyle = '#888888';
-        ctx.font = '8px Arial';
+        ctx.fillStyle = LIGHT;
+        ctx.font = `${fs(7)}px Arial`;
         ctx.fillText(col.label, x, y);
-        ctx.fillStyle = '#333333';
-        ctx.font = 'bold 11px Arial';
-        ctx.fillText(col.value, x, y + 13);
+        ctx.fillStyle = col.color || DARK;
+        ctx.font = `bold ${fs(10)}px Arial`;
+        ctx.fillText(col.value, x, y + fs(11));
     });
-    y += 30;
+    y += fs(28);
 
-    // ── CUSTOMER & SHIPPING ──
-    const boxW = (CW - 10) / 2;
+    // ════════════════════════════════════
+    // CUSTOMER & SHIPPING BOXES
+    // ════════════════════════════════════
+    const boxH = fs(55);
+    const boxW = (CW - fs(8)) / 2;
     const customerName = customer ? customer.name : 'Guest';
     const customerEmail = customer ? customer.email : '';
     const customerPhone = customer ? (customer.phone || '') : '';
     const addr = order.shippingAddress || {};
-    const addressParts = [addr.street, addr.city, addr.state, addr.country].filter(Boolean).join(', ');
+    const addressParts = [addr.street, addr.city, addr.state, addr.country].filter(Boolean);
 
     // Customer box
     ctx.fillStyle = '#f9f7f4';
-    ctx.fillRect(LM, y, boxW, 55);
+    roundRect(ctx, LM, y, boxW, boxH, fs(3));
+    ctx.fill();
     ctx.strokeStyle = '#e6e1d6';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(LM, y, boxW, 55);
+    ctx.lineWidth = fs(0.5);
+    roundRect(ctx, LM, y, boxW, boxH, fs(3));
+    ctx.stroke();
 
-    ctx.fillStyle = '#888888';
-    ctx.font = '8px Arial';
-    ctx.fillText('CUSTOMER', LM + 6, y + 12);
-    ctx.fillStyle = '#333333';
-    ctx.font = 'bold 11px Arial';
-    ctx.fillText(customerName, LM + 6, y + 26);
-    ctx.font = '10px Arial';
-    ctx.fillStyle = '#555555';
-    ctx.fillText(customerEmail, LM + 6, y + 38);
-    ctx.fillText(customerPhone, LM + 6, y + 50);
+    ctx.fillStyle = LIGHT;
+    ctx.font = `${fs(7)}px Arial`;
+    ctx.textAlign = 'left';
+    ctx.fillText('CUSTOMER / العميل', LM + fs(6), y + fs(10));
+    ctx.fillStyle = DARK;
+    ctx.font = `bold ${fs(11)}px Arial`;
+    ctx.fillText(customerName, LM + fs(6), y + fs(22));
+    ctx.font = `${fs(9)}px Arial`;
+    ctx.fillStyle = MID;
+    ctx.fillText(customerEmail, LM + fs(6), y + fs(33));
+    ctx.fillText(customerPhone, LM + fs(6), y + fs(43));
 
     // Shipping box
-    const shipX = LM + boxW + 10;
+    const shipX = LM + boxW + fs(8);
     ctx.fillStyle = '#f9f7f4';
-    ctx.fillRect(shipX, y, boxW, 55);
+    roundRect(ctx, shipX, y, boxW, boxH, fs(3));
+    ctx.fill();
     ctx.strokeStyle = '#e6e1d6';
-    ctx.strokeRect(shipX, y, boxW, 55);
+    roundRect(ctx, shipX, y, boxW, boxH, fs(3));
+    ctx.stroke();
 
-    ctx.fillStyle = '#888888';
-    ctx.font = '8px Arial';
-    ctx.fillText('SHIPPING', shipX + 6, y + 12);
-    ctx.fillStyle = '#555555';
-    ctx.font = '10px Arial';
-    // Wrap address text
-    const addrWords = (addressParts || 'N/A').split(' ');
-    let addrLine = '';
-    let addrY = y + 26;
-    addrWords.forEach(word => {
-        const test = addrLine + word + ' ';
-        if (ctx.measureText(test).width > boxW - 12) {
-            ctx.fillText(addrLine.trim(), shipX + 6, addrY);
-            addrLine = word + ' ';
-            addrY += 12;
-        } else {
-            addrLine = test;
-        }
-    });
-    ctx.fillText(addrLine.trim(), shipX + 6, addrY);
+    ctx.fillStyle = LIGHT;
+    ctx.font = `${fs(7)}px Arial`;
+    ctx.fillText('SHIPPING / الشحن', shipX + fs(6), y + fs(10));
+    ctx.fillStyle = MID;
+    ctx.font = `${fs(9)}px Arial`;
 
-    y += 70;
+    // Word-wrap address
+    const addrText = addressParts.join(', ') || 'N/A';
+    wrapText(ctx, addrText, shipX + fs(6), y + fs(22), boxW - fs(12), fs(11));
 
-    // ── ITEMS TABLE ──
+    if (addr.phone) {
+        ctx.fillText('📞 ' + addr.phone, shipX + fs(6), y + fs(43));
+    }
+
+    y += boxH + fs(12);
+
+    // ════════════════════════════════════
+    // ITEMS TABLE
+    // ════════════════════════════════════
     const items = order.items || [];
-    const cols = [
-        { label: 'SKU', x: LM, w: 60 },
-        { label: 'ITEM', x: LM + 65, w: 200 },
-        { label: 'QTY', x: LM + 270, w: 40, align: 'center' },
-        { label: 'PRICE', x: LM + 320, w: 80, align: 'right' },
-        { label: 'TOTAL', x: LM + 420, w: 100, align: 'right' }
+
+    // Column definitions
+    const tableX = LM;
+    const skuW = fs(55);
+    const nameW = CW - skuW - fs(45) - fs(70) - fs(85);
+    const qtyW = fs(45);
+    const priceW = fs(70);
+    const totalW = fs(85);
+
+    const colDefs = [
+        { label: 'SKU', x: tableX, w: skuW, align: 'left' },
+        { label: 'ITEM / المنتج', x: tableX + skuW, w: nameW, align: 'left' },
+        { label: 'QTY', x: tableX + skuW + nameW, w: qtyW, align: 'center' },
+        { label: 'PRICE', x: tableX + skuW + nameW + qtyW, w: priceW, align: 'right' },
+        { label: 'TOTAL', x: tableX + skuW + nameW + qtyW + priceW, w: totalW, align: 'right' }
     ];
 
-    // Header
+    // Table header
     ctx.fillStyle = '#f5f2ec';
-    ctx.fillRect(LM, y, CW, 18);
-    ctx.fillStyle = '#888888';
-    ctx.font = '8px Arial';
-    cols.forEach(col => {
-        ctx.textAlign = col.align || 'left';
-        const tx = col.align === 'right' ? col.x + col.w : col.x;
-        ctx.fillText(col.label, tx, y + 12);
+    roundRect(ctx, LM, y, CW, fs(16), fs(2));
+    ctx.fill();
+
+    ctx.fillStyle = LIGHT;
+    ctx.font = `bold ${fs(7)}px Arial`;
+    colDefs.forEach(col => {
+        ctx.textAlign = col.align;
+        const tx = col.align === 'right' ? col.x + col.w : col.align === 'center' ? col.x + col.w / 2 : col.x + fs(3);
+        ctx.fillText(col.label, tx, y + fs(11));
     });
-    y += 22;
+    y += fs(20);
 
-    // Rows
-    items.forEach(item => {
+    // Table rows
+    items.forEach((item, idx) => {
         const sku = item.sku || '—';
+        const name = item.name || 'Product';
         const total = (item.price * item.quantity).toFixed(3);
-
-        ctx.textAlign = 'left';
+        const rowY = y;
 
         // SKU
-        ctx.fillStyle = '#888888';
-        ctx.font = '9px Courier New';
-        ctx.fillText(sku, cols[0].x, y + 4);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = LIGHT;
+        ctx.font = `${fs(8)}px Courier New`;
+        ctx.fillText(sku, colDefs[0].x + fs(3), rowY);
 
         // Name
-        ctx.fillStyle = '#333333';
-        ctx.font = '11px Arial';
-        const name = item.name || 'Product';
-        const displayName = ctx.measureText(name).width > cols[1].w ? name.substring(0, 25) + '...' : name;
-        ctx.fillText(displayName, cols[1].x, y + 4);
+        ctx.fillStyle = DARK;
+        ctx.font = `${fs(10)}px Arial`;
+        const displayName = truncateText(ctx, name, colDefs[1].w - fs(6));
+        ctx.fillText(displayName, colDefs[1].x + fs(3), rowY);
+
+        // Arabic name
+        if (item.nameAr) {
+            ctx.fillStyle = LIGHT;
+            ctx.font = `${fs(7.5)}px Arial`;
+            ctx.fillText(item.nameAr, colDefs[1].x + fs(3), rowY + fs(11));
+        }
 
         // Qty
         ctx.textAlign = 'center';
-        ctx.fillText(String(item.quantity), cols[2].x + cols[2].w / 2, y + 4);
+        ctx.fillStyle = DARK;
+        ctx.font = `${fs(10)}px Arial`;
+        ctx.fillText(String(item.quantity), colDefs[2].x + colDefs[2].w / 2, rowY);
 
         // Price
         ctx.textAlign = 'right';
-        ctx.fillText(item.price.toFixed(3), cols[3].x + cols[3].w, y + 4);
+        ctx.fillText(item.price.toFixed(3), colDefs[3].x + colDefs[3].w, rowY);
 
         // Total
-        ctx.font = 'bold 11px Arial';
-        ctx.fillText(total, cols[4].x + cols[4].w, y + 4);
+        ctx.font = `bold ${fs(10)}px Arial`;
+        ctx.fillText(total, colDefs[4].x + colDefs[4].w, rowY);
 
-        // Separator
-        y += 6;
+        // Row separator
+        y += item.nameAr ? fs(20) : fs(16);
         ctx.strokeStyle = '#eeeeee';
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = fs(0.3);
         ctx.beginPath();
-        ctx.moveTo(LM, y + 4);
-        ctx.lineTo(RM, y + 4);
+        ctx.moveTo(LM, y);
+        ctx.lineTo(RM, y);
         ctx.stroke();
-        y += 12;
+        y += fs(4);
     });
 
-    y += 5;
+    y += fs(8);
 
-    // ── TOTALS ──
+    // ════════════════════════════════════
+    // TOTALS
+    // ════════════════════════════════════
+    const totW2 = fs(200);
+    const totX = RM - totW2;
+    const amtX = RM - fs(5); // Right-align amounts with padding
+
+    ctx.font = `${fs(10)}px Arial`;
+    ctx.fillStyle = MID;
     ctx.textAlign = 'left';
-    const totX = RM - 180;
-
-    ctx.font = '11px Arial';
-    ctx.fillStyle = '#555555';
     ctx.fillText('Subtotal', totX, y);
     ctx.textAlign = 'right';
-    ctx.fillText(`${(order.subtotal || 0).toFixed(3)} KWD`, RM, y);
-    y += 16;
+    ctx.fillText(`${(order.subtotal || 0).toFixed(3)} KWD`, amtX, y);
+    y += fs(14);
 
     ctx.textAlign = 'left';
     ctx.fillText('Delivery', totX, y);
     ctx.textAlign = 'right';
-    ctx.fillText(`${(order.shippingCost || 0).toFixed(3)} KWD`, RM, y);
-    y += 8;
+    ctx.fillText(`${(order.shippingCost || 0).toFixed(3)} KWD`, amtX, y);
+    y += fs(8);
 
-    // Gold line
-    ctx.strokeStyle = '#D4AF37';
-    ctx.lineWidth = 2;
+    // Gold divider
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = fs(1.5);
     ctx.beginPath();
     ctx.moveTo(totX, y);
     ctx.lineTo(RM, y);
     ctx.stroke();
-    y += 16;
+    y += fs(14);
 
+    // TOTAL - label on left, amount on right with clear separation
     ctx.textAlign = 'left';
-    ctx.font = 'bold 14px Arial';
-    ctx.fillStyle = '#333333';
+    ctx.font = `bold ${fs(14)}px Arial`;
+    ctx.fillStyle = DARK;
     ctx.fillText('TOTAL', totX, y);
     ctx.textAlign = 'right';
-    ctx.fillText(`${(order.total || 0).toFixed(3)} KWD`, RM, y);
-    y += 25;
+    ctx.font = `bold ${fs(16)}px Arial`;
+    ctx.fillStyle = GOLD;
+    ctx.fillText(`${(order.total || 0).toFixed(3)} KWD`, amtX, y);
+    y += fs(24);
 
-    // ── RETURN POLICY ──
+    // ════════════════════════════════════
+    // QR CODE SECTION
+    // ════════════════════════════════════
+    const qrSize = fs(70);
+    const qrSectionH = qrSize + fs(16);
+
+    // QR background box
+    ctx.fillStyle = '#fafaf8';
+    roundRect(ctx, LM, y, CW, qrSectionH, fs(4));
+    ctx.fill();
+    ctx.strokeStyle = '#e6e1d6';
+    ctx.lineWidth = fs(0.5);
+    roundRect(ctx, LM, y, CW, qrSectionH, fs(4));
+    ctx.stroke();
+
+    // Generate and draw QR code
+    try {
+        const qrUrl = 'https://www.artevamaisonkw.com';
+        const qrCanvas = await generateQRWithLogo(qrUrl, qrSize);
+        const qrX = LM + fs(12);
+        const qrY = y + (qrSectionH - qrSize) / 2;
+        ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+
+        // QR labels
+        const labelX = qrX + qrSize + fs(15);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = DARK;
+        ctx.font = `bold ${fs(11)}px Arial`;
+        ctx.fillText('Scan for Digital Receipt', labelX, y + fs(22));
+        ctx.fillStyle = LIGHT;
+        ctx.font = `${fs(9)}px Arial`;
+        ctx.fillText('امسح للإيصال الرقمي', labelX, y + fs(34));
+        ctx.fillStyle = VLIGHT;
+        ctx.font = `${fs(8)}px Arial`;
+        ctx.fillText('www.artevamaisonkw.com', labelX, y + fs(48));
+
+        // WhatsApp QR info
+        ctx.fillStyle = MID;
+        ctx.font = `${fs(9)}px Arial`;
+        ctx.fillText('WhatsApp: +965 5068 3207', labelX, y + fs(62));
+    } catch (e) {
+        console.error('[PRINT] QR generation error:', e.message);
+    }
+
+    y += qrSectionH + fs(10);
+
+    // ════════════════════════════════════
+    // RETURN POLICY
+    // ════════════════════════════════════
+    const policyH = fs(28);
     ctx.fillStyle = '#fffbeb';
-    ctx.fillRect(LM, y, CW, 28);
+    roundRect(ctx, LM, y, CW, policyH, fs(3));
+    ctx.fill();
     ctx.strokeStyle = '#f0e6c0';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(LM, y, CW, 28);
+    ctx.lineWidth = fs(0.5);
+    roundRect(ctx, LM, y, CW, policyH, fs(3));
+    ctx.stroke();
+
+    // Left gold accent bar
+    ctx.fillStyle = GOLD;
+    ctx.fillRect(LM, y, fs(2), policyH);
 
     ctx.textAlign = 'left';
-    ctx.font = 'bold 8px Arial';
+    ctx.font = `bold ${fs(8)}px Arial`;
     ctx.fillStyle = '#666666';
-    ctx.fillText('Return Policy: 14-day return on unopened items. WhatsApp: +965 5563 6321', LM + 6, y + 12);
-    ctx.font = '8px Arial';
-    ctx.fillText('سياسة الإرجاع: إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة', LM + 6, y + 23);
-    y += 38;
+    ctx.fillText('Return Policy: 14-day return on unopened items.  |  WhatsApp: +965 5068 3207', LM + fs(8), y + fs(11));
+    ctx.font = `${fs(7.5)}px Arial`;
+    ctx.fillText('سياسة الإرجاع: إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة', LM + fs(8), y + fs(22));
+    y += policyH + fs(10);
 
-    // ── FOOTER ──
+    // ════════════════════════════════════
+    // FOOTER
+    // ════════════════════════════════════
     ctx.strokeStyle = '#e6e1d6';
-    ctx.lineWidth = 1;
+    ctx.lineWidth = fs(0.5);
     ctx.beginPath();
     ctx.moveTo(LM, y);
     ctx.lineTo(RM, y);
     ctx.stroke();
-    y += 12;
+    y += fs(10);
 
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#D4AF37';
-    ctx.font = 'bold 10px Arial';
+    ctx.fillStyle = GOLD;
+    ctx.font = `bold ${fs(10)}px Arial`;
     ctx.fillText('Thank you for shopping with ARTÉVA Maison!', W / 2, y);
-    y += 12;
-    ctx.fillStyle = '#888888';
-    ctx.font = '9px Arial';
-    ctx.fillText('www.artevamaisonkw.com • artevamaison@gmail.com', W / 2, y);
+    y += fs(10);
+    ctx.fillStyle = LIGHT;
+    ctx.font = `${fs(9)}px Arial`;
+    ctx.fillText('شكراً لتسوقكم مع أرتيفا ميزون', W / 2, y);
+    y += fs(12);
+    ctx.fillStyle = VLIGHT;
+    ctx.font = `${fs(8)}px Arial`;
+    ctx.fillText('www.artevamaisonkw.com  •  artevamaison@gmail.com  •  +965 5068 3207', W / 2, y);
 
-    // Convert to JPEG buffer
-    return canvas.toBuffer('image/jpeg', { quality: 0.92 });
+    // Convert to high-quality JPEG
+    return canvas.toBuffer('image/jpeg', { quality: 0.95 });
 }
 
 // ═══════════════════════════════════════
-// IPP PROTOCOL IMPLEMENTATION
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════
+
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+}
+
+function wrapText(ctx, text, x, y, maxW, lineH) {
+    const words = text.split(' ');
+    let line = '';
+    let currentY = y;
+    words.forEach(word => {
+        const test = line + word + ' ';
+        if (ctx.measureText(test).width > maxW && line !== '') {
+            ctx.fillText(line.trim(), x, currentY);
+            line = word + ' ';
+            currentY += lineH;
+        } else {
+            line = test;
+        }
+    });
+    ctx.fillText(line.trim(), x, currentY);
+}
+
+function truncateText(ctx, text, maxW) {
+    if (ctx.measureText(text).width <= maxW) return text;
+    let t = text;
+    while (ctx.measureText(t + '...').width > maxW && t.length > 0) {
+        t = t.substring(0, t.length - 1);
+    }
+    return t + '...';
+}
+
+// ═══════════════════════════════════════
+// IPP PROTOCOL
 // ═══════════════════════════════════════
 
 function ippAttribute(tag, name, value) {
@@ -306,20 +513,20 @@ function ippIntAttribute(tag, name, value) {
 
 function buildIppPrintJob(jpegBuffer, jobName) {
     const attrs = [];
-    attrs.push(Buffer.from([0x01])); // operation-attributes-tag
+    attrs.push(Buffer.from([0x01]));
     attrs.push(ippAttribute(0x47, 'attributes-charset', 'utf-8'));
     attrs.push(ippAttribute(0x48, 'attributes-natural-language', 'en'));
     attrs.push(ippAttribute(0x45, 'printer-uri', 'ipp://localhost/ipp/print'));
     attrs.push(ippAttribute(0x49, 'document-format', 'image/jpeg'));
     attrs.push(ippAttribute(0x42, 'job-name', jobName || 'ARTEVA Receipt'));
-    attrs.push(Buffer.from([0x02])); // job-attributes-tag
+    attrs.push(Buffer.from([0x02]));
     attrs.push(ippIntAttribute(0x21, 'copies', 1));
-    attrs.push(Buffer.from([0x03])); // end-of-attributes
+    attrs.push(Buffer.from([0x03]));
 
     const header = Buffer.alloc(8);
-    header.writeUInt8(2, 0);    // IPP 2.0
+    header.writeUInt8(2, 0);
     header.writeUInt8(0, 1);
-    header.writeUInt16BE(0x0002, 2); // Print-Job
+    header.writeUInt16BE(0x0002, 2);
     header.writeUInt32BE(Math.floor(Math.random() * 0xFFFF), 4);
 
     return Buffer.concat([header, Buffer.concat(attrs), jpegBuffer]);
@@ -329,36 +536,31 @@ function sendIppRequest(printerUrl, ippData) {
     return new Promise((resolve, reject) => {
         const url = new URL(printerUrl);
         const client = url.protocol === 'https:' ? https : http;
-
         const req = client.request({
             hostname: url.hostname,
             port: url.port || 631,
             path: url.pathname || '/ipp/print',
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/ipp',
-                'Content-Length': ippData.length
-            },
-            timeout: 30000
+            headers: { 'Content-Type': 'application/ipp', 'Content-Length': ippData.length },
+            timeout: 60000
         }, (res) => {
             const chunks = [];
             res.on('data', chunk => chunks.push(chunk));
             res.on('end', () => {
-                const response = Buffer.concat(chunks);
-                if (response.length >= 4) {
-                    const statusCode = response.readUInt16BE(2);
+                const r = Buffer.concat(chunks);
+                if (r.length >= 4) {
+                    const sc = r.readUInt16BE(2);
                     resolve({
-                        success: statusCode <= 0x00FF,
-                        statusCode: `0x${statusCode.toString(16).padStart(4, '0')}`,
-                        message: statusCode <= 0x00FF ? 'Print job accepted' : `IPP error: 0x${statusCode.toString(16)}`
+                        success: sc <= 0x00FF,
+                        statusCode: `0x${sc.toString(16).padStart(4, '0')}`,
+                        message: sc <= 0x00FF ? 'Print job accepted' : `IPP error: 0x${sc.toString(16)}`
                     });
                 } else {
                     resolve({ success: true, message: 'Request sent' });
                 }
             });
         });
-
-        req.on('error', (err) => reject(err));
+        req.on('error', reject);
         req.on('timeout', () => { req.destroy(); reject(new Error('IPP timeout')); });
         req.write(ippData);
         req.end();
@@ -377,17 +579,16 @@ async function autoPrintReceipt(order, customer) {
     }
 
     try {
-        console.log(`[PRINT] 🖨️ Rendering receipt for ${order.orderNumber}...`);
-        const jpegBuffer = renderReceiptToJpeg(order, customer);
-        console.log(`[PRINT] 📄 Receipt rendered: ${(jpegBuffer.length / 1024).toFixed(1)} KB`);
+        console.log(`[PRINT] 🖨️ Rendering 300 DPI receipt for ${order.orderNumber}...`);
+        const jpegBuffer = await renderReceiptToJpeg(order, customer);
+        console.log(`[PRINT] 📄 Receipt: ${(jpegBuffer.length / 1024).toFixed(0)} KB (${W}×${H} px @ ${DPI} DPI)`);
 
         const ippData = buildIppPrintJob(jpegBuffer, `Receipt-${order.orderNumber}`);
         console.log(`[PRINT] 📡 Sending to ${printerUrl}...`);
 
         const result = await sendIppRequest(printerUrl, ippData);
-
         if (result.success) {
-            console.log(`[PRINT] ✅ Printed: ${order.orderNumber} (${result.statusCode})`);
+            console.log(`[PRINT] ✅ Printed: ${order.orderNumber}`);
         } else {
             console.error(`[PRINT] ❌ Failed: ${result.message}`);
         }
