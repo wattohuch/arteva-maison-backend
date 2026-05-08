@@ -24,22 +24,58 @@ async function getMongoUri() {
 }
 
 const connectDB = async () => {
-    try {
-        const uri = await getMongoUri();
-        // Optimized for low resources (512MB RAM, 0.1 CPU)
-        await mongoose.connect(uri, {
-            serverSelectionTimeoutMS: 10000,
-            maxPoolSize: 5, // Limit connection pool (default 100)
-            minPoolSize: 1,
-            socketTimeoutMS: 45000,
-            family: 4, // Use IPv4
-            maxIdleTimeMS: 30000, // Close idle connections faster
-            compressors: 'zlib', // Enable compression
-        });
-    } catch (error) {
-        console.error('❌ Database connection failed:');
-        console.error(error);
-        process.exit(1);
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 5000;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const uri = await getMongoUri();
+
+            // Minimal options — let the driver handle Flex cluster topology discovery
+            // Atlas Flex clusters use a different replica set architecture;
+            // over-constraining options causes electionId/setVersion mismatches
+            await mongoose.connect(uri, {
+                serverSelectionTimeoutMS: 30000,   // 30s — Flex clusters can be slower to elect
+                heartbeatFrequencyMS: 10000,       // Check topology every 10s (default 10s)
+                maxPoolSize: 10,                   // Reasonable pool for low-resource tier
+                minPoolSize: 2,                    // Keep 2 warm connections
+                socketTimeoutMS: 60000,            // 60s socket timeout
+                family: 4,                         // IPv4 only
+                retryWrites: true,                 // Retry transient write failures
+                retryReads: true,                  // Retry transient read failures
+                maxIdleTimeMS: 60000,              // Close idle connections after 60s
+            });
+
+            // Connection event listeners
+            mongoose.connection.on('disconnected', () => {
+                console.warn('⚠️ MongoDB disconnected — driver will auto-reconnect');
+            });
+
+            mongoose.connection.on('reconnected', () => {
+                console.log('✅ MongoDB reconnected');
+            });
+
+            mongoose.connection.on('error', (err) => {
+                console.error('❌ MongoDB connection error:', err.message);
+            });
+
+            console.log(`✅ MongoDB connected (attempt ${attempt}/${MAX_RETRIES})`);
+            return; // Success — exit retry loop
+
+        } catch (error) {
+            console.error(`❌ Database connection attempt ${attempt}/${MAX_RETRIES} failed:`);
+            console.error(error.message);
+
+            if (attempt < MAX_RETRIES) {
+                console.log(`⏳ Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                // Ensure clean state before retry
+                try { await mongoose.disconnect(); } catch {}
+            } else {
+                console.error('❌ All connection attempts exhausted — exiting');
+                process.exit(1);
+            }
+        }
     }
 };
 
