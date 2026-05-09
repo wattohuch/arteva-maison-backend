@@ -2,6 +2,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const { sendOrderStatusUpdate, sendEmail } = require('../services/emailService');
 const { emitOrderStatusUpdate, getIO } = require('../socketHandler');
+const whatsappService = require('../services/whatsappService');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -247,6 +248,15 @@ exports.uploadDeliveryProof = [
                     console.log(`📧 Delivery proof emailed to driver: ${req.user.email}`);
                 } catch (emailErr) {
                     console.error('Failed to email driver:', emailErr.message);
+                }
+            }
+
+            // WhatsApp Notification to Customer
+            if (order.user || order.shippingAddress) {
+                try {
+                    await whatsappService.notifyCustomerDelivery(order, order.user || {}, proofUrl);
+                } catch (waErr) {
+                    console.error('Failed to send WhatsApp to customer:', waErr.message);
                 }
             }
 

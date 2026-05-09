@@ -1,52 +1,101 @@
 /**
- * WhatsApp Notification Service
- * Sends order notifications to OWNER via WhatsApp Business API
- * Owner receives notifications about new orders and order updates
+ * WhatsApp Notification Service (Unofficial / Free API via Baileys)
+ * Sends order notifications to OWNER and CUSTOMERS via WhatsApp Web protocol.
+ * Requires server to scan a QR code on startup once.
  */
 
-const axios = require('axios');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const qrcode = require('qrcode-terminal');
+const pino = require('pino');
+const path = require('path');
+const fs = require('fs');
 
 class WhatsAppService {
     constructor() {
-        this.apiUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
-        this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-        this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '+96550683207';
+        this.sock = null;
+        this.isConnected = false;
+        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96550683207';
+        
+        // Setup Auth Directory
+        this.authPath = path.join(__dirname, '../../whatsapp-auth');
+        if (!fs.existsSync(this.authPath)) {
+            fs.mkdirSync(this.authPath, { recursive: true });
+        }
+        
+        this.init();
+    }
+
+    async init() {
+        try {
+            const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
+            
+            this.sock = makeWASocket({
+                auth: state,
+                printQRInTerminal: false, // We handle it manually
+                logger: pino({ level: 'silent' }) // Suppress heavy logs
+            });
+
+            this.sock.ev.on('creds.update', saveCreds);
+
+            this.sock.ev.on('connection.update', (update) => {
+                const { connection, lastDisconnect, qr } = update;
+                
+                if (qr) {
+                    console.log('\n=========================================');
+                    console.log('📱 WhatsApp Web QR Code');
+                    console.log('Scan this to link ARTEVA server to WhatsApp:');
+                    qrcode.generate(qr, { small: true });
+                    console.log('=========================================\n');
+                }
+                
+                if (connection === 'close') {
+                    const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+                    console.log('WhatsApp connection closed, reconnecting:', shouldReconnect);
+                    this.isConnected = false;
+                    
+                    if (shouldReconnect) {
+                        setTimeout(() => this.init(), 3000);
+                    } else {
+                        console.log('WhatsApp logged out! Deleting auth folder to allow fresh scan...');
+                        try { fs.rmSync(this.authPath, { recursive: true, force: true }); } catch (e) {}
+                        setTimeout(() => this.init(), 3000);
+                    }
+                } else if (connection === 'open') {
+                    console.log('✅ WhatsApp successfully connected and ready to send messages!');
+                    this.isConnected = true;
+                }
+            });
+        } catch (err) {
+            console.error('Failed to initialize WhatsApp:', err);
+        }
     }
 
     /**
      * Send WhatsApp message
      */
     async sendMessage(to, message) {
-        if (!this.phoneNumberId || !this.accessToken) {
-            console.warn('⚠️ WhatsApp API not configured. Skipping notification.');
-            return { success: false, error: 'WhatsApp API not configured' };
+        if (!this.isConnected || !this.sock) {
+            console.warn('⚠️ WhatsApp not connected yet. Cannot send message to:', to);
+            return { success: false, error: 'Not connected' };
         }
 
         try {
-            // Format phone number (remove + and spaces)
+            // Format phone number (remove + and spaces, must have country code)
             const formattedPhone = to.replace(/[\s\+\-\(\)]/g, '');
+            const jid = `${formattedPhone}@s.whatsapp.net`;
 
-            const response = await axios.post(
-                `${this.apiUrl}/${this.phoneNumberId}/messages`,
-                {
-                    messaging_product: 'whatsapp',
-                    to: formattedPhone,
-                    type: 'text',
-                    text: { body: message }
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${this.accessToken}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
+            // Check if number is actually on WhatsApp
+            const [result] = await this.sock.onWhatsApp(jid);
+            if (!result || !result.exists) {
+                console.warn(`⚠️ Number ${formattedPhone} is not registered on WhatsApp.`);
+                return { success: false, error: 'Not on WhatsApp' };
+            }
 
-            console.log(`📱 WhatsApp message sent to ${to}`);
-            return { success: true, messageId: response.data.messages[0].id };
+            await this.sock.sendMessage(jid, { text: message });
+            console.log(`📱 WhatsApp message sent successfully to ${formattedPhone}`);
+            return { success: true };
         } catch (error) {
-            console.error(`❌ Failed to send WhatsApp message to ${to}:`, error.response?.data || error.message);
+            console.error(`❌ Failed to send WhatsApp message to ${to}:`, error.message);
             return { success: false, error: error.message };
         }
     }
@@ -189,6 +238,24 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         `.trim();
 
         return this.sendMessage(this.ownerPhone, message);
+    }
+
+    /**
+     * Notify customer about delivery with proof URL
+     */
+    async notifyCustomerDelivery(order, user, proofUrl) {
+        if (!user.phone && !order.shippingAddress?.phone) return;
+        
+        const phone = user.phone || order.shippingAddress.phone;
+        const isArabic = user.language === 'ar';
+        const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
+        const fullProofUrl = `${backendUrl}${proofUrl}`;
+
+        const message = isArabic 
+            ? `مرحباً ${user.name || 'عميلنا العزيز'}،\nتم توصيل طلبك رقم *${order.orderNumber}* بنجاح ✅\n\nيمكنك رؤية صورة التوصيل هنا:\n${fullProofUrl}\n\nشكراً لتسوقك مع ARTÉVA Maison! ✨`
+            : `Hello ${user.name || 'Valued Customer'},\nYour order *${order.orderNumber}* has been successfully delivered ✅\n\nYou can view your delivery proof photo here:\n${fullProofUrl}\n\nThank you for shopping with ARTÉVA Maison! ✨`;
+
+        return this.sendMessage(phone, message);
     }
 }
 
