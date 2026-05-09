@@ -190,45 +190,63 @@ exports.uploadDeliveryProof = [
                 }
             } catch (e) { /* socket not critical */ }
 
-            // Email delivery proof photo to customer
+            // Email delivery proof photo to BOTH customer and driver
+            const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
+            const proofImageUrl = `${backendUrl}${proofUrl}`;
+
+            const proofEmailHtml = (recipientName, isDriver) => `
+                <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #faf8f5;">
+                    <div style="background: linear-gradient(135deg, #1a1a1a, #2a2a2a); padding: 30px; text-align: center;">
+                        <h1 style="color: #c9a962; font-family: Georgia, serif; margin: 0; font-size: 24px; letter-spacing: 2px;">ARTÉVA</h1>
+                        <p style="color: #999; font-size: 11px; letter-spacing: 3px; margin: 4px 0 0;">MAISON</p>
+                    </div>
+                    <div style="padding: 30px; background: #fff;">
+                        <h2 style="color: #1a1a1a; margin: 0 0 10px;">${isDriver ? 'Delivery Completed! 🎉' : 'Your Order Has Been Delivered! ✅'}</h2>
+                        <p style="color: #666; font-size: 15px; line-height: 1.6;">
+                            Dear ${recipientName},<br><br>
+                            ${isDriver 
+                                ? `You have successfully delivered order <strong style="color: #c9a962;">${order.orderNumber}</strong>. Here is your proof photo for reference:`
+                                : `Your order <strong style="color: #c9a962;">${order.orderNumber}</strong> has been successfully delivered. Below is a photo confirmation from our delivery team:`
+                            }
+                        </p>
+                        <div style="text-align: center; margin: 24px 0;">
+                            <img src="${proofImageUrl}" alt="Delivery proof" style="max-width: 100%; border-radius: 12px; border: 1px solid #eee; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+                        </div>
+                        <p style="color: #999; font-size: 13px; text-align: center;">
+                            ${isDriver ? 'This photo has also been sent to the customer.' : 'Thank you for shopping with ARTÉVA Maison!'}
+                        </p>
+                    </div>
+                    <div style="background: #1a1a1a; padding: 20px; text-align: center;">
+                        <p style="color: #666; font-size: 11px; margin: 0;">© 2026 ARTÉVA Maison. All rights reserved.</p>
+                    </div>
+                </div>
+            `;
+
+            // Send to customer
             if (order.user && order.user.email) {
                 try {
-                    const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
-                    const proofImageUrl = `${backendUrl}${proofUrl}`;
-
                     await sendEmail({
                         to: order.user.email,
                         subject: `Your Order ${order.orderNumber} Has Been Delivered! 📦 | ARTÉVA Maison`,
-                        html: `
-                            <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #faf8f5;">
-                                <div style="background: linear-gradient(135deg, #1a1a1a, #2a2a2a); padding: 30px; text-align: center;">
-                                    <h1 style="color: #c9a962; font-family: Georgia, serif; margin: 0; font-size: 24px; letter-spacing: 2px;">ARTÉVA</h1>
-                                    <p style="color: #999; font-size: 11px; letter-spacing: 3px; margin: 4px 0 0;">MAISON</p>
-                                </div>
-                                <div style="padding: 30px; background: #fff;">
-                                    <h2 style="color: #1a1a1a; margin: 0 0 10px;">Your Order Has Been Delivered! ✅</h2>
-                                    <p style="color: #666; font-size: 15px; line-height: 1.6;">
-                                        Dear ${order.user.name || 'Valued Customer'},<br><br>
-                                        Your order <strong style="color: #c9a962;">${order.orderNumber}</strong> has been successfully delivered.
-                                        Below is a photo confirmation from our delivery team:
-                                    </p>
-                                    <div style="text-align: center; margin: 24px 0;">
-                                        <img src="${proofImageUrl}" alt="Delivery proof" style="max-width: 100%; border-radius: 12px; border: 1px solid #eee; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
-                                    </div>
-                                    <p style="color: #999; font-size: 13px; text-align: center;">
-                                        Thank you for shopping with ARTÉVA Maison!<br>
-                                        If you have any questions, please contact us via WhatsApp or email.
-                                    </p>
-                                </div>
-                                <div style="background: #1a1a1a; padding: 20px; text-align: center;">
-                                    <p style="color: #666; font-size: 11px; margin: 0;">© 2026 ARTÉVA Maison. All rights reserved.</p>
-                                </div>
-                            </div>
-                        `
+                        html: proofEmailHtml(order.user.name || 'Valued Customer', false)
                     });
-                    console.log(`📧 Delivery proof emailed to ${order.user.email} for order ${order.orderNumber}`);
+                    console.log(`📧 Delivery proof emailed to customer: ${order.user.email}`);
                 } catch (emailErr) {
-                    console.error('Failed to email delivery proof:', emailErr.message);
+                    console.error('Failed to email customer:', emailErr.message);
+                }
+            }
+
+            // Send to driver
+            if (req.user && req.user.email) {
+                try {
+                    await sendEmail({
+                        to: req.user.email,
+                        subject: `Delivery Proof - ${order.orderNumber} | ARTÉVA Maison`,
+                        html: proofEmailHtml(req.user.name || 'Driver', true)
+                    });
+                    console.log(`📧 Delivery proof emailed to driver: ${req.user.email}`);
+                } catch (emailErr) {
+                    console.error('Failed to email driver:', emailErr.message);
                 }
             }
 
