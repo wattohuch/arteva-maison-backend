@@ -119,6 +119,7 @@ const orderSchema = new mongoose.Schema({
     // Legacy Stripe field (deprecated)
     stripeSessionId: String,
     notes: String,
+    deliveryProof: String,  // Path to delivery proof photo
     deliveredAt: Date,
     cancelledAt: Date,
     paidAt: Date
