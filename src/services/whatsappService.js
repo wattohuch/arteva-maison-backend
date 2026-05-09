@@ -31,22 +31,36 @@ class WhatsAppService {
             
             this.sock = makeWASocket({
                 auth: state,
-                printQRInTerminal: false, // We handle it manually
-                logger: pino({ level: 'silent' }) // Suppress heavy logs
+                printQRInTerminal: false, // We use pairing code instead
+                logger: pino({ level: 'silent' }), // Suppress heavy logs
+                browser: ['ARTEVA Server', 'Chrome', '2.0.0'] // Required for pairing code
             });
 
             this.sock.ev.on('creds.update', saveCreds);
 
+            // Request pairing code if not logged in
+            if (!state.creds.registered) {
+                setTimeout(async () => {
+                    try {
+                        // Phone number must have country code but no + (e.g. 96550683207)
+                        const phone = this.ownerPhone.replace(/[^0-9]/g, '');
+                        const code = await this.sock.requestPairingCode(phone);
+                        console.log('\n=========================================');
+                        console.log('🔗 WHATSAPP PAIRING CODE');
+                        console.log(`1. Open WhatsApp on ${phone}`);
+                        console.log(`2. Go to Settings -> Linked Devices`);
+                        console.log(`3. Click "Link a Device", then tap "Link with phone number instead"`);
+                        console.log(`4. Enter this exact code:`);
+                        console.log(`   ${code.match(/.{1,4}/g).join('-')}   `);
+                        console.log('=========================================\n');
+                    } catch (e) {
+                        console.error('Failed to request pairing code. Ensure WHATSAPP_OWNER_PHONE is set correctly:', e.message);
+                    }
+                }, 3000);
+            }
+
             this.sock.ev.on('connection.update', (update) => {
-                const { connection, lastDisconnect, qr } = update;
-                
-                if (qr) {
-                    console.log('\n=========================================');
-                    console.log('📱 WhatsApp Web QR Code');
-                    console.log('Scan this to link ARTEVA server to WhatsApp:');
-                    qrcode.generate(qr, { small: true });
-                    console.log('=========================================\n');
-                }
+                const { connection, lastDisconnect } = update;
                 
                 if (connection === 'close') {
                     const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
