@@ -1366,6 +1366,69 @@ const getCustomerOrderHistory = asyncHandler(async (req, res) => {
 });
 
 
+// @desc    Update order receipt data (items, prices, shipping, discount, notes)
+// @route   PUT /api/admin/orders/:id/receipt
+// @access  Private (admin/superuser)
+const updateOrderReceipt = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    const { items, shippingCost, discount, notes } = req.body;
+
+    // Update items if provided
+    if (items && Array.isArray(items)) {
+        order.items = items.map((item, idx) => {
+            const existing = order.items[idx] || {};
+            return {
+                product: item.product || existing.product,
+                name: item.name || existing.name,
+                nameAr: item.nameAr || existing.nameAr,
+                sku: item.sku || existing.sku,
+                image: item.image || existing.image,
+                price: item.price !== undefined ? Number(item.price) : existing.price,
+                quantity: item.quantity !== undefined ? Number(item.quantity) : existing.quantity
+            };
+        });
+    }
+
+    // Update shipping cost
+    if (shippingCost !== undefined) {
+        order.shippingCost = Number(shippingCost);
+    }
+
+    // Update discount
+    if (discount !== undefined) {
+        order.discount = Number(discount);
+    }
+
+    // Update notes
+    if (notes !== undefined) {
+        order.notes = notes;
+    }
+
+    // Recalculate subtotal and total
+    order.subtotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    order.total = order.subtotal + (order.shippingCost || 0) - (order.discount || 0);
+    if (order.total < 0) order.total = 0;
+
+    await order.save();
+
+    // Return updated order with user populated
+    const updated = await Order.findById(order._id)
+        .populate('user', 'name email phone language')
+        .lean();
+
+    res.json({
+        success: true,
+        data: updated
+    });
+});
+
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -1389,5 +1452,6 @@ module.exports = {
     setRevenuePassword,
     getRevenueAnalytics,
     updateProductDiscount,
-    getCustomerOrderHistory
+    getCustomerOrderHistory,
+    updateOrderReceipt
 };

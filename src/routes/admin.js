@@ -23,7 +23,8 @@ const {
     setRevenuePassword,
     getRevenueAnalytics,
     updateProductDiscount,
-    getCustomerOrderHistory
+    getCustomerOrderHistory,
+    updateOrderReceipt
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -84,6 +85,7 @@ router.route('/products/:id')
 router.get('/orders', protect, admin, getAdminOrders);
 router.put('/orders/:id/status', protect, admin, updateOrderStatus);
 router.put('/orders/:id/assign', protect, admin, assignDriver);
+router.put('/orders/:id/receipt', protect, admin, updateOrderReceipt);
 
 // Users
 router.route('/users')
