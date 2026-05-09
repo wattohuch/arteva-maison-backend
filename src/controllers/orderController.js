@@ -75,10 +75,11 @@ const createOrder = asyncHandler(async (req, res) => {
         console.error('Socket notification error:', e.message);
     }
 
-    // Send WhatsApp notification to OWNER
+    // Send WhatsApp notification to OWNER and CUSTOMER
     try {
         const whatsapp = require('../services/whatsappService');
         await whatsapp.notifyOwnerNewOrder(order, req.user);
+        await whatsapp.notifyCustomerNewOrder(order, req.user);
     } catch (e) {
         console.error('WhatsApp notification error:', e.message);
     }
@@ -330,10 +331,11 @@ const cancelOrder = asyncHandler(async (req, res) => {
         console.error('Failed to send cancellation email:', emailErr);
     }
 
-    // Send WhatsApp notification to OWNER
+    // Send WhatsApp notification to OWNER and CUSTOMER
     try {
         const whatsapp = require('../services/whatsappService');
         await whatsapp.notifyOwnerOrderCancellation(order, order.user, reason);
+        await whatsapp.notifyCustomerOrderStatusChange(order, order.user, 'cancelled');
     } catch (whatsappErr) {
         console.error('Failed to send WhatsApp notification:', whatsappErr);
     }

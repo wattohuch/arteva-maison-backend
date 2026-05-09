@@ -271,6 +271,50 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 
         return this.sendMessage(phone, message);
     }
+    /**
+     * Notify customer about new order confirmation
+     */
+    async notifyCustomerNewOrder(order, user) {
+        if (!user.phone && !order.shippingAddress?.phone) return;
+        const phone = user.phone || order.shippingAddress.phone;
+        const isArabic = user.language === 'ar';
+        
+        const message = isArabic
+            ? `مرحباً ${user.name || 'عميلنا العزيز'}،\nشكراً لتسوقك مع ARTÉVA Maison! ✨\nتم تأكيد طلبك رقم *${order.orderNumber}* بنجاح.\n\nالمجموع: ${order.total} ${order.currency}\nسنقوم بإبلاغك عندما يتم شحن طلبك.`
+            : `Hello ${user.name || 'Valued Customer'},\nThank you for shopping with ARTÉVA Maison! ✨\nYour order *${order.orderNumber}* has been confirmed.\n\nTotal: ${order.total} ${order.currency}\nWe will notify you when your order is shipped.`;
+
+        return this.sendMessage(phone, message);
+    }
+
+    /**
+     * Notify customer about order status change
+     */
+    async notifyCustomerOrderStatusChange(order, user, newStatus) {
+        if (!user.phone && !order.shippingAddress?.phone) return;
+        // Don't send status update for pending or delivered (delivered is handled by driver proof)
+        if (newStatus === 'pending' || newStatus === 'delivered') return;
+
+        const phone = user.phone || order.shippingAddress.phone;
+        const isArabic = user.language === 'ar';
+
+        const statusTranslations = {
+            confirmed: isArabic ? 'تم تأكيد طلبك ويجري تجهيزه' : 'Your order is confirmed and being prepared',
+            packed: isArabic ? 'تم تغليف طلبك وجاهز للشحن' : 'Your order is packed and ready for shipping',
+            processing: isArabic ? 'طلبك قيد المعالجة' : 'Your order is processing',
+            handed_over: isArabic ? 'تم تسليم طلبك لشركة الشحن' : 'Your order has been handed over to delivery',
+            out_for_delivery: isArabic ? 'طلبك في الطريق إليك الآن 🛵' : 'Your order is out for delivery now 🛵',
+            cancelled: isArabic ? 'تم إلغاء طلبك' : 'Your order has been cancelled'
+        };
+
+        const statusMsg = statusTranslations[newStatus];
+        if (!statusMsg) return;
+
+        const message = isArabic 
+            ? `مرحباً ${user.name || 'عميلنا العزيز'}،\nتحديث بخصوص طلبك رقم *${order.orderNumber}* 📦\n\n${statusMsg}`
+            : `Hello ${user.name || 'Valued Customer'},\nUpdate for your order *${order.orderNumber}* 📦\n\n${statusMsg}`;
+
+        return this.sendMessage(phone, message);
+    }
 }
 
 module.exports = new WhatsAppService();

@@ -319,10 +319,11 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
     await order.save();
 
-    // Send WhatsApp notification to OWNER about status change
+    // Send WhatsApp notification to OWNER and CUSTOMER about status change
     try {
         const whatsapp = require('../services/whatsappService');
         await whatsapp.notifyOwnerOrderStatusChange(order, order.user, oldStatus, status);
+        await whatsapp.notifyCustomerOrderStatusChange(order, order.user, status);
     } catch (whatsappErr) {
         console.error('Failed to send WhatsApp notification:', whatsappErr);
     }
