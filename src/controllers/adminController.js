@@ -328,13 +328,25 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     }
 
     // Emit real-time update (include orderId for admin dashboard)
-    const { emitOrderStatusUpdate } = require('../socketHandler');
+    const { emitOrderStatusUpdate, getIO } = require('../socketHandler');
     emitOrderStatusUpdate(order.orderNumber, {
         status: order.orderStatus,
         statusHistory: order.statusHistory,
         orderId: order._id.toString(),
         userId: order.user ? order.user._id.toString() : null
     });
+
+    // Also notify assigned driver if one exists
+    if (order.deliveryPilot) {
+        try {
+            const io = getIO();
+            io.to(`pilot_${order.deliveryPilot.toString()}`).emit('driver_order_update', {
+                orderId: order._id.toString(),
+                orderNumber: order.orderNumber,
+                status: order.orderStatus
+            });
+        } catch (e) { /* socket not critical */ }
+    }
 
     res.json({ success: true, data: order });
 });
@@ -360,6 +372,23 @@ const assignDriver = asyncHandler(async (req, res) => {
     order.deliveryPilot = driverId;
     order.updateStatus('handed_over', `Assigned to driver: ${driver.name}`, req.user._id);
     await order.save();
+
+    // Emit real-time notification to the assigned driver
+    try {
+        const { getIO } = require('../socketHandler');
+        const io = getIO();
+        io.to(`pilot_${driverId}`).emit('driver_new_order', {
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            customer: order.user ? order.user.name : 'Customer',
+            address: order.shippingAddress ? `${order.shippingAddress.street}, ${order.shippingAddress.city}` : '',
+            total: order.total,
+            timestamp: new Date().toISOString()
+        });
+        console.log(`📱 Notified driver ${driver.name} about new order ${order.orderNumber}`);
+    } catch (socketErr) {
+        console.error('Socket notification to driver failed:', socketErr.message);
+    }
 
     res.json({ success: true, data: order });
 });
