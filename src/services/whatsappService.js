@@ -1,52 +1,55 @@
 /**
- * WhatsApp Notification Service (Unofficial / Free API via Baileys)
- * Sends order notifications to OWNER and CUSTOMERS via WhatsApp Web protocol.
- * Requires server to scan a QR code on startup once.
+ * WhatsApp Notification Service (whatsapp-web.js)
+ * Reliable API provider that uses Puppeteer under the hood.
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
-const pino = require('pino');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const path = require('path');
-const fs = require('fs');
 
 class WhatsAppService {
     constructor() {
-        this.sock = null;
+        this.client = null;
         this.isConnected = false;
         this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96550683207';
-        
-        // Setup Auth Directory
-        this.authPath = path.join(__dirname, '../../whatsapp-auth');
-        if (!fs.existsSync(this.authPath)) {
-            fs.mkdirSync(this.authPath, { recursive: true });
-        }
+        this.pairingCodeRequested = false;
         
         this.init();
     }
 
     async init() {
         try {
-            const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
+            console.log('⏳ Starting WhatsApp Client...');
             
-            this.sock = makeWASocket({
-                auth: state,
-                printQRInTerminal: false, // We use pairing code instead
-                logger: pino({ level: 'silent' }), // Suppress heavy logs
-                browser: ['ARTEVA Server', 'Chrome', '2.0.0'] // Required for pairing code
+            this.client = new Client({
+                authStrategy: new LocalAuth({
+                    dataPath: path.join(__dirname, '../../whatsapp-auth-wwjs')
+                }),
+                puppeteer: {
+                    headless: true,
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-first-run',
+                        '--no-zygote',
+                        '--disable-gpu'
+                    ]
+                }
             });
 
-            this.sock.ev.on('creds.update', saveCreds);
-
-            // Request pairing code if not logged in
-            if (!state.creds.registered) {
-                setTimeout(async () => {
+            this.client.on('qr', async (qr) => {
+                // When QR is requested, it means we are not logged in.
+                // We will request a pairing code instead of showing the QR.
+                if (!this.pairingCodeRequested) {
+                    this.pairingCodeRequested = true;
                     try {
-                        // Phone number must have country code but no + (e.g. 96550683207)
                         const phone = this.ownerPhone.replace(/[^0-9]/g, '');
-                        const code = await this.sock.requestPairingCode(phone);
+                        // Request the 8-digit code
+                        const code = await this.client.requestPairingCode(phone);
+                        
                         console.log('\n=========================================');
-                        console.log('🔗 WHATSAPP PAIRING CODE');
+                        console.log('🔗 WHATSAPP PAIRING CODE (NEW API)');
                         console.log(`1. Open WhatsApp on ${phone}`);
                         console.log(`2. Go to Settings -> Linked Devices`);
                         console.log(`3. Click "Link a Device", then tap "Link with phone number instead"`);
@@ -54,31 +57,37 @@ class WhatsAppService {
                         console.log(`   ${code.match(/.{1,4}/g).join('-')}   `);
                         console.log('=========================================\n');
                     } catch (e) {
-                        console.error('Failed to request pairing code. Ensure WHATSAPP_OWNER_PHONE is set correctly:', e.message);
+                        console.error('Failed to request pairing code:', e.message);
                     }
-                }, 3000);
-            }
-
-            this.sock.ev.on('connection.update', (update) => {
-                const { connection, lastDisconnect } = update;
-                
-                if (connection === 'close') {
-                    const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                    console.log('WhatsApp connection closed, reconnecting:', shouldReconnect);
-                    this.isConnected = false;
-                    
-                    if (shouldReconnect) {
-                        setTimeout(() => this.init(), 3000);
-                    } else {
-                        console.log('WhatsApp logged out! Deleting auth folder to allow fresh scan...');
-                        try { fs.rmSync(this.authPath, { recursive: true, force: true }); } catch (e) {}
-                        setTimeout(() => this.init(), 3000);
-                    }
-                } else if (connection === 'open') {
-                    console.log('✅ WhatsApp successfully connected and ready to send messages!');
-                    this.isConnected = true;
                 }
             });
+
+            this.client.on('ready', () => {
+                console.log('✅ WhatsApp successfully connected and ready to send messages!');
+                this.isConnected = true;
+            });
+
+            this.client.on('authenticated', () => {
+                console.log('🔒 WhatsApp Authenticated successfully!');
+            });
+
+            this.client.on('auth_failure', msg => {
+                console.error('❌ WhatsApp Authentication failure:', msg);
+            });
+
+            this.client.on('disconnected', (reason) => {
+                console.log('WhatsApp was disconnected:', reason);
+                this.isConnected = false;
+                this.pairingCodeRequested = false;
+                
+                // Re-initialize
+                setTimeout(() => {
+                    this.client.initialize();
+                }, 5000);
+            });
+
+            await this.client.initialize();
+
         } catch (err) {
             console.error('Failed to initialize WhatsApp:', err);
         }
@@ -88,24 +97,23 @@ class WhatsAppService {
      * Send WhatsApp message
      */
     async sendMessage(to, message) {
-        if (!this.isConnected || !this.sock) {
+        if (!this.isConnected || !this.client) {
             console.warn('⚠️ WhatsApp not connected yet. Cannot send message to:', to);
             return { success: false, error: 'Not connected' };
         }
 
         try {
-            // Format phone number (remove + and spaces, must have country code)
             const formattedPhone = to.replace(/[\s\+\-\(\)]/g, '');
-            const jid = `${formattedPhone}@s.whatsapp.net`;
+            const jid = `${formattedPhone}@c.us`;
 
-            // Check if number is actually on WhatsApp
-            const [result] = await this.sock.onWhatsApp(jid);
-            if (!result || !result.exists) {
+            // Check if registered
+            const isRegistered = await this.client.isRegisteredUser(jid);
+            if (!isRegistered) {
                 console.warn(`⚠️ Number ${formattedPhone} is not registered on WhatsApp.`);
                 return { success: false, error: 'Not on WhatsApp' };
             }
 
-            await this.sock.sendMessage(jid, { text: message });
+            await this.client.sendMessage(jid, message);
             console.log(`📱 WhatsApp message sent successfully to ${formattedPhone}`);
             return { success: true };
         } catch (error) {
