@@ -1,55 +1,53 @@
 /**
- * WhatsApp Notification Service (whatsapp-web.js)
- * Reliable API provider that uses Puppeteer under the hood.
+ * WhatsApp Notification Service (Baileys)
+ * Free API provider that uses lightweight WebSockets.
+ * Perfect for 512MB RAM servers (no Puppeteer crashes).
  */
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const pino = require('pino');
 const path = require('path');
+const fs = require('fs');
 
 class WhatsAppService {
     constructor() {
-        this.client = null;
+        this.sock = null;
         this.isConnected = false;
         this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96550683207';
-        this.pairingCodeRequested = false;
+        
+        // Setup Auth Directory
+        this.authPath = path.join(__dirname, '../../whatsapp-auth');
+        if (!fs.existsSync(this.authPath)) {
+            fs.mkdirSync(this.authPath, { recursive: true });
+        }
         
         this.init();
     }
 
     async init() {
         try {
-            console.log('⏳ Starting WhatsApp Client...');
+            console.log('⏳ Starting WhatsApp Client (Baileys)...');
+            const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
             
-            this.client = new Client({
-                authStrategy: new LocalAuth({
-                    dataPath: path.join(__dirname, '../../whatsapp-auth-wwjs')
-                }),
-                puppeteer: {
-                    headless: true,
-                    args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-accelerated-2d-canvas',
-                        '--no-first-run',
-                        '--no-zygote',
-                        '--disable-gpu'
-                    ]
-                }
+            this.sock = makeWASocket({
+                auth: state,
+                printQRInTerminal: false, // We use pairing code
+                logger: pino({ level: 'silent' }), // Suppress heavy logs
+                // CRITICAL: This exact browser signature fixes the "Device link failed" error
+                browser: ['Ubuntu', 'Chrome', '20.0.04']
             });
 
-            this.client.on('qr', async (qr) => {
-                // When QR is requested, it means we are not logged in.
-                // We will request a pairing code instead of showing the QR.
-                if (!this.pairingCodeRequested) {
-                    this.pairingCodeRequested = true;
+            this.sock.ev.on('creds.update', saveCreds);
+
+            // Request pairing code if not logged in
+            if (!state.creds.registered) {
+                setTimeout(async () => {
                     try {
                         const phone = this.ownerPhone.replace(/[^0-9]/g, '');
-                        // Request the 8-digit code
-                        const code = await this.client.requestPairingCode(phone);
+                        const code = await this.sock.requestPairingCode(phone);
                         
                         console.log('\n=========================================');
-                        console.log('🔗 WHATSAPP PAIRING CODE (NEW API)');
+                        console.log('🔗 WHATSAPP PAIRING CODE');
                         console.log(`1. Open WhatsApp on ${phone}`);
                         console.log(`2. Go to Settings -> Linked Devices`);
                         console.log(`3. Click "Link a Device", then tap "Link with phone number instead"`);
@@ -59,35 +57,29 @@ class WhatsAppService {
                     } catch (e) {
                         console.error('Failed to request pairing code:', e.message);
                     }
+                }, 3000);
+            }
+
+            this.sock.ev.on('connection.update', (update) => {
+                const { connection, lastDisconnect } = update;
+                
+                if (connection === 'close') {
+                    const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+                    console.log('WhatsApp connection closed, reconnecting:', shouldReconnect);
+                    this.isConnected = false;
+                    
+                    if (shouldReconnect) {
+                        setTimeout(() => this.init(), 3000);
+                    } else {
+                        console.log('WhatsApp logged out! Deleting auth folder to allow fresh scan...');
+                        try { fs.rmSync(this.authPath, { recursive: true, force: true }); } catch (e) {}
+                        setTimeout(() => this.init(), 3000);
+                    }
+                } else if (connection === 'open') {
+                    console.log('✅ WhatsApp successfully connected and ready to send messages!');
+                    this.isConnected = true;
                 }
             });
-
-            this.client.on('ready', () => {
-                console.log('✅ WhatsApp successfully connected and ready to send messages!');
-                this.isConnected = true;
-            });
-
-            this.client.on('authenticated', () => {
-                console.log('🔒 WhatsApp Authenticated successfully!');
-            });
-
-            this.client.on('auth_failure', msg => {
-                console.error('❌ WhatsApp Authentication failure:', msg);
-            });
-
-            this.client.on('disconnected', (reason) => {
-                console.log('WhatsApp was disconnected:', reason);
-                this.isConnected = false;
-                this.pairingCodeRequested = false;
-                
-                // Re-initialize
-                setTimeout(() => {
-                    this.client.initialize();
-                }, 5000);
-            });
-
-            await this.client.initialize();
-
         } catch (err) {
             console.error('Failed to initialize WhatsApp:', err);
         }
@@ -97,23 +89,23 @@ class WhatsAppService {
      * Send WhatsApp message
      */
     async sendMessage(to, message) {
-        if (!this.isConnected || !this.client) {
+        if (!this.isConnected || !this.sock) {
             console.warn('⚠️ WhatsApp not connected yet. Cannot send message to:', to);
             return { success: false, error: 'Not connected' };
         }
 
         try {
             const formattedPhone = to.replace(/[\s\+\-\(\)]/g, '');
-            const jid = `${formattedPhone}@c.us`;
+            const jid = `${formattedPhone}@s.whatsapp.net`;
 
             // Check if registered
-            const isRegistered = await this.client.isRegisteredUser(jid);
-            if (!isRegistered) {
+            const [result] = await this.sock.onWhatsApp(jid);
+            if (!result || !result.exists) {
                 console.warn(`⚠️ Number ${formattedPhone} is not registered on WhatsApp.`);
                 return { success: false, error: 'Not on WhatsApp' };
             }
 
-            await this.client.sendMessage(jid, message);
+            await this.sock.sendMessage(jid, { text: message });
             console.log(`📱 WhatsApp message sent successfully to ${formattedPhone}`);
             return { success: true };
         } catch (error) {
