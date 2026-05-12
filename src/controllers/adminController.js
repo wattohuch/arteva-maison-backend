@@ -1509,23 +1509,33 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getIPVisitorLog = asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 200;
+    const dateFilter = req.query.date || '';
 
     try {
         const ProductView = require('../models/ProductView');
-        const views = await ProductView.find({})
-            .populate('product', 'name nameAr')
+        const query = dateFilter ? { date: dateFilter } : {};
+        const views = await ProductView.find(query)
+            .populate('product', 'name nameAr images')
             .sort({ createdAt: -1 })
             .limit(limit)
             .lean();
 
-        const data = views.map(v => ({
-            ip: v.ip,
-            date: v.date,
-            productName: v.product?.name || 'Deleted Product',
-            userAgent: v.userAgent || '',
-            referrer: v.referrer || '',
-            createdAt: v.createdAt
-        }));
+        const data = views.map(v => {
+            let productImage = '';
+            if (v.product?.images?.length > 0) {
+                const primary = v.product.images.find(img => img.isPrimary);
+                productImage = (primary || v.product.images[0]).url || '';
+            }
+            return {
+                ip: v.ip,
+                date: v.date,
+                productName: v.product?.name || 'Deleted Product',
+                productImage,
+                userAgent: v.userAgent || '',
+                referrer: v.referrer || '',
+                createdAt: v.createdAt
+            };
+        });
 
         res.json({ success: true, data });
     } catch (e) {
