@@ -74,6 +74,23 @@ router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
     }
 });
 
+// WhatsApp connection status check
+router.get('/whatsapp-status', protect, admin, async (req, res) => {
+    try {
+        const whatsapp = require('../services/whatsappService');
+        res.json({
+            success: true,
+            connected: whatsapp.isConnected || false,
+            ownerPhone: process.env.WHATSAPP_OWNER_PHONE || 'NOT SET',
+            message: whatsapp.isConnected
+                ? '✅ WhatsApp is connected and ready to send messages'
+                : '❌ WhatsApp is NOT connected. Check Render logs for pairing code.'
+        });
+    } catch (e) {
+        res.json({ success: false, connected: false, message: e.message });
+    }
+});
+
 // Test order simulation (admin only)
 router.post('/simulate-order', protect, admin, async (req, res) => {
     try {
