@@ -1,115 +1,112 @@
 /**
- * WhatsApp Notification Service (Baileys)
- * Free API provider that uses lightweight WebSockets.
- * Perfect for 512MB RAM servers (no Puppeteer crashes).
+ * WhatsApp Notification Service (Green API)
+ * 
+ * Uses Green API (https://green-api.com) — Free tier available.
+ * No Baileys, no pairing codes, no session issues.
+ * Just HTTP requests. Works 24/7.
+ * 
+ * Setup:
+ *   1. Go to https://green-api.com and sign up (free)
+ *   2. Create an instance
+ *   3. Scan QR code ONCE on their dashboard
+ *   4. Copy your Instance ID and API Token
+ *   5. Set env vars: GREEN_API_INSTANCE_ID and GREEN_API_TOKEN
  */
-
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const pino = require('pino');
-const path = require('path');
-const fs = require('fs');
 
 class WhatsAppService {
     constructor() {
-        this.sock = null;
-        this.isConnected = false;
+        this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
+        this.apiToken = process.env.GREEN_API_TOKEN || '';
         this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96550683207';
+        this.baseUrl = `https://api.green-api.com/waInstance${this.instanceId}`;
         
-        // Setup Auth Directory
-        this.authPath = path.join(__dirname, '../../whatsapp-auth');
-        if (!fs.existsSync(this.authPath)) {
-            fs.mkdirSync(this.authPath, { recursive: true });
-        }
+        // Check connection on startup
+        this.isConnected = !!(this.instanceId && this.apiToken);
         
-        this.init();
-    }
-
-    async init() {
-        try {
-            console.log('⏳ Starting WhatsApp Client (Baileys)...');
-            const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
-            
-            this.sock = makeWASocket({
-                auth: state,
-                printQRInTerminal: false, // We use pairing code
-                logger: pino({ level: 'silent' }), // Suppress heavy logs
-                // CRITICAL: This exact browser signature fixes the "Device link failed" error
-                browser: ['Ubuntu', 'Chrome', '20.0.04']
-            });
-
-            this.sock.ev.on('creds.update', saveCreds);
-
-            // Request pairing code if not logged in
-            if (!state.creds.registered) {
-                setTimeout(async () => {
-                    try {
-                        const phone = this.ownerPhone.replace(/[^0-9]/g, '');
-                        const code = await this.sock.requestPairingCode(phone);
-                        
-                        console.log('\n=========================================');
-                        console.log('🔗 WHATSAPP PAIRING CODE');
-                        console.log(`1. Open WhatsApp on ${phone}`);
-                        console.log(`2. Go to Settings -> Linked Devices`);
-                        console.log(`3. Click "Link a Device", then tap "Link with phone number instead"`);
-                        console.log(`4. Enter this exact code:`);
-                        console.log(`   ${code.match(/.{1,4}/g).join('-')}   `);
-                        console.log('=========================================\n');
-                    } catch (e) {
-                        console.error('Failed to request pairing code:', e.message);
-                    }
-                }, 3000);
-            }
-
-            this.sock.ev.on('connection.update', (update) => {
-                const { connection, lastDisconnect } = update;
-                
-                if (connection === 'close') {
-                    const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                    console.log('WhatsApp connection closed, reconnecting:', shouldReconnect);
-                    this.isConnected = false;
-                    
-                    if (shouldReconnect) {
-                        setTimeout(() => this.init(), 3000);
-                    } else {
-                        console.log('WhatsApp logged out! Deleting auth folder to allow fresh scan...');
-                        try { fs.rmSync(this.authPath, { recursive: true, force: true }); } catch (e) {}
-                        setTimeout(() => this.init(), 3000);
-                    }
-                } else if (connection === 'open') {
-                    console.log('✅ WhatsApp successfully connected and ready to send messages!');
-                    this.isConnected = true;
-                }
-            });
-        } catch (err) {
-            console.error('Failed to initialize WhatsApp:', err);
+        if (this.isConnected) {
+            console.log('✅ WhatsApp Service (Green API) initialized');
+            console.log(`   Instance: ${this.instanceId}`);
+            console.log(`   Owner: ${this.ownerPhone}`);
+            this.checkStatus();
+        } else {
+            console.log('⚠️ WhatsApp Service: GREEN_API_INSTANCE_ID or GREEN_API_TOKEN not set');
+            console.log('   Sign up at https://green-api.com (free tier)');
         }
     }
 
     /**
-     * Send WhatsApp message
+     * Check Green API instance status
+     */
+    async checkStatus() {
+        try {
+            const res = await fetch(`${this.baseUrl}/getStateInstance/${this.apiToken}`);
+            const data = await res.json();
+            this.isConnected = data.stateInstance === 'authorized';
+            console.log(`📱 WhatsApp status: ${data.stateInstance} (${this.isConnected ? 'ready ✅' : 'not authorized ❌'})`);
+            if (!this.isConnected) {
+                console.log('   → Go to https://console.green-api.com and scan QR code');
+            }
+            return this.isConnected;
+        } catch (e) {
+            console.error('WhatsApp status check failed:', e.message);
+            return false;
+        }
+    }
+
+    /**
+     * Format phone number for Green API
+     * Green API expects: 96597295917@c.us (country code + number, no +)
+     */
+    formatPhone(phone) {
+        if (!phone) return null;
+        // Remove all non-digits
+        let cleaned = phone.replace(/[^\d]/g, '');
+        // If starts with 0, assume Kuwait, add 965
+        if (cleaned.startsWith('0')) {
+            cleaned = '965' + cleaned.substring(1);
+        }
+        // If number is 8 digits (Kuwait local), add 965
+        if (cleaned.length === 8) {
+            cleaned = '965' + cleaned;
+        }
+        return cleaned;
+    }
+
+    /**
+     * Send WhatsApp message via Green API
      */
     async sendMessage(to, message) {
-        if (!this.isConnected || !this.sock) {
-            console.warn('⚠️ WhatsApp not connected yet. Cannot send message to:', to);
-            return { success: false, error: 'Not connected' };
+        if (!this.instanceId || !this.apiToken) {
+            console.warn('⚠️ WhatsApp not configured. Set GREEN_API_INSTANCE_ID and GREEN_API_TOKEN');
+            return { success: false, error: 'Not configured' };
         }
 
         try {
-            const formattedPhone = to.replace(/[\s\+\-\(\)]/g, '');
-            const jid = `${formattedPhone}@s.whatsapp.net`;
-
-            // Check if registered
-            const [result] = await this.sock.onWhatsApp(jid);
-            if (!result || !result.exists) {
-                console.warn(`⚠️ Number ${formattedPhone} is not registered on WhatsApp.`);
-                return { success: false, error: 'Not on WhatsApp' };
+            const phone = this.formatPhone(to);
+            if (!phone) {
+                console.warn('⚠️ Invalid phone number:', to);
+                return { success: false, error: 'Invalid phone' };
             }
 
-            await this.sock.sendMessage(jid, { text: message });
-            console.log(`📱 WhatsApp message sent successfully to ${formattedPhone}`);
-            return { success: true };
+            const chatId = `${phone}@c.us`;
+            
+            const res = await fetch(`${this.baseUrl}/sendMessage/${this.apiToken}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chatId, message })
+            });
+
+            const data = await res.json();
+            
+            if (data.idMessage) {
+                console.log(`📱 WhatsApp sent to ${phone} ✅ (${data.idMessage})`);
+                return { success: true, messageId: data.idMessage };
+            } else {
+                console.error(`❌ WhatsApp send failed to ${phone}:`, JSON.stringify(data));
+                return { success: false, error: data.message || 'Send failed' };
+            }
         } catch (error) {
-            console.error(`❌ Failed to send WhatsApp message to ${to}:`, error.message);
+            console.error(`❌ WhatsApp error to ${to}:`, error.message);
             return { success: false, error: error.message };
         }
     }
@@ -118,7 +115,6 @@ class WhatsAppService {
      * Notify owner about new order
      */
     async notifyOwnerNewOrder(order, user) {
-        // Use Arabic product names if user prefers Arabic
         const isArabic = user.language === 'ar';
         
         const message = `
@@ -135,7 +131,6 @@ class WhatsAppService {
 
 *${isArabic ? `المنتجات (${order.items.length})` : `Items (${order.items.length})`}:*
 ${order.items.map(item => {
-    // Use Arabic name if available and user prefers Arabic
     const productName = (isArabic && item.nameAr) ? item.nameAr : item.name;
     return `• ${productName} x${item.quantity} - ${item.price} ${order.currency}`;
 }).join('\n')}
@@ -194,14 +189,9 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
         const isArabic = user.language === 'ar';
         
         const statusEmoji = {
-            pending: '⏳',
-            confirmed: '✅',
-            packed: '📦',
-            processing: '⚙️',
-            handed_over: '🚚',
-            out_for_delivery: '🛵',
-            delivered: '✅',
-            cancelled: '❌'
+            pending: '⏳', confirmed: '✅', packed: '📦',
+            processing: '⚙️', handed_over: '🚚',
+            out_for_delivery: '🛵', delivered: '✅', cancelled: '❌'
         };
 
         const statusTranslations = {
@@ -271,6 +261,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 
         return this.sendMessage(phone, message);
     }
+
     /**
      * Notify customer about new order confirmation
      */
@@ -291,7 +282,6 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
      */
     async notifyCustomerOrderStatusChange(order, user, newStatus) {
         if (!user.phone && !order.shippingAddress?.phone) return;
-        // Don't send status update for pending or delivered (delivered is handled by driver proof)
         if (newStatus === 'pending' || newStatus === 'delivered') return;
 
         const phone = user.phone || order.shippingAddress.phone;

@@ -78,13 +78,16 @@ router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
 router.get('/whatsapp-status', protect, admin, async (req, res) => {
     try {
         const whatsapp = require('../services/whatsappService');
+        const connected = await whatsapp.checkStatus();
         res.json({
             success: true,
-            connected: whatsapp.isConnected || false,
+            connected,
+            provider: 'Green API',
+            instanceId: process.env.GREEN_API_INSTANCE_ID || 'NOT SET',
             ownerPhone: process.env.WHATSAPP_OWNER_PHONE || 'NOT SET',
-            message: whatsapp.isConnected
-                ? '✅ WhatsApp is connected and ready to send messages'
-                : '❌ WhatsApp is NOT connected. Check Render logs for pairing code.'
+            message: connected
+                ? '✅ WhatsApp (Green API) is connected and ready'
+                : '❌ Not connected. Go to https://console.green-api.com and scan QR code'
         });
     } catch (e) {
         res.json({ success: false, connected: false, message: e.message });
@@ -150,13 +153,10 @@ router.post('/simulate-order', protect, admin, async (req, res) => {
             if (printRes?.message) results.printMessage = printRes.message;
         } catch (e) { results.printError = e.message; }
 
-        // Emit socket event with FULL order data for print agent
+        // Emit socket event
         try {
             const io = req.app.get('io');
-            if (io) {
-                const fullOrder = await Order.findById(order._id).populate('user', 'name email phone').lean();
-                io.emit('new_order', fullOrder);
-            }
+            if (io) io.emit('new_order', { orderNumber, total: order.total });
         } catch (e) {}
 
         res.json({ success: true, message: 'Test order created', data: results });
