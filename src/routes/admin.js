@@ -94,74 +94,41 @@ router.get('/whatsapp-status', protect, admin, async (req, res) => {
     }
 });
 
-// Test order simulation (admin only)
-router.post('/simulate-order', protect, admin, async (req, res) => {
+// Print Agent Polling (no JWT — uses shared API key for Windows 7 compatibility)
+const PRINT_AGENT_KEY = process.env.PRINT_AGENT_KEY || 'arteva-print-2026';
+
+router.get('/print-queue/poll', async (req, res) => {
+    if (req.query.key !== PRINT_AGENT_KEY) {
+        return res.status(401).json({ success: false, message: 'Invalid key' });
+    }
     try {
         const Order = require('../models/Order');
-        const Product = require('../models/Product');
-        const testPhone = req.body.phone || '96597295917';
-
-        const product = await Product.findOne({ isActive: true }).lean();
-        if (!product) return res.status(400).json({ success: false, message: 'No active products' });
-
-        const orderNumber = 'TEST-' + Date.now().toString(36).toUpperCase();
-        const order = new Order({
-            orderNumber,
-            user: req.user._id,
-            items: [{
-                product: product._id,
-                name: product.name,
-                nameAr: product.nameAr || product.name,
-                price: product.price,
-                quantity: 1,
-                image: product.images?.[0]?.url || ''
-            }],
-            shippingAddress: {
-                street: 'Test Street 123', city: 'Kuwait City',
-                state: 'Al Asimah', country: 'Kuwait',
-                zipCode: '12345', phone: testPhone
-            },
-            paymentMethod: 'card',
+        // Find paid orders not yet printed (no printedAt flag)
+        const orders = await Order.find({
             paymentStatus: 'paid',
-            orderStatus: 'confirmed',
-            subtotal: product.price,
-            deliveryFee: 2.0,
-            total: product.price + 2.0,
-            currency: 'KWD',
-            notes: '🧪 TEST ORDER — Delete after testing'
-        });
-        await order.save();
+            printedAt: { $exists: false }
+        })
+        .populate('user', 'name email phone')
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean();
 
-        const results = { order: orderNumber, whatsappOwner: false, whatsappCustomer: false, print: false };
+        res.json({ success: true, count: orders.length, orders });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
 
-        // WhatsApp
-        try {
-            const whatsapp = require('../services/whatsappService');
-            const testUser = { name: req.user.name, email: req.user.email, phone: testPhone, language: 'en' };
-            const ownerRes = await whatsapp.notifyOwnerPaymentReceived(order, testUser);
-            results.whatsappOwner = ownerRes.success;
-            const custRes = await whatsapp.notifyCustomerNewOrder(order, testUser);
-            results.whatsappCustomer = custRes.success;
-        } catch (e) { results.whatsappError = e.message; }
-
-        // Print
-        try {
-            const { printExistingOrderReceipt } = require('../services/printService');
-            const printRes = await printExistingOrderReceipt(order._id);
-            results.print = printRes?.success || false;
-            if (printRes?.error) results.printError = printRes.error;
-            if (printRes?.message) results.printMessage = printRes.message;
-        } catch (e) { results.printError = e.message; }
-
-        // Emit socket event
-        try {
-            const io = req.app.get('io');
-            if (io) io.emit('new_order', { orderNumber, total: order.total });
-        } catch (e) {}
-
-        res.json({ success: true, message: 'Test order created', data: results });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+router.post('/print-queue/done/:orderId', async (req, res) => {
+    if (req.query.key !== PRINT_AGENT_KEY) {
+        return res.status(401).json({ success: false, message: 'Invalid key' });
+    }
+    try {
+        const Order = require('../models/Order');
+        await Order.findByIdAndUpdate(req.params.orderId, { printedAt: new Date() });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
     }
 });
 
