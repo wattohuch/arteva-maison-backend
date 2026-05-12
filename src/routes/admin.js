@@ -14,6 +14,7 @@ const {
     deleteUser,
     sendOfferEmail,
     getProductViewAnalytics,
+    getIPVisitorLog,
     getRevenueHistory,
     checkSuperuser,
     authenticateRevenueAccess,
@@ -51,6 +52,7 @@ router.get('/receipt/:orderId', protect, generateReceipt);
 
 // Analytics
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
+router.get('/analytics/visitor-log', protect, admin, getIPVisitorLog);
 
 // Revenue Analytics (superuser only - detailed per-product breakdown)
 router.get('/revenue-analytics', protect, admin, getRevenueAnalytics);

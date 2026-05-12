@@ -248,7 +248,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
     const paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
 
     // Find order
-    const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email');
+    const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email phone language');
 
     if (!order) {
         res.status(404);
@@ -345,7 +345,7 @@ const handleWebhook = asyncHandler(async (req, res) => {
         const paymentId = Data.PaymentId;
         const paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
 
-        const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email');
+        const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email phone language');
 
         // Idempotency: only process if not already paid
         if (order && paymentStatus.status === 'Paid' && order.paymentStatus !== 'paid') {
@@ -487,7 +487,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
         console.log('Payment status from MyFatoorah:', paymentStatus);
 
         // Find order
-        const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email');
+        const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email phone language');
 
         if (!order) {
             console.error('Order not found:', paymentStatus.orderId);

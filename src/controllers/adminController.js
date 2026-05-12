@@ -1504,6 +1504,36 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get IP visitor log for analytics
+// @route   GET /api/admin/analytics/visitor-log
+// @access  Private/Admin
+const getIPVisitorLog = asyncHandler(async (req, res) => {
+    const limit = parseInt(req.query.limit) || 200;
+
+    try {
+        const ProductView = require('../models/ProductView');
+        const views = await ProductView.find({})
+            .populate('product', 'name nameAr')
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .lean();
+
+        const data = views.map(v => ({
+            ip: v.ip,
+            date: v.date,
+            productName: v.product?.name || 'Deleted Product',
+            userAgent: v.userAgent || '',
+            referrer: v.referrer || '',
+            createdAt: v.createdAt
+        }));
+
+        res.json({ success: true, data });
+    } catch (e) {
+        console.error('[ANALYTICS] Visitor log error:', e.message);
+        res.json({ success: true, data: [] });
+    }
+});
+
 
 module.exports = {
     getDashboardStats,
@@ -1519,6 +1549,7 @@ module.exports = {
     deleteUser,
     sendOfferEmail,
     getProductViewAnalytics,
+    getIPVisitorLog,
     getRevenueHistory,
     checkSuperuser,
     authenticateRevenueAccess,
