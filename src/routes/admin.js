@@ -143,9 +143,11 @@ router.post('/simulate-order', protect, admin, async (req, res) => {
 
         // Print
         try {
-            const { autoPrintReceipt } = require('../services/printService');
-            const printRes = await autoPrintReceipt(order._id);
+            const { printExistingOrderReceipt } = require('../services/printService');
+            const printRes = await printExistingOrderReceipt(order._id);
             results.print = printRes?.success || false;
+            if (printRes?.error) results.printError = printRes.error;
+            if (printRes?.message) results.printMessage = printRes.message;
         } catch (e) { results.printError = e.message; }
 
         // Emit socket event
