@@ -74,6 +74,75 @@ router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
     }
 });
 
+// Test order simulation (admin only)
+router.post('/simulate-order', protect, admin, async (req, res) => {
+    try {
+        const Order = require('../models/Order');
+        const Product = require('../models/Product');
+        const testPhone = req.body.phone || '96597295917';
+
+        const product = await Product.findOne({ isActive: true }).lean();
+        if (!product) return res.status(400).json({ success: false, message: 'No active products' });
+
+        const orderNumber = 'TEST-' + Date.now().toString(36).toUpperCase();
+        const order = new Order({
+            orderNumber,
+            user: req.user._id,
+            items: [{
+                product: product._id,
+                name: product.name,
+                nameAr: product.nameAr || product.name,
+                price: product.price,
+                quantity: 1,
+                image: product.images?.[0]?.url || ''
+            }],
+            shippingAddress: {
+                street: 'Test Street 123', city: 'Kuwait City',
+                state: 'Al Asimah', country: 'Kuwait',
+                zipCode: '12345', phone: testPhone
+            },
+            paymentMethod: 'card',
+            paymentStatus: 'paid',
+            orderStatus: 'confirmed',
+            subtotal: product.price,
+            deliveryFee: 2.0,
+            total: product.price + 2.0,
+            currency: 'KWD',
+            notes: '🧪 TEST ORDER — Delete after testing'
+        });
+        await order.save();
+
+        const results = { order: orderNumber, whatsappOwner: false, whatsappCustomer: false, print: false };
+
+        // WhatsApp
+        try {
+            const whatsapp = require('../services/whatsappService');
+            const testUser = { name: req.user.name, email: req.user.email, phone: testPhone, language: 'en' };
+            const ownerRes = await whatsapp.notifyOwnerPaymentReceived(order, testUser);
+            results.whatsappOwner = ownerRes.success;
+            const custRes = await whatsapp.notifyCustomerNewOrder(order, testUser);
+            results.whatsappCustomer = custRes.success;
+        } catch (e) { results.whatsappError = e.message; }
+
+        // Print
+        try {
+            const { autoPrintReceipt } = require('../services/printService');
+            const printRes = await autoPrintReceipt(order._id);
+            results.print = printRes?.success || false;
+        } catch (e) { results.printError = e.message; }
+
+        // Emit socket event
+        try {
+            const io = req.app.get('io');
+            if (io) io.emit('new_order', { orderNumber, total: order.total });
+        } catch (e) {}
+
+        res.json({ success: true, message: 'Test order created', data: results });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // Products
 router.route('/products')
     .get(protect, admin, getAdminProducts)
