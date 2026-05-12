@@ -150,10 +150,13 @@ router.post('/simulate-order', protect, admin, async (req, res) => {
             if (printRes?.message) results.printMessage = printRes.message;
         } catch (e) { results.printError = e.message; }
 
-        // Emit socket event
+        // Emit socket event with FULL order data for print agent
         try {
             const io = req.app.get('io');
-            if (io) io.emit('new_order', { orderNumber, total: order.total });
+            if (io) {
+                const fullOrder = await Order.findById(order._id).populate('user', 'name email phone').lean();
+                io.emit('new_order', fullOrder);
+            }
         } catch (e) {}
 
         res.json({ success: true, message: 'Test order created', data: results });
