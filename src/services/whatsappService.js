@@ -18,7 +18,9 @@ class WhatsAppService {
         this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
         this.apiToken = process.env.GREEN_API_TOKEN || '';
         this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96550683207';
-        this.baseUrl = `https://api.green-api.com/waInstance${this.instanceId}`;
+        // Green API uses instance-specific URLs (e.g., https://7107.api.green-api.com)
+        const apiHost = process.env.GREEN_API_URL || 'https://api.green-api.com';
+        this.baseUrl = `${apiHost}/waInstance${this.instanceId}`;
         
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
