@@ -579,6 +579,7 @@ const sendOfferEmail = async (req, res) => {
 // @access  Private/Admin
 const getProductViewAnalytics = asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
+    const days = parseInt(req.query.days) || 30;
 
     const products = await Product.find({ isActive: true })
         .select('name nameAr images category viewCount price')
@@ -591,6 +592,49 @@ const getProductViewAnalytics = asyncHandler(async (req, res) => {
     const totalViews = products.reduce((sum, p) => sum + (p.viewCount || 0), 0);
     const totalProducts = await Product.countDocuments({ isActive: true });
 
+    // IP-based unique visitor analytics from ProductView model
+    let uniqueVisitorData = { totalUniqueVisitors: 0, dailyBreakdown: [], productUniqueViews: {} };
+    try {
+        const ProductView = require('../models/ProductView');
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - days);
+        const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+        // Total unique IPs across all products in the period
+        const uniqueIPs = await ProductView.distinct('ip', { date: { $gte: cutoffStr } });
+        uniqueVisitorData.totalUniqueVisitors = uniqueIPs.length;
+
+        // Per-product unique view counts
+        const productUniqueAgg = await ProductView.aggregate([
+            { $match: { date: { $gte: cutoffStr } } },
+            { $group: { _id: '$product', uniqueVisitors: { $addToSet: '$ip' } } },
+            { $project: { _id: 1, uniqueViews: { $size: '$uniqueVisitors' } } }
+        ]);
+        productUniqueAgg.forEach(item => {
+            uniqueVisitorData.productUniqueViews[item._id.toString()] = item.uniqueViews;
+        });
+
+        // Daily breakdown (unique visitors per day)
+        const dailyAgg = await ProductView.aggregate([
+            { $match: { date: { $gte: cutoffStr } } },
+            { $group: { _id: '$date', uniqueVisitors: { $addToSet: '$ip' }, totalViews: { $sum: 1 } } },
+            { $project: { _id: 1, uniqueVisitors: { $size: '$uniqueVisitors' }, totalViews: 1 } },
+            { $sort: { _id: 1 } }
+        ]);
+        uniqueVisitorData.dailyBreakdown = dailyAgg.map(d => ({
+            date: d._id,
+            uniqueVisitors: d.uniqueVisitors,
+            totalViews: d.totalViews
+        }));
+    } catch (e) {
+        console.error('[ANALYTICS] IP tracking query error:', e.message);
+    }
+
+    // Attach unique views to each product
+    products.forEach(p => {
+        p.uniqueViews = uniqueVisitorData.productUniqueViews[p._id.toString()] || 0;
+    });
+
     res.json({
         success: true,
         data: {
@@ -598,9 +642,11 @@ const getProductViewAnalytics = asyncHandler(async (req, res) => {
             summary: {
                 totalViews,
                 totalProducts,
+                totalUniqueVisitors: uniqueVisitorData.totalUniqueVisitors,
                 topProduct: products.length > 0 ? products[0].name : 'N/A',
                 averageViews: totalProducts > 0 ? Math.round(totalViews / totalProducts) : 0
-            }
+            },
+            dailyBreakdown: uniqueVisitorData.dailyBreakdown
         }
     });
 });

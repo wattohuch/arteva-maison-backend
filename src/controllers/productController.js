@@ -214,8 +214,22 @@ const getFeaturedProducts = asyncHandler(async (req, res) => {
 // @route   POST /api/products/:id/view
 // @access  Public
 const incrementProductView = asyncHandler(async (req, res) => {
+    const productId = req.params.id;
+
+    // Get visitor IP (supports proxies like Render/Cloudflare)
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+        || req.headers['x-real-ip']
+        || req.connection?.remoteAddress
+        || req.ip
+        || 'unknown';
+
+    const userAgent = req.headers['user-agent'] || '';
+    const referrer = req.headers['referer'] || req.headers['referrer'] || '';
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // Always increment the total view counter on the product
     const product = await Product.findByIdAndUpdate(
-        req.params.id,
+        productId,
         { $inc: { viewCount: 1 } },
         { returnDocument: 'before', select: '_id' }
     );
@@ -223,6 +237,21 @@ const incrementProductView = asyncHandler(async (req, res) => {
     if (!product) {
         res.status(404);
         throw new Error('Product not found');
+    }
+
+    // Track unique view by IP (upsert: won't duplicate for same IP+product+day)
+    try {
+        const ProductView = require('../models/ProductView');
+        await ProductView.findOneAndUpdate(
+            { product: productId, ip, date: today },
+            { $setOnInsert: { product: productId, ip, date: today, userAgent, referrer } },
+            { upsert: true, new: false }
+        );
+    } catch (e) {
+        // Duplicate key = already tracked today, ignore silently
+        if (e.code !== 11000) {
+            console.error('[ANALYTICS] ProductView tracking error:', e.message);
+        }
     }
 
     res.json({ success: true });

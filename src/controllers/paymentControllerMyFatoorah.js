@@ -297,10 +297,11 @@ const verifyPayment = asyncHandler(async (req, res) => {
             // Don't fail the payment verification if email fails
         }
 
-        // Send WhatsApp notification to OWNER
+        // Send WhatsApp notifications (owner + customer)
         try {
             const whatsapp = require('../services/whatsappService');
             await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+            await whatsapp.notifyCustomerNewOrder(order, order.user);
         } catch (whatsappErr) {
             console.error('WhatsApp notification error:', whatsappErr);
         }
@@ -368,10 +369,11 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 await sendOrderConfirmation(order, order.user);
             } catch (emailErr) { /* silent */ }
 
-            // Send WhatsApp notification to OWNER
+            // Send WhatsApp notifications (owner + customer)
             try {
                 const whatsapp = require('../services/whatsappService');
                 await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+                await whatsapp.notifyCustomerNewOrder(order, order.user);
             } catch (whatsappErr) { /* silent */ }
 
             await order.save();
@@ -433,10 +435,11 @@ const processCOD = asyncHandler(async (req, res) => {
     // Send confirmation email
     await sendOrderConfirmation(order, req.user);
 
-    // Send WhatsApp notification to OWNER
+    // Send WhatsApp notifications (owner + customer)
     try {
         const whatsapp = require('../services/whatsappService');
         await whatsapp.notifyOwnerNewOrder(order, req.user);
+        await whatsapp.notifyCustomerNewOrder(order, req.user);
     } catch (whatsappErr) {
         console.error('WhatsApp notification error:', whatsappErr);
     }
@@ -532,10 +535,11 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 console.error('Email send failed:', emailErr);
             }
 
-            // Send WhatsApp notification to OWNER
+            // Send WhatsApp notifications (owner + customer)
             try {
                 const whatsapp = require('../services/whatsappService');
                 await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+                await whatsapp.notifyCustomerNewOrder(order, order.user);
             } catch (whatsappErr) {
                 console.error('WhatsApp notification error:', whatsappErr);
             }
