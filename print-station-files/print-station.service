@@ -1,0 +1,30 @@
+[Unit]
+Description=Arteva Maison Print Station - HP SmartTank
+Documentation=https://github.com/arteva-maison/print-station
+After=network-online.target cups.service
+Wants=network-online.target cups.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/print-station
+ExecStart=/usr/bin/node /home/pi/print-station/print-station-hp.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Restart policy
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Environment
+Environment="NODE_ENV=production"
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

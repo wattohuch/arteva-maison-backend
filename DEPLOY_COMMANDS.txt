@@ -1,0 +1,75 @@
+# ========================================
+# COPY-PASTE DEPLOYMENT COMMANDS
+# ========================================
+
+# ============ STEP 1: BACKEND (Windows PC) ============
+
+cd "c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend"
+
+git add .
+
+git commit -m "feat: pixel-perfect A4 receipt redesign for print station"
+
+git push origin main
+
+# Wait 5-10 minutes for Render to deploy
+# Check: https://dashboard.render.com
+
+
+# ============ STEP 2: RASPBERRY PI (SSH) ============
+
+# Copy-paste this ENTIRE block into Raspberry Pi terminal:
+
+cd /home/pi/arteva-print-station && cp .env .env.backup && sed -i 's/^API_KEY=.*/API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5OTQwZTY4NjcxN2EzOGJjNjczZTdmMCIsImlhdCI6MTc3ODM0NzA4NywiZXhwIjoxOTk5MjUwMjg3fQ.LT8NzouiJGLOb9SSQcYlmEPwcckyJRgNTl2aJvBY5yA/' .env && echo "✅ Token updated!" && sudo systemctl restart arteva-print-station && echo "✅ Service restarted!" && sleep 3 && sudo systemctl status arteva-print-station --no-pager
+
+# Press 'q' if status screen appears
+
+
+# ============ STEP 3: TEST PRINT (Raspberry Pi) ============
+
+cd /home/pi/arteva-print-station
+TEST_MODE=true node print-station-hp.js
+
+
+# ============ DONE! ============
+# Your receipts now look AMAZING! 🎉
+
+
+# ========================================
+# TROUBLESHOOTING COMMANDS
+# ========================================
+
+# Check service status:
+sudo systemctl status arteva-print-station
+
+# Restart service:
+sudo systemctl restart arteva-print-station
+
+# View logs:
+tail -f /home/pi/arteva-print-station/logs/print-station.log
+
+# Check printer:
+lpstat -p hp-smarttank
+
+# Test printer:
+echo "Test" | lpr -P hp-smarttank
+
+# Check token:
+cat /home/pi/arteva-print-station/.env | grep API_KEY
+
+
+# ========================================
+# EMERGENCY ROLLBACK
+# ========================================
+
+# If something breaks, restore old version:
+
+# On Raspberry Pi:
+cd /home/pi/arteva-print-station
+cp .env.backup .env
+sudo systemctl restart arteva-print-station
+
+# On Windows PC:
+cd "c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend"
+git revert HEAD
+git push origin main

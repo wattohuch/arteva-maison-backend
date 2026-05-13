@@ -331,10 +331,10 @@ const cancelOrder = asyncHandler(async (req, res) => {
         console.error('Failed to send cancellation email:', emailErr);
     }
 
-    // Send WhatsApp notification to OWNER and CUSTOMER
+    // Send WhatsApp notification to CUSTOMER (owner only gets new orders)
     try {
         const whatsapp = require('../services/whatsappService');
-        await whatsapp.notifyOwnerOrderCancellation(order, order.user, reason);
+        // await whatsapp.notifyOwnerOrderCancellation(order, order.user, reason); // DISABLED: Owner only gets new order notifications
         await whatsapp.notifyCustomerOrderStatusChange(order, order.user, 'cancelled');
     } catch (whatsappErr) {
         console.error('Failed to send WhatsApp notification:', whatsappErr);

@@ -1,0 +1,32 @@
+{
+  "name": "arteva-maison-print-station-hp",
+  "version": "1.0.0",
+  "description": "Automated print station for Arteva Maison orders on Raspberry Pi with HP SmartTank",
+  "main": "print-station.js",
+  "scripts": {
+    "start": "node print-station.js",
+    "test": "TEST_MODE=true node print-station.js",
+    "dev": "nodemon print-station.js"
+  },
+  "keywords": [
+    "print",
+    "hp-smarttank",
+    "raspberry-pi",
+    "receipt",
+    "pdf"
+  ],
+  "author": "Arteva Maison",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "puppeteer": "^21.6.0",
+    "socket.io-client": "^4.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

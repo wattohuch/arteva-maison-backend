@@ -297,10 +297,10 @@ const verifyPayment = asyncHandler(async (req, res) => {
             // Don't fail the payment verification if email fails
         }
 
-        // Send WhatsApp notifications (owner + customer)
+        // Send WhatsApp notifications (customer only - owner gets notified via notifyOwnerNewOrder)
         try {
             const whatsapp = require('../services/whatsappService');
-            await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+            // await whatsapp.notifyOwnerPaymentReceived(order, order.user); // DISABLED: Owner only gets new order notifications
             await whatsapp.notifyCustomerNewOrder(order, order.user);
         } catch (whatsappErr) {
             console.error('WhatsApp notification error:', whatsappErr);
@@ -369,10 +369,10 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 await sendOrderConfirmation(order, order.user);
             } catch (emailErr) { /* silent */ }
 
-            // Send WhatsApp notifications (owner + customer)
+            // Send WhatsApp notifications (customer only - owner gets notified via notifyOwnerNewOrder)
             try {
                 const whatsapp = require('../services/whatsappService');
-                await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+                // await whatsapp.notifyOwnerPaymentReceived(order, order.user); // DISABLED: Owner only gets new order notifications
                 await whatsapp.notifyCustomerNewOrder(order, order.user);
             } catch (whatsappErr) { /* silent */ }
 
@@ -535,10 +535,10 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 console.error('Email send failed:', emailErr);
             }
 
-            // Send WhatsApp notifications (owner + customer)
+            // Send WhatsApp notifications (customer only - owner gets notified via notifyOwnerNewOrder)
             try {
                 const whatsapp = require('../services/whatsappService');
-                await whatsapp.notifyOwnerPaymentReceived(order, order.user);
+                // await whatsapp.notifyOwnerPaymentReceived(order, order.user); // DISABLED: Owner only gets new order notifications
                 await whatsapp.notifyCustomerNewOrder(order, order.user);
             } catch (whatsappErr) {
                 console.error('WhatsApp notification error:', whatsappErr);

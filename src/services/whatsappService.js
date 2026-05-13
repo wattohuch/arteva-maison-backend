@@ -208,7 +208,7 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
      * Notify owner about order status change
      */
     async notifyOwnerOrderStatusChange(order, user, oldStatus, newStatus) {
-        const isArabic = user.language === 'ar';
+        const isArabic = false; // Always English for owner
         
         const statusEmoji = {
             pending: '⏳', confirmed: '✅', packed: '📦',
@@ -248,7 +248,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
      * Notify owner about payment received
      */
     async notifyOwnerPaymentReceived(order, user) {
-        const isArabic = user.language === 'ar';
+        const isArabic = false; // Always English for owner
         
         const message = `
 💰 *${isArabic ? 'تم استلام الدفع' : 'PAYMENT RECEIVED'}*
