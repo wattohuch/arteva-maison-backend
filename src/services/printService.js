@@ -257,34 +257,231 @@ async function renderReceiptToJpeg(order, customer) {
 function ippAttr(t,n,v){const nb=Buffer.from(n,'utf-8'),vb=Buffer.from(v,'utf-8'),b=Buffer.alloc(1+2+nb.length+2+vb.length);let o=0;b.writeUInt8(t,o);o++;b.writeUInt16BE(nb.length,o);o+=2;nb.copy(b,o);o+=nb.length;b.writeUInt16BE(vb.length,o);o+=2;vb.copy(b,o);return b;}
 function ippInt(t,n,v){const nb=Buffer.from(n,'utf-8'),b=Buffer.alloc(1+2+nb.length+2+4);let o=0;b.writeUInt8(t,o);o++;b.writeUInt16BE(nb.length,o);o+=2;nb.copy(b,o);o+=nb.length;b.writeUInt16BE(4,o);o+=2;b.writeInt32BE(v,o);return b;}
 
-function buildIppPrintJob(jpeg, name) {
-    const a=[Buffer.from([0x01]),ippAttr(0x47,'attributes-charset','utf-8'),ippAttr(0x48,'attributes-natural-language','en'),ippAttr(0x45,'printer-uri','ipp://localhost/ipp/print'),ippAttr(0x49,'document-format','image/jpeg'),ippAttr(0x42,'job-name',name||'Receipt'),Buffer.from([0x02]),ippInt(0x21,'copies',1),Buffer.from([0x03])];
-    const h=Buffer.alloc(8);h.writeUInt8(2,0);h.writeUInt8(0,1);h.writeUInt16BE(0x0002,2);h.writeUInt32BE(Math.floor(Math.random()*0xFFFF),4);
+/**
+ * Build IPP Print-Job request
+ * @param {Buffer} jpeg - JPEG image data
+ * @param {string} name - Job name
+ * @param {string} printerUri - Printer URI for the IPP request
+ * @param {string} ippVersion - '1.1' or '2.0'
+ */
+function buildIppPrintJob(jpeg, name, printerUri, ippVersion) {
+    const major = ippVersion === '1.1' ? 1 : 2;
+    const minor = ippVersion === '1.1' ? 1 : 0;
+    const uri = printerUri || 'ipp://localhost/ipp/print';
+
+    const a=[
+        Buffer.from([0x01]),
+        ippAttr(0x47,'attributes-charset','utf-8'),
+        ippAttr(0x48,'attributes-natural-language','en'),
+        ippAttr(0x45,'printer-uri', uri),
+        ippAttr(0x49,'document-format','image/jpeg'),
+        ippAttr(0x42,'job-name', name||'Receipt'),
+        Buffer.from([0x02]),
+        ippInt(0x21,'copies',1),
+        Buffer.from([0x03])
+    ];
+    const h=Buffer.alloc(8);
+    h.writeUInt8(major, 0);
+    h.writeUInt8(minor, 1);
+    h.writeUInt16BE(0x0002, 2); // Print-Job operation
+    h.writeUInt32BE(Math.floor(Math.random()*0xFFFF), 4);
     return Buffer.concat([h,...a,jpeg]);
 }
 
-function sendIpp(url, data) {
+/**
+ * Build IPP Get-Printer-Attributes request (for status check)
+ */
+function buildIppGetAttributes(printerUri, ippVersion) {
+    const major = ippVersion === '1.1' ? 1 : 2;
+    const minor = ippVersion === '1.1' ? 1 : 0;
+    const uri = printerUri || 'ipp://localhost/ipp/print';
+
+    const a=[
+        Buffer.from([0x01]),
+        ippAttr(0x47,'attributes-charset','utf-8'),
+        ippAttr(0x48,'attributes-natural-language','en'),
+        ippAttr(0x45,'printer-uri', uri),
+        Buffer.from([0x03])
+    ];
+    const h=Buffer.alloc(8);
+    h.writeUInt8(major, 0);
+    h.writeUInt8(minor, 1);
+    h.writeUInt16BE(0x000B, 2); // Get-Printer-Attributes
+    h.writeUInt32BE(Math.floor(Math.random()*0xFFFF), 4);
+    return Buffer.concat([h,...a]);
+}
+
+function sendIpp(url, data, timeoutMs) {
     return new Promise((res,rej)=>{
         const u=new URL(url),cl=u.protocol==='https:'?https:http;
-        const r=cl.request({hostname:u.hostname,port:u.port||631,path:u.pathname||'/ipp/print',method:'POST',headers:{'Content-Type':'application/ipp','Content-Length':data.length},timeout:60000},resp=>{
-            const ch=[];resp.on('data',c=>ch.push(c));resp.on('end',()=>{const b=Buffer.concat(ch);if(b.length>=4){const s=b.readUInt16BE(2);res({success:s<=0xFF,statusCode:`0x${s.toString(16).padStart(4,'0')}`,message:s<=0xFF?'OK':`IPP error 0x${s.toString(16)}`});}else res({success:true});});
-        });r.on('error',rej);r.on('timeout',()=>{r.destroy();rej(new Error('timeout'));});r.write(data);r.end();
+        const t = timeoutMs || 30000;
+        const r=cl.request({
+            hostname:u.hostname,
+            port:u.port||631,
+            path:u.pathname||'/ipp/print',
+            method:'POST',
+            headers:{'Content-Type':'application/ipp','Content-Length':data.length},
+            timeout: t
+        },resp=>{
+            const ch=[];
+            resp.on('data',c=>ch.push(c));
+            resp.on('end',()=>{
+                const b=Buffer.concat(ch);
+                if(b.length>=4){
+                    const s=b.readUInt16BE(2);
+                    res({
+                        success: s<=0xFF,
+                        statusCode: `0x${s.toString(16).padStart(4,'0')}`,
+                        message: s<=0xFF ? 'OK' : `IPP error 0x${s.toString(16)}`,
+                        httpStatus: resp.statusCode,
+                        responseLength: b.length
+                    });
+                } else {
+                    res({ success: true, httpStatus: resp.statusCode, responseLength: b.length });
+                }
+            });
+        });
+        r.on('error', e => rej(new Error(`Connection failed: ${e.message}`)));
+        r.on('timeout',()=>{r.destroy();rej(new Error(`Timeout after ${t/1000}s — printer unreachable`));});
+        r.write(data);
+        r.end();
     });
 }
 
+/**
+ * Convert HTTP printer URL to IPP printer-uri
+ * http://37.231.216.201:9631/ipp/print → ipp://37.231.216.201:9631/ipp/print
+ */
+function httpToIppUri(httpUrl) {
+    return httpUrl.replace(/^https?:\/\//, 'ipp://');
+}
+
 // ── Public API ──
+
+/**
+ * Auto-print receipt with retry logic and IPP version fallback
+ */
 async function autoPrintReceipt(order, customer) {
     const url = process.env.PRINTER_IPP_URL;
-    if (!url) { console.log('[PRINT] PRINTER_IPP_URL not set'); return { success: false }; }
+    if (!url) { console.log('[PRINT] PRINTER_IPP_URL not set'); return { success: false, error: 'PRINTER_IPP_URL not configured' }; }
+
     try {
         console.log(`[PRINT] 🖨️ Rendering receipt ${order.orderNumber}...`);
         const jpeg = await renderReceiptToJpeg(order, customer);
         console.log(`[PRINT] 📄 ${(jpeg.length/1024).toFixed(0)} KB @ 300 DPI`);
-        const ipp = buildIppPrintJob(jpeg, `Receipt-${order.orderNumber}`);
-        const r = await sendIpp(url, ipp);
-        console.log(`[PRINT] ${r.success?'✅':'❌'} ${r.statusCode||''} ${r.message||''}`);
-        return r;
-    } catch(e) { console.error(`[PRINT] ❌ ${e.message}`); return { success:false, error:e.message }; }
+
+        const printerUri = httpToIppUri(url);
+        const attempts = [
+            { version: '2.0', timeout: 30000 },
+            { version: '1.1', timeout: 30000 },
+            { version: '1.1', timeout: 45000 }
+        ];
+
+        for (let i = 0; i < attempts.length; i++) {
+            const { version, timeout } = attempts[i];
+            try {
+                console.log(`[PRINT] Attempt ${i+1}/${attempts.length} (IPP ${version}, ${timeout/1000}s timeout)...`);
+                const ipp = buildIppPrintJob(jpeg, `Receipt-${order.orderNumber}`, printerUri, version);
+                const r = await sendIpp(url, ipp, timeout);
+                console.log(`[PRINT] ${r.success?'✅':'❌'} ${r.statusCode||''} ${r.message||''} (HTTP ${r.httpStatus})`);
+                if (r.success) return r;
+                // If IPP error, try next attempt
+                console.log(`[PRINT] IPP returned error, trying next...`);
+            } catch(e) {
+                console.log(`[PRINT] Attempt ${i+1} failed: ${e.message}`);
+                if (i < attempts.length - 1) {
+                    const delay = (i + 1) * 2000;
+                    console.log(`[PRINT] Waiting ${delay/1000}s before retry...`);
+                    await new Promise(r => setTimeout(r, delay));
+                }
+            }
+        }
+        console.error(`[PRINT] ❌ All ${attempts.length} attempts failed`);
+        return { success: false, error: 'All print attempts failed' };
+    } catch(e) {
+        console.error(`[PRINT] ❌ ${e.message}`);
+        return { success: false, error: e.message };
+    }
+}
+
+/**
+ * Check printer status via IPP Get-Printer-Attributes
+ */
+async function checkPrinterStatus() {
+    const url = process.env.PRINTER_IPP_URL;
+    if (!url) return { reachable: false, error: 'PRINTER_IPP_URL not set' };
+
+    const printerUri = httpToIppUri(url);
+    const versions = ['2.0', '1.1'];
+
+    for (const version of versions) {
+        try {
+            const data = buildIppGetAttributes(printerUri, version);
+            const r = await sendIpp(url, data, 15000);
+            return {
+                reachable: true,
+                ippVersion: version,
+                statusCode: r.statusCode,
+                success: r.success,
+                httpStatus: r.httpStatus,
+                url
+            };
+        } catch(e) {
+            continue;
+        }
+    }
+
+    // Try raw HTTP GET as last resort (some printers respond to this)
+    try {
+        const u = new URL(url);
+        const cl = u.protocol === 'https:' ? https : http;
+        const reachable = await new Promise((res) => {
+            const r = cl.request({ hostname: u.hostname, port: u.port || 631, path: '/', method: 'GET', timeout: 10000 }, resp => {
+                res({ reachable: true, httpStatus: resp.statusCode });
+            });
+            r.on('error', () => res({ reachable: false }));
+            r.on('timeout', () => { r.destroy(); res({ reachable: false }); });
+            r.end();
+        });
+        return { ...reachable, url, note: 'IPP failed but HTTP reachable — printer may need different path' };
+    } catch(e) {
+        return { reachable: false, error: e.message, url };
+    }
+}
+
+/**
+ * Send a test page to the printer
+ */
+async function sendTestPage() {
+    const url = process.env.PRINTER_IPP_URL;
+    if (!url) return { success: false, error: 'PRINTER_IPP_URL not set' };
+
+    // Create a simple test page
+    const canvas = createCanvas(W, H);
+    const c = canvas.getContext('2d');
+    c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+
+    c.fillStyle = DARK; c.font = `bold ${f(28)}px Georgia`; c.textAlign = 'center';
+    c.fillText('ARTÉVA MAISON', W/2, H/3);
+    c.font = `${f(14)}px Arial`; c.fillStyle = MID;
+    c.fillText('Printer Test Page', W/2, H/3 + f(40));
+    c.fillText(new Date().toLocaleString(), W/2, H/3 + f(60));
+    c.fillText(`URL: ${url}`, W/2, H/3 + f(80));
+    c.strokeStyle = GOLD; c.lineWidth = f(2);
+    c.strokeRect(f(40), f(40), W - f(80), H - f(80));
+
+    const jpeg = canvas.toBuffer('image/jpeg', { quality: 0.9 });
+    const printerUri = httpToIppUri(url);
+
+    // Try IPP 2.0 then 1.1
+    for (const version of ['2.0', '1.1']) {
+        try {
+            const ipp = buildIppPrintJob(jpeg, 'Test-Page', printerUri, version);
+            const r = await sendIpp(url, ipp, 30000);
+            if (r.success) return { success: true, ippVersion: version, ...r };
+        } catch(e) { continue; }
+    }
+    return { success: false, error: 'Could not reach printer' };
 }
 
 async function printExistingOrderReceipt(orderId) {
@@ -294,4 +491,4 @@ async function printExistingOrderReceipt(orderId) {
     return autoPrintReceipt(order, order.user);
 }
 
-module.exports = { autoPrintReceipt, printExistingOrderReceipt, renderReceiptToJpeg };
+module.exports = { autoPrintReceipt, printExistingOrderReceipt, renderReceiptToJpeg, checkPrinterStatus, sendTestPage };

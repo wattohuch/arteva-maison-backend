@@ -74,6 +74,38 @@ router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
     }
 });
 
+// Printer status check — diagnose connectivity
+router.get('/printer/status', protect, admin, async (req, res) => {
+    try {
+        const { checkPrinterStatus } = require('../services/printService');
+        const status = await checkPrinterStatus();
+        res.json({ success: true, ...status });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Send test page to printer
+router.post('/printer/test', protect, admin, async (req, res) => {
+    try {
+        const { sendTestPage } = require('../services/printService');
+        const result = await sendTestPage();
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Update printer URL (for when IP changes)
+router.put('/printer/url', protect, admin, async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ success: false, message: 'URL required' });
+    // Update runtime env (persists until restart)
+    process.env.PRINTER_IPP_URL = url;
+    console.log(`[PRINT] 🖨️ Printer URL updated to: ${url}`);
+    res.json({ success: true, message: `Printer URL updated to ${url}`, note: 'Update your Render env var to persist across deploys' });
+});
+
 // WhatsApp connection status check
 router.get('/whatsapp-status', protect, admin, async (req, res) => {
     try {
