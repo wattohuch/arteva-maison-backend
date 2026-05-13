@@ -971,6 +971,38 @@ const generateReceipt = asyncHandler(async (req, res) => {
     res.send(receiptHtml);
 });
 
+// @desc    Generate print station token
+// @route   POST /api/admin/generate-print-token
+// @access  Private/Admin (admin, owner, superuser)
+const generatePrintStationToken = asyncHandler(async (req, res) => {
+    // Only admin, owner, and superuser can generate print station tokens
+    if (!['admin', 'owner', 'superuser'].includes(req.user.role)) {
+        res.status(403);
+        throw new Error('Access denied. Admin privileges required.');
+    }
+
+    const jwt = require('jsonwebtoken');
+    
+    // Generate a long-lived token (20 years) for the print station
+    const token = jwt.sign(
+        { id: req.user._id },
+        process.env.JWT_SECRET,
+        { expiresIn: '7300d' } // 20 years
+    );
+
+    res.json({
+        success: true,
+        token: token,
+        user: {
+            id: req.user._id,
+            name: req.user.name,
+            email: req.user.email,
+            role: req.user.role
+        },
+        message: 'Print station token generated successfully. Use this token in your Raspberry Pi .env file as API_KEY.'
+    });
+});
+
 // @desc    Set revenue password for superuser (first time)
 // @route   POST /api/admin/set-revenue-password
 // @access  Private/Superuser
@@ -1380,6 +1412,7 @@ module.exports = {
     requestRevenueOTP,
     verifyRevenueOTP,
     generateReceipt,
+    generatePrintStationToken,
     setRevenuePassword,
     getRevenueAnalytics,
     updateProductDiscount,

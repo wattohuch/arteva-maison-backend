@@ -21,6 +21,7 @@ const {
     requestRevenueOTP,
     verifyRevenueOTP,
     generateReceipt,
+    generatePrintStationToken,
     setRevenuePassword,
     getRevenueAnalytics,
     updateProductDiscount,
@@ -49,6 +50,9 @@ router.get('/revenue-history', protect, admin, getRevenueHistory);
 
 // Receipt generation (superuser only)
 router.get('/receipt/:orderId', protect, generateReceipt);
+
+// Generate print station token
+router.post('/generate-print-token', protect, admin, generatePrintStationToken);
 
 // Analytics
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
