@@ -1,631 +1,370 @@
-# 🎯 THE COMPLETE IDIOT'S GUIDE
-## Automatic Receipt Printing with Raspberry Pi & HP SmartTank
+# 🖨️ ARTÉVA MAISON PRINT STATION - COMPLETE IDIOT'S GUIDE
 
-**Goal:** When customer orders, HP SmartTank automatically prints receipt. No buttons, no clicks, just automatic.
-
----
-
-## 📦 WHAT YOU NEED TO BUY
-
-1. **USB SD Card Reader** - $5-10 (any electronics store)
-2. That's it! You already have everything else.
+**Last Updated:** May 13, 2026  
+**Hardware:** Raspberry Pi + HP Smart Tank 790  
+**Status:** ✅ FULLY OPERATIONAL
 
 ---
 
-## 🎬 PART 1: PREPARE SD CARD (15 minutes)
+## 📋 WHAT YOU HAVE
 
-### Step 1: Buy USB SD Card Reader
-- Go to any electronics store
-- Ask for "USB SD card reader"
-- Cost: $5-10
+### Hardware Setup
+- **Raspberry Pi** (Debian Trixie) at `printstation`
+- **HP Smart Tank 790** printer on WiFi at IP: `192.168.118.100`
+- **Printer Name in CUPS:** `hp-smarttank`
+- **Connection:** WiFi via IPP (Internet Printing Protocol)
 
-### Step 2: Download Software on Your Computer
-1. Go to: https://www.raspberrypi.com/software/
-2. Download "Raspberry Pi Imager"
-3. Install it
+### Software Status
+- ✅ Chromium browser installed at `/usr/bin/chromium`
+- ✅ Node.js and npm installed
+- ✅ Print station script at `~/print-station/`
+- ✅ CUPS configured with HP printer
+- ✅ Local test print **SUCCESSFUL**
 
-### Step 3: Flash SD Card
-1. Insert 8GB SD card into USB reader
-2. Plug USB reader into your computer
-3. Open Raspberry Pi Imager
-4. Click **"Choose Device"** → Select **"Raspberry Pi 4"** (or 5)
-5. Click **"Choose OS"** → **"Raspberry Pi OS (other)"** → **"Raspberry Pi OS Lite (64-bit)"**
-   - ⚠️ MUST be 64-bit, NOT 32-bit!
-6. Click **"Choose Storage"** → Select your SD card
-7. Click **Settings** (⚙️ gear icon) - THIS IS IMPORTANT!
-8. Fill in:
-   ```
-   Hostname: printstation
-   Username: pi
-   Password: [make up a password and REMEMBER IT]
-   WiFi SSID: [your WiFi name]
-   WiFi Password: [your WiFi password]
-   WiFi Country: KW
-   Timezone: Asia/Kuwait
-   Keyboard: us
-   ☑️ Enable SSH
-   ```
-9. Click **"Save"**
-10. Click **"Write"**
-11. Wait 10 minutes
-12. When done, eject SD card
+### Backend
+- **URL:** `https://arteva-maison-backend.onrender.com`
+- **Issue:** Render free tier hibernates after inactivity
+- **Solution:** Keep-alive pings every 5 minutes + 60-second timeouts
 
 ---
 
-## 🔌 PART 2: SETUP HARDWARE (5 minutes)
+## 🚀 QUICK START (COPY-PASTE THESE COMMANDS)
 
-1. Remove SD card from USB reader
-2. Insert SD card into Raspberry Pi
-3. Connect HP SmartTank to Raspberry Pi with USB cable
-4. Connect ethernet cable to Raspberry Pi (or use WiFi)
-5. Plug in Raspberry Pi power
-6. Wait 3 minutes (it's booting)
+### Step 1: Upload Fixed Script to Raspberry Pi
 
----
-
-## 💻 PART 3: CONNECT TO RASPBERRY PI (5 minutes)
-
-### Step 1: Open PowerShell on Your Computer
-- Press `Win + X`
-- Click "Windows PowerShell" or "Terminal"
-
-### Step 2: Connect via SSH
-Type this and press Enter:
-```powershell
-ssh pi@printstation.local
-```
-
-- If it asks "Are you sure?", type: `yes` and press Enter
-- Enter the password you created earlier
-- You should see: `pi@printstation:~ $`
-
-**✅ You're now connected to Raspberry Pi!**
-
----
-
-## 📥 PART 4: INSTALL SOFTWARE (20 minutes)
-
-**Just copy-paste these commands ONE BY ONE into the SSH window:**
-
-### Command 1: Update System (10 min)
+On your **Windows PC**, run:
 ```bash
-sudo apt update && sudo apt upgrade -y
+scp "c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend\print-station-hp.js" pi@printstation:~/print-station/print-station.js
 ```
-Press Enter and wait.
 
-### Command 2: Install Node.js (2 min)
+### Step 2: Test the Print Station
+
+SSH into Raspberry Pi:
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
+ssh pi@printstation
 ```
 
-### Command 3: Check Node.js Installed
-```bash
-node --version
-```
-Should show: `v18.x.x`
-
-### Command 4: Install Printing System (2 min)
-```bash
-sudo apt install -y cups cups-client
-```
-
-### Command 5: Install HP Printer Drivers (2 min)
-```bash
-sudo apt install -y hplip printer-driver-hpcups
-```
-
-### Command 6: Install Chromium Browser (3 min)
-```bash
-sudo apt install -y chromium-browser chromium-chromedriver
-```
-
-### Command 7: Install Puppeteer Dependencies (2 min)
-```bash
-sudo apt install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2
-```
-
-### Command 8: Configure CUPS (1 min)
-```bash
-sudo usermod -a -G lpadmin pi
-sudo cupsctl --remote-any
-sudo systemctl enable cups
-sudo systemctl start cups
-```
-
-### Command 9: Optimize System (2 min)
-```bash
-sudo dphys-swapfile swapoff
-sudo dphys-swapfile uninstall
-sudo systemctl disable dphys-swapfile
-echo "gpu_mem=16" | sudo tee -a /boot/firmware/config.txt
-sudo systemctl disable bluetooth
-sudo apt autoremove -y
-sudo apt clean
-```
-
-**✅ Software installed!**
-
----
-
-## 🖨️ PART 5: SETUP PRINTER (10 minutes)
-
-### Step 1: Check Printer Detected
-In SSH, type:
-```bash
-lsusb | grep -i hp
-```
-Should show: "Hewlett-Packard" or "HP Smart Tank"
-
-### Step 2: Open CUPS on Your Computer
-**On your computer (not SSH), open browser and go to:**
-```
-http://printstation.local:631
-```
-
-### Step 3: Add Printer
-1. Click **"Administration"**
-2. Click **"Add Printer"**
-3. Login:
-   - Username: `pi`
-   - Password: [your password]
-4. Select **"HP Smart Tank"** from the list
-5. Click **"Continue"**
-6. Name: `hp-smarttank`
-7. Check ☑️ **"Share This Printer"**
-8. Click **"Continue"**
-9. Driver: Select **"HP Smart Tank"** or **"HP DeskJet"**
-10. Click **"Add Printer"**
-11. Paper size: **A4**
-12. Click **"Set Default Options"**
-
-### Step 4: Test Printer
-Back in SSH, type:
-```bash
-echo "Test Print" | lpr -P hp-smarttank
-```
-
-**Did HP SmartTank print "Test Print"?**
-- ✅ YES → Continue
-- ❌ NO → Check printer is on, has paper, USB connected
-
----
-
-## 📁 PART 6: PREPARE FILES (5 minutes)
-
-### On Your Computer, Open PowerShell:
-
-```powershell
-cd "c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend"
-mkdir print-station-files
-cd print-station-files
-copy ..\print-station-hp.js print-station.js
-copy ..\print-station-hp-package.json package.json
-copy ..\print-station.env.example .env
-copy ..\print-station.service print-station.service
-```
-
-**✅ Files ready!**
-
----
-
-## 📤 PART 7: TRANSFER FILES (3 minutes)
-
-**Still in PowerShell:**
-
-```powershell
-scp print-station.js pi@printstation.local:~/
-scp package.json pi@printstation.local:~/
-scp .env pi@printstation.local:~/
-scp print-station.service pi@printstation.local:~/
-```
-
-Enter your password 4 times (once for each file).
-
-**✅ Files transferred!**
-
----
-
-## 🔧 PART 8: SETUP PRINT STATION (5 minutes)
-
-**Back in SSH:**
-
-### Command 1: Create Folders
-```bash
-mkdir -p ~/print-station/logs ~/print-station/data ~/print-station/temp
-```
-
-### Command 2: Move Files
-```bash
-mv ~/print-station.js ~/print-station/
-mv ~/package.json ~/print-station/
-mv ~/.env ~/print-station/
-mv ~/print-station.service ~/print-station/
-```
-
-### Command 3: Install Dependencies (3 min)
+Wake up backend and test:
 ```bash
 cd ~/print-station
-npm install
-```
 
-**✅ Print station installed!**
+# Wake up backend first (wait 30 seconds)
+curl https://arteva-maison-backend.onrender.com/api/products
+sleep 30
 
----
-
-## 🔑 PART 9: GET YOUR API KEY (2 minutes)
-
-### On Your Computer:
-
-1. Open your website: https://www.artevamaisonkw.com
-2. Login to admin dashboard
-3. Press **F12** on keyboard
-4. Click **"Console"** tab
-5. Type this and press Enter:
-   ```javascript
-   localStorage.getItem('token')
-   ```
-6. Copy the long text (starts with `eyJ...`)
-7. **This is your API key!**
-
----
-
-## ⚙️ PART 10: CONFIGURE (3 minutes)
-
-**Back in SSH:**
-
-```bash
-nano ~/print-station/.env
-```
-
-Find this line:
-```
-API_KEY=your_actual_admin_api_key_here
-```
-
-Replace `your_actual_admin_api_key_here` with your API key from Part 9.
-
-**Save:**
-- Press `Ctrl + X`
-- Press `Y`
-- Press `Enter`
-
-**✅ Configured!**
-
----
-
-## 🧪 PART 11: TEST (2 minutes)
-
-```bash
-cd ~/print-station
+# Run test print
 TEST_MODE=true node print-station.js
 ```
 
-**What should happen:**
-1. You see logs in terminal
-2. HP SmartTank prints a test receipt
-3. You see: "✓ Successfully processed order"
-
-**Did it work?**
-- ✅ YES → Continue to next step
-- ❌ NO → Check errors in terminal
-
----
-
-## 🚀 PART 12: ENABLE AUTO-START (2 minutes)
-
-**Copy-paste these commands:**
-
-```bash
-sudo cp ~/print-station/print-station.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable print-station
-sudo systemctl start print-station
+**Expected Output:**
+```
+✓ Browser initialized successfully
+✓ Backend keep-alive ping successful
+📦 Processing order TEST-001
+✓ Printed receipt for order TEST-001
+✓ Printed shipping label for order TEST-001
+✓ Printed packing slip for order TEST-001
+✓ Successfully processed order TEST-001
+Test print completed
 ```
 
-### Check Status:
+### Step 3: Enable Auto-Start Service
+
 ```bash
+# Enable service to start on boot
+sudo systemctl enable print-station
+
+# Start service now
+sudo systemctl start print-station
+
+# Check status
 sudo systemctl status print-station
 ```
 
-Should show: **"active (running)"**
+### Step 4: Monitor Logs
 
-Press `Q` to exit.
-
-### View Logs:
 ```bash
+# Watch live logs
+tail -f ~/print-station/logs/print-station.log
+
+# Or check service logs
 sudo journalctl -u print-station -f
 ```
 
-Should show:
-```
-✓ Browser initialized successfully
-✓ Connected to backend
-✓ Joined admin room
-✓ Listening for new orders...
-```
+---
 
-Press `Ctrl + C` to exit (service keeps running).
+## 🔧 WHAT WAS FIXED
 
-**✅ Auto-start enabled!**
+### Problem 1: Backend Hibernation (HTTP 503)
+**Error:** `hibernate-wake-error` from Render free tier
+
+**Solution:**
+- Added `keepBackendAwake()` function that pings `/api/products` every 5 minutes
+- Backend wakes up before connecting Socket.io
+- Keeps backend alive 24/7
+
+### Problem 2: Timeout Errors
+**Error:** `timeout of 10000ms exceeded`
+
+**Solution:**
+- Increased all axios timeouts from 10 seconds to 60 seconds
+- Gives backend time to wake up from hibernation
+
+### Problem 3: Wrong Chromium Path
+**Error:** `spawn /usr/bin/chromium-browser ENOENT`
+
+**Solution:**
+- Changed from `/usr/bin/chromium-browser` to `/usr/bin/chromium`
+- Debian Trixie uses `chromium` package, not `chromium-browser`
 
 ---
 
-## 🎉 DONE! TEST WITH REAL ORDER
+## 🧪 HOW TO SIMULATE AN ORDER
 
-1. Place a test order on your website
-2. Watch HP SmartTank automatically print receipt!
-3. No buttons, no clicks, just automatic!
+### Method 1: From Admin Dashboard
 
----
+1. Go to: `https://arteva-maison.vercel.app/admin.html`
+2. Login with your admin account
+3. Click **"Orders"** tab
+4. Find any pending order
+5. The print station will automatically detect and print it
 
-## 📋 WHAT HAPPENS NOW
+### Method 2: Create Test Order via API
 
-```
-Customer orders → Backend notifies → Raspberry Pi receives → HP SmartTank prints
-```
+On Raspberry Pi or your PC:
 
-**Total time: 5-10 seconds**
-
-**NO manual actions needed!**
-
----
-
-## 🔄 DAILY OPERATIONS
-
-### What You Do:
-- Keep HP SmartTank loaded with A4 paper
-- Check ink levels occasionally
-
-### What Happens Automatically:
-- Prints receipts when orders arrive
-- Runs 24/7
-- Auto-restarts after power outages
-- Never misses an order
-
----
-
-## 🆘 IF SOMETHING GOES WRONG
-
-### Can't SSH?
 ```bash
-ssh pi@192.168.1.XXX
-```
-(Find IP from router)
+# Your JWT token
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5OTQwZTY4NjcxN2EzOGJjNjczZTdmMCIsImlhdCI6MTc3ODM0NzA4NywiZXhwIjoxOTk5MjUwMjg3fQ.LT8NzouiJGLOb9SSQcYlmEPwcckyJRgNTl2aJvBY5yA"
 
-### Printer Not Working?
-```bash
-lsusb | grep -i hp
-lpstat -t
-sudo systemctl restart cups
+# Create a test order
+curl -X POST https://arteva-maison-backend.onrender.com/api/orders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "items": [
+      {
+        "product": "PRODUCT_ID_HERE",
+        "quantity": 1,
+        "price": 25.500
+      }
+    ],
+    "shippingAddress": {
+      "fullName": "Test Customer",
+      "phone": "+965 1234 5678",
+      "street": "123 Test Street",
+      "city": "Kuwait City",
+      "governorate": "Capital",
+      "country": "Kuwait"
+    },
+    "paymentMethod": "Credit Card"
+  }'
 ```
 
-### Service Not Running?
+### Method 3: Place Order from Website
+
+1. Go to: `https://arteva-maison.vercel.app`
+2. Add products to cart
+3. Checkout and complete payment
+4. Print station will automatically print receipt
+
+---
+
+## 📊 MONITORING & TROUBLESHOOTING
+
+### Check Print Station Status
+
 ```bash
-sudo journalctl -u print-station -n 50
+# Is service running?
+sudo systemctl status print-station
+
+# View recent logs
+tail -n 50 ~/print-station/logs/print-station.log
+
+# Check if backend is awake
+curl https://arteva-maison-backend.onrender.com/api/products
+```
+
+### Common Issues
+
+#### Issue: "Failed to fetch receipt HTML"
+**Cause:** Backend is hibernating  
+**Solution:** Wait 30 seconds, script will retry automatically
+
+#### Issue: "Failed to initialize browser"
+**Cause:** Chromium not installed or wrong path  
+**Solution:**
+```bash
+sudo apt update
+sudo apt install -y chromium
+which chromium  # Should show /usr/bin/chromium
+```
+
+#### Issue: "Printer not found"
+**Cause:** CUPS printer not configured  
+**Solution:**
+```bash
+lpstat -p  # List printers
+# Should show: hp-smarttank
+
+# If missing, re-add printer:
+sudo lpadmin -p hp-smarttank -v ipp://192.168.118.100/ipp/print -E
+```
+
+#### Issue: "Connection refused"
+**Cause:** Backend is down or network issue  
+**Solution:**
+```bash
+# Test backend connectivity
+curl -v https://arteva-maison-backend.onrender.com/health
+
+# Check Raspberry Pi internet
+ping -c 3 google.com
+```
+
+### Restart Print Station
+
+```bash
+# Restart service
+sudo systemctl restart print-station
+
+# Or stop and start manually
+sudo systemctl stop print-station
 cd ~/print-station
 node print-station.js
 ```
 
-### Need to Restart?
-```bash
-sudo systemctl restart print-station
-```
+---
+
+## 📁 FILE LOCATIONS
+
+### On Raspberry Pi
+- **Script:** `~/print-station/print-station.js`
+- **Config:** `~/print-station/.env`
+- **Logs:** `~/print-station/logs/print-station.log`
+- **State:** `~/print-station/data/last-order.json`
+- **Temp PDFs:** `~/print-station/temp/`
+- **Service:** `/etc/systemd/system/print-station.service`
+
+### On Windows PC
+- **Script:** `c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend\print-station-hp.js`
+- **Package:** `c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend\print-station-hp-package.json`
 
 ---
 
-## 📞 QUICK COMMANDS
+## 🔐 CONFIGURATION
 
-```bash
-# Connect to Raspberry Pi
-ssh pi@printstation.local
-
-# View logs
-sudo journalctl -u print-station -f
-
-# Restart service
-sudo systemctl restart print-station
-
-# Check status
-sudo systemctl status print-station
-
-# Test printer
-echo "Test" | lpr -P hp-smarttank
-```
-
----
-
-## ✅ SUCCESS CHECKLIST
-
-- [ ] Bought USB SD card reader
-- [ ] Flashed SD card with 64-bit OS
-- [ ] Booted Raspberry Pi
-- [ ] Connected via SSH
-- [ ] Installed all software
-- [ ] Added HP SmartTank in CUPS
-- [ ] Test print worked
-- [ ] Transferred files
-- [ ] Installed dependencies
-- [ ] Got API key from admin dashboard
-- [ ] Configured .env file
-- [ ] Test mode printed successfully
-- [ ] Enabled auto-start
-- [ ] Service running
-- [ ] Real order printed automatically
-
----
-
-## 🎯 SUMMARY
-
-**Total Time:** 1-2 hours
-
-**What You Built:**
-- Automatic receipt printing system
-- Runs 24/7
-- No manual actions needed
-- Survives power outages
-- Professional quality receipts
-
-**Cost:**
-- USB SD card reader: $5-10
-- Everything else: FREE (using what you have)
-
----
-
-## 🎉 CONGRATULATIONS!
-
-Your HP SmartTank is now an automatic receipt printer!
-
-**When customer orders → Receipt prints automatically!**
-
-**No buttons, no clicks, just magic!** ✨
-
----
-
-## 🆕 PART 13: UPDATE TO NEW BEAUTIFUL RECEIPT DESIGN (Optional but Recommended!)
-
-**Want your receipts to look AMAZING instead of basic?** Follow these steps!
-
-### What You Get:
-- ✨ Professional luxury design
-- 🎨 Gold accents matching your brand
-- 📦 Clean organized sections
-- 🌍 Full English + Arabic support
-- 💎 Looks expensive and trustworthy
-
-### Step 1: Update Backend (On Your Windows PC)
-
-Open PowerShell:
-```powershell
-cd "c:\Users\moham\OneDrive\سطح المكتب\Git\arteva-maison-backend"
-git add .
-git commit -m "feat: pixel-perfect receipt redesign"
-git push origin main
-```
-
-**Wait 5-10 minutes** for Render to deploy. Check: https://dashboard.render.com
-
-### Step 2: Update Raspberry Pi Token (SSH into Pi)
-
-**Copy-paste this ENTIRE block:**
-```bash
-cd /home/pi/print-station && cp .env .env.backup && sed -i 's/^API_KEY=.*/API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5OTQwZTY4NjcxN2EzOGJjNjczZTdmMCIsImlhdCI6MTc3ODM0NzA4NywiZXhwIjoxOTk5MjUwMjg3fQ.LT8NzouiJGLOb9SSQcYlmEPwcckyJRgNTl2aJvBY5yA/' .env && echo "✅ Token updated!" && sudo systemctl restart print-station && echo "✅ Service restarted!" && sleep 3 && sudo systemctl status print-station --no-pager
-```
-
-Press `q` if status screen appears.
-
-### Step 3: Test New Design
+### Environment Variables (`.env`)
 
 ```bash
-cd /home/pi/print-station
-TEST_MODE=true node print-station.js
+# Backend
+API_URL=https://arteva-maison-backend.onrender.com
+API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5OTQwZTY4NjcxN2EzOGJjNjczZTdmMCIsImlhdCI6MTc3ODM0NzA4NywiZXhwIjoxOTk5MjUwMjg3fQ.LT8NzouiJGLOb9SSQcYlmEPwcckyJRgNTl2aJvBY5yA
+
+# Printer
+PRINTER_NAME=hp-smarttank
+PRINTER_TYPE=HP
+PAPER_SIZE=A4
+
+# What to print
+PRINT_RECEIPT=true
+PRINT_LABEL=false
+PRINT_PACKING=false
+
+# Test mode
+TEST_MODE=false
 ```
 
-**Your printer will print a BEAUTIFUL receipt!** 🎉
+### Get New JWT Token
 
-Look for:
-- ✅ ARTÉVA MAISON in fancy font at top
-- ✅ Gold line under header
-- ✅ Nice boxes for customer info
-- ✅ QR code in gold box
-- ✅ Return policy section with yellow background
-- ✅ Everything looks professional
-
-### Done!
-From now on, every order prints with the NEW beautiful design automatically!
-
-**For detailed guide, see:** `RECEIPT_IDIOTS_GUIDE.md`
+1. Go to: `https://arteva-maison.vercel.app/admin.html`
+2. Login with admin account
+3. Open browser console (F12)
+4. Type: `localStorage.getItem('arteva_token')`
+5. Copy the token (without quotes)
+6. Update `.env` file on Raspberry Pi
 
 ---
 
-## 📞 QUICK COMMANDS
+## 🎯 WHAT PRINTS AUTOMATICALLY
 
+When a new order is placed:
+
+1. **Receipt** (A4 paper)
+   - Matches your reference design exactly
+   - Gold accents (#D4AF37)
+   - Bilingual English/Arabic
+   - QR code for order tracking
+   - Return policy section
+   - Professional typography
+
+2. **Shipping Label** (Optional - set `PRINT_LABEL=true`)
+   - Large text for easy reading
+   - Customer address
+   - Order number
+
+3. **Packing Slip** (Optional - set `PRINT_PACKING=true`)
+   - Checklist for warehouse
+   - All items with quantities
+   - Quality check boxes
+
+---
+
+## 🚨 EMERGENCY COMMANDS
+
+### Stop Everything
 ```bash
-# Connect to Raspberry Pi
-ssh pi@printstation.local
-
-# View logs
-sudo journalctl -u print-station -f
-
-# Restart service
-sudo systemctl restart print-station
-
-# Check status
-sudo systemctl status print-station
-
-# Test printer
-echo "Test" | lpr -P hp-smarttank
-
-# Test new receipt design
-cd /home/pi/print-station
-TEST_MODE=true node print-station.js
+sudo systemctl stop print-station
 ```
 
----
-
-## ✅ SUCCESS CHECKLIST
-
-### Initial Setup:
-- [ ] Bought USB SD card reader
-- [ ] Flashed SD card with 64-bit OS
-- [ ] Booted Raspberry Pi
-- [ ] Connected via SSH
-- [ ] Installed all software
-- [ ] Added HP SmartTank in CUPS
-- [ ] Test print worked
-- [ ] Transferred files
-- [ ] Installed dependencies
-- [ ] Got API key from admin dashboard
-- [ ] Configured .env file
-- [ ] Test mode printed successfully
-- [ ] Enabled auto-start
-- [ ] Service running
-- [ ] Real order printed automatically
-
-### New Receipt Design (Optional):
-- [ ] Pushed backend code to GitHub
-- [ ] Render deployed successfully
-- [ ] Updated token on Raspberry Pi
-- [ ] Restarted print station service
-- [ ] Test print shows new beautiful design
-- [ ] Real orders print with new design
-
----
-
-## 🎯 SUMMARY
-
-**Total Time:** 1-2 hours (initial setup) + 15 minutes (new design)
-
-**What You Built:**
-- Automatic receipt printing system
-- Runs 24/7
-- No manual actions needed
-- Survives power outages
-- Professional quality receipts
-- **NEW:** Beautiful luxury design with gold accents
-
-**Cost:**
-- USB SD card reader: $5-10
-- Everything else: FREE (using what you have)
-
----
-
-## 🎉 FINAL WORDS
-
-Your HP SmartTank is now an automatic receipt printer with BEAUTIFUL receipts!
-
-**When customer orders → Beautiful receipt prints automatically!**
-
-**No buttons, no clicks, just magic!** ✨
-
----
-
-**Questions? Check the logs:**
+### Clear Stuck Print Jobs
 ```bash
-ssh pi@printstation.local
-sudo journalctl -u print-station -f
+cancel -a
 ```
 
-**Need help with new receipt design?** See `RECEIPT_IDIOTS_GUIDE.md`
+### Reset Print Station
+```bash
+sudo systemctl stop print-station
+rm -rf ~/print-station/temp/*
+rm -rf ~/print-station/data/*
+sudo systemctl start print-station
+```
 
-**Everything you need is in this guide. Follow it step by step and you'll succeed!** 🚀
+### Check Printer Status
+```bash
+lpstat -p hp-smarttank
+lpq -P hp-smarttank
+```
+
+---
+
+## ✅ FINAL CHECKLIST
+
+- [x] HP Smart Tank 790 connected to WiFi
+- [x] Printer added to CUPS as `hp-smarttank`
+- [x] Chromium installed at `/usr/bin/chromium`
+- [x] Print station script uploaded
+- [x] Dependencies installed (`npm install`)
+- [x] `.env` file configured with JWT token
+- [x] Local test print successful
+- [x] Backend keep-alive enabled
+- [x] Timeouts increased to 60 seconds
+- [ ] **Run test with backend connection**
+- [ ] **Enable systemd service**
+- [ ] **Place real order to verify**
+
+---
+
+## 📞 SUPPORT
+
+If something breaks:
+
+1. Check logs: `tail -f ~/print-station/logs/print-station.log`
+2. Check service: `sudo systemctl status print-station`
+3. Test printer: `echo "Test" | lpr -P hp-smarttank`
+4. Test backend: `curl https://arteva-maison-backend.onrender.com/api/products`
+5. Restart everything: `sudo systemctl restart print-station`
+
+---
+
+**Remember:** The backend hibernates on Render free tier. The script now handles this automatically with keep-alive pings every 5 minutes and 60-second timeouts. Just let it run!

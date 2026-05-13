@@ -49,6 +49,7 @@ let browser;
 let isConnected = false;
 let reconnectAttempt = 0;
 let fallbackInterval = null;
+let keepAliveInterval = null;
 let processedOrders = new Set();
 
 // Initialize browser
@@ -56,7 +57,7 @@ async function initBrowser() {
   try {
     browser = await puppeteer.launch({
       headless: true,
-      executablePath: '/usr/bin/chromium-browser',
+      executablePath: '/usr/bin/chromium',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -111,6 +112,18 @@ async function saveLastProcessedOrder(orderId) {
   }
 }
 
+// Keep-alive to prevent backend hibernation (Render free tier)
+async function keepBackendAwake() {
+  try {
+    await axios.get(`${CONFIG.apiUrl}/api/products`, {
+      timeout: 30000,
+    });
+    log('✓ Backend keep-alive ping successful');
+  } catch (error) {
+    log(`⚠ Backend keep-alive ping failed: ${error.message}`, 'warn');
+  }
+}
+
 // API calls
 async function fetchOrderById(orderId) {
   try {
@@ -118,7 +131,7 @@ async function fetchOrderById(orderId) {
       headers: {
         'Authorization': `Bearer ${CONFIG.apiKey}`,
       },
-      timeout: 10000,
+      timeout: 60000,
     });
 
     return response.data.order;
@@ -146,7 +159,7 @@ async function fetchNewOrders() {
       headers: {
         'Authorization': `Bearer ${CONFIG.apiKey}`,
       },
-      timeout: 10000,
+      timeout: 60000,
     });
 
     return response.data.orders || [];
@@ -182,7 +195,7 @@ async function fetchReceiptHTML(orderId) {
         headers: {
           'Authorization': `Bearer ${CONFIG.apiKey}`,
         },
-        timeout: 10000,
+        timeout: 60000,
       }
     );
 
@@ -685,7 +698,16 @@ async function mainLoop() {
     return;
   }
   
+  // Wake up backend before connecting
+  log('⏰ Waking up backend (Render free tier)...');
+  await keepBackendAwake();
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  
   connectSocket();
+  
+  // Start keep-alive interval (every 5 minutes)
+  keepAliveInterval = setInterval(keepBackendAwake, 5 * 60 * 1000);
+  log('✓ Backend keep-alive enabled (every 5 minutes)');
   
   log('✓ Print station running');
   log('✓ Listening for new orders...');
@@ -763,6 +785,9 @@ process.on('SIGINT', async () => {
   if (fallbackInterval) {
     clearInterval(fallbackInterval);
   }
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
   if (browser) {
     await browser.close();
   }
@@ -778,6 +803,9 @@ process.on('SIGTERM', async () => {
   }
   if (fallbackInterval) {
     clearInterval(fallbackInterval);
+  }
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
   }
   if (browser) {
     await browser.close();

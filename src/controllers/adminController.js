@@ -940,11 +940,12 @@ const verifyRevenueOTP = asyncHandler(async (req, res) => {
 
 // @desc    Generate receipt for order
 // @route   GET /api/admin/receipt/:orderId
-// @access  Private/Superuser
+// @access  Private/Admin (admin, owner, superuser)
 const generateReceipt = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'superuser') {
+    // Allow admin, owner, and superuser to generate receipts
+    if (!['admin', 'owner', 'superuser'].includes(req.user.role)) {
         res.status(403);
-        throw new Error('Access denied. Only superuser can generate receipts.');
+        throw new Error('Access denied. Admin privileges required to generate receipts.');
     }
 
     const order = await Order.findById(req.params.orderId)
@@ -956,10 +957,11 @@ const generateReceipt = asyncHandler(async (req, res) => {
         throw new Error('Order not found');
     }
 
-    if (order.paymentStatus !== 'paid') {
-        res.status(400);
-        throw new Error('Receipt can only be generated for paid orders');
-    }
+    // Allow receipts for all orders (not just paid ones) for testing and reprints
+    // if (order.paymentStatus !== 'paid') {
+    //     res.status(400);
+    //     throw new Error('Receipt can only be generated for paid orders');
+    // }
 
     // Use new pixel-perfect receipt template
     const { generateReceiptHTML } = require('../utils/receiptTemplate');
