@@ -8,11 +8,15 @@ const {
     getAllOrders,
     updateOrderStatus,
     cancelOrder,
-    checkCanCancel
+    checkCanCancel,
+    trackOrderPublic
 } = require('../controllers/orderController');
 const { protect, admin } = require('../middleware/auth');
 
-// All order routes require authentication
+// PUBLIC route — no auth needed (validated by tracking token)
+router.get('/track/:orderNumber/:token', trackOrderPublic);
+
+// All remaining order routes require authentication
 router.use(protect);
 
 router.post('/', createOrder);

@@ -393,6 +393,46 @@ const checkCanCancel = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Public order tracking (via shareable link with token)
+// @route   GET /api/orders/track/:orderNumber/:token
+// @access  Public (no auth required — validated by tracking token)
+const trackOrderPublic = asyncHandler(async (req, res) => {
+    const { orderNumber, token } = req.params;
+
+    const order = await Order.findOne({ orderNumber })
+        .populate('deliveryPilot', 'name');
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    // Validate tracking token
+    if (!order.trackingToken || order.trackingToken !== token) {
+        res.status(403);
+        throw new Error('Invalid tracking link');
+    }
+
+    // Return LIMITED tracking data only — no personal info
+    res.json({
+        success: true,
+        data: {
+            orderNumber: order.orderNumber,
+            orderStatus: order.orderStatus,
+            statusHistory: order.statusHistory,
+            createdAt: order.createdAt,
+            deliveredAt: order.deliveredAt,
+            deliveryLocation: order.deliveryLocation,
+            deliveryPilot: order.deliveryPilot ? { name: order.deliveryPilot.name } : null,
+            // Only include city-level address for map centering — no street/phone
+            deliveryArea: order.shippingAddress ? {
+                city: order.shippingAddress.city,
+                coordinates: order.shippingAddress.coordinates
+            } : null
+        }
+    });
+});
+
 module.exports = {
     createOrder,
     getMyOrders,
@@ -401,5 +441,6 @@ module.exports = {
     getAllOrders,
     updateOrderStatus,
     cancelOrder,
-    checkCanCancel
+    checkCanCancel,
+    trackOrderPublic
 };

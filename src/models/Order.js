@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const orderItemSchema = new mongoose.Schema({
     product: {
@@ -120,6 +121,10 @@ const orderSchema = new mongoose.Schema({
     stripeSessionId: String,
     notes: String,
     deliveryProof: String,  // Path to delivery proof photo
+    trackingToken: {
+        type: String,
+        index: true
+    },
     deliveredAt: Date,
     cancelledAt: Date,
     paidAt: Date
@@ -127,11 +132,16 @@ const orderSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Generate order number before saving
+// Generate order number and tracking token before saving
 orderSchema.pre('save', async function () {
     if (!this.orderNumber) {
         const count = await mongoose.model('Order').countDocuments();
         this.orderNumber = `ART-${String(count + 1).padStart(6, '0')}`;
+    }
+
+    // Generate secure tracking token for shareable tracking links
+    if (!this.trackingToken) {
+        this.trackingToken = crypto.randomBytes(16).toString('hex');
     }
 
     // Add initial status to history if new order

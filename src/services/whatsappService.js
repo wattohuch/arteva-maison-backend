@@ -21,6 +21,7 @@ class WhatsAppService {
         // Green API uses instance-specific URLs (e.g., https://7107.api.green-api.com)
         const apiHost = process.env.GREEN_API_URL || 'https://api.green-api.com';
         this.baseUrl = `${apiHost}/waInstance${this.instanceId}`;
+        this.frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
         
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
@@ -114,6 +115,25 @@ class WhatsAppService {
     }
 
     /**
+     * Build tracking URL with secure token
+     */
+    buildTrackingUrl(order) {
+        const token = order.trackingToken || '';
+        return `${this.frontendUrl}/track-order.html?order=${order.orderNumber}&token=${token}`;
+    }
+
+    /**
+     * Build receipt URL
+     */
+    buildReceiptUrl(order) {
+        return `${this.frontendUrl}/receipt.html?order=${order.orderNumber}`;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // OWNER NOTIFICATIONS (single language based on user pref)
+    // ═══════════════════════════════════════════════════
+
+    /**
      * Notify owner about new order
      */
     async notifyOwnerNewOrder(order, user) {
@@ -144,7 +164,7 @@ ${order.shippingAddress.phone ? `📞 ${order.shippingAddress.phone}` : ''}
 
 ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}` : ''}
 
-🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/admin/orders
+🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
         return this.sendMessage(this.ownerPhone, message);
@@ -178,7 +198,7 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
 📧 ${user.email}
 ` : ''}
 
-🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/admin/orders
+🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
         return this.sendMessage(this.ownerPhone, message);
@@ -218,7 +238,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 
 💰 *${isArabic ? 'المجموع' : 'Total'}:* ${order.total} ${order.currency}
 
-🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/admin/orders
+🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
         return this.sendMessage(this.ownerPhone, message);
@@ -240,70 +260,172 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 💳 *${isArabic ? 'طريقة الدفع' : 'Method'}:* ${order.paymentMethod.toUpperCase()}
 ✅ *${isArabic ? 'الحالة' : 'Status'}:* ${isArabic ? 'مدفوع' : 'PAID'}
 
-🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/admin/orders
+🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
         return this.sendMessage(this.ownerPhone, message);
     }
 
+    // ═══════════════════════════════════════════════════
+    // CUSTOMER NOTIFICATIONS (always bilingual EN + AR)
+    // ═══════════════════════════════════════════════════
+
     /**
-     * Notify customer about delivery with proof URL
+     * Notify customer about new order confirmation (BILINGUAL)
+     */
+    async notifyCustomerNewOrder(order, user) {
+        if (!user.phone && !order.shippingAddress?.phone) return;
+        const phone = user.phone || order.shippingAddress.phone;
+        const name = user.name || 'Valued Customer';
+
+        const trackUrl = this.buildTrackingUrl(order);
+        const receiptUrl = this.buildReceiptUrl(order);
+
+        const message = `✨ *ARTÉVA Maison* ✨
+
+Hello ${name},
+Thank you for your order! 🛍️
+Your order *${order.orderNumber}* has been confirmed.
+
+Total: *${order.total} ${order.currency}*
+We will notify you when your order ships.
+
+📄 View Receipt: ${receiptUrl}
+📍 Track Order: ${trackUrl}
+
+━━━━━━━━━━━━━━━
+
+مرحباً ${name}،
+شكراً لطلبك! 🛍️
+تم تأكيد طلبك رقم *${order.orderNumber}*.
+
+المجموع: *${order.total} ${order.currency}*
+سنقوم بإبلاغك عند شحن طلبك.
+
+📄 عرض الإيصال: ${receiptUrl}
+📍 تتبع الطلب: ${trackUrl}`;
+
+        return this.sendMessage(phone, message);
+    }
+
+    /**
+     * Notify customer about order status change (BILINGUAL)
+     * Sends for ALL meaningful statuses with appropriate links
+     */
+    async notifyCustomerOrderStatusChange(order, user, newStatus) {
+        if (!user.phone && !order.shippingAddress?.phone) return;
+        // Skip pending (handled by notifyCustomerNewOrder) and delivered (handled by notifyCustomerDelivery)
+        if (newStatus === 'pending' || newStatus === 'delivered') return;
+
+        const phone = user.phone || order.shippingAddress.phone;
+        const name = user.name || 'Valued Customer';
+        const trackUrl = this.buildTrackingUrl(order);
+        const receiptUrl = this.buildReceiptUrl(order);
+
+        const statusMessages = {
+            confirmed: {
+                en: '✅ Your order is confirmed and being prepared',
+                ar: '✅ تم تأكيد طلبك ويجري تجهيزه',
+                emoji: '✅'
+            },
+            packed: {
+                en: '📦 Your order is packed and ready for shipping',
+                ar: '📦 تم تغليف طلبك وجاهز للشحن',
+                emoji: '📦'
+            },
+            processing: {
+                en: '⚙️ Your order is being processed',
+                ar: '⚙️ طلبك قيد المعالجة',
+                emoji: '⚙️'
+            },
+            handed_over: {
+                en: '🚚 Your order has been handed over to our delivery team',
+                ar: '🚚 تم تسليم طلبك لفريق التوصيل',
+                emoji: '🚚'
+            },
+            out_for_delivery: {
+                en: '🛵 Your order is out for delivery now! Our driver is on the way',
+                ar: '🛵 طلبك في الطريق إليك الآن! السائق في الطريق',
+                emoji: '🛵'
+            },
+            cancelled: {
+                en: '❌ Your order has been cancelled',
+                ar: '❌ تم إلغاء طلبك',
+                emoji: '❌'
+            }
+        };
+
+        const status = statusMessages[newStatus];
+        if (!status) return;
+
+        // Build tracking/receipt links section
+        let linksEn = `📍 Track Order: ${trackUrl}`;
+        let linksAr = `📍 تتبع الطلب: ${trackUrl}`;
+
+        // Add receipt link for statuses where payment would be confirmed
+        if (['confirmed', 'packed', 'handed_over', 'out_for_delivery'].includes(newStatus)) {
+            linksEn += `\n📄 View Receipt: ${receiptUrl}`;
+            linksAr += `\n📄 عرض الإيصال: ${receiptUrl}`;
+        }
+
+        // Cancelled - no tracking, suggest contact
+        if (newStatus === 'cancelled') {
+            linksEn = `📞 Contact us: +965 5068 3207`;
+            linksAr = `📞 تواصل معنا: 3207 5068 965+`;
+        }
+
+        const message = `${status.emoji} *ARTÉVA Maison*
+
+Hello ${name},
+Update for your order *${order.orderNumber}* 📦
+
+${status.en}
+
+${linksEn}
+
+━━━━━━━━━━━━━━━
+
+مرحباً ${name}،
+تحديث بخصوص طلبك رقم *${order.orderNumber}* 📦
+
+${status.ar}
+
+${linksAr}`;
+
+        return this.sendMessage(phone, message);
+    }
+
+    /**
+     * Notify customer about delivery with proof URL (BILINGUAL)
      */
     async notifyCustomerDelivery(order, user, proofUrl) {
         if (!user.phone && !order.shippingAddress?.phone) return;
         
         const phone = user.phone || order.shippingAddress.phone;
-        const isArabic = user.language === 'ar';
+        const name = user.name || 'Valued Customer';
         const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
         const fullProofUrl = `${backendUrl}${proofUrl}`;
+        const receiptUrl = this.buildReceiptUrl(order);
 
-        const message = isArabic 
-            ? `مرحباً ${user.name || 'عميلنا العزيز'}،\nتم توصيل طلبك رقم *${order.orderNumber}* بنجاح ✅\n\nيمكنك رؤية صورة التوصيل هنا:\n${fullProofUrl}\n\nشكراً لتسوقك مع ARTÉVA Maison! ✨`
-            : `Hello ${user.name || 'Valued Customer'},\nYour order *${order.orderNumber}* has been successfully delivered ✅\n\nYou can view your delivery proof photo here:\n${fullProofUrl}\n\nThank you for shopping with ARTÉVA Maison! ✨`;
+        const message = `✅ *ARTÉVA Maison*
 
-        return this.sendMessage(phone, message);
-    }
+Hello ${name},
+Your order *${order.orderNumber}* has been successfully delivered! 🎉
 
-    /**
-     * Notify customer about new order confirmation
-     */
-    async notifyCustomerNewOrder(order, user) {
-        if (!user.phone && !order.shippingAddress?.phone) return;
-        const phone = user.phone || order.shippingAddress.phone;
-        const isArabic = user.language === 'ar';
-        
-        const message = isArabic
-            ? `مرحباً ${user.name || 'عميلنا العزيز'}،\nشكراً لتسوقك مع ARTÉVA Maison! ✨\nتم تأكيد طلبك رقم *${order.orderNumber}* بنجاح.\n\nالمجموع: ${order.total} ${order.currency}\nسنقوم بإبلاغك عندما يتم شحن طلبك.`
-            : `Hello ${user.name || 'Valued Customer'},\nThank you for shopping with ARTÉVA Maison! ✨\nYour order *${order.orderNumber}* has been confirmed.\n\nTotal: ${order.total} ${order.currency}\nWe will notify you when your order is shipped.`;
+📸 Delivery proof: ${fullProofUrl}
+📄 View Receipt: ${receiptUrl}
 
-        return this.sendMessage(phone, message);
-    }
+Thank you for shopping with ARTÉVA Maison! ✨
 
-    /**
-     * Notify customer about order status change
-     */
-    async notifyCustomerOrderStatusChange(order, user, newStatus) {
-        if (!user.phone && !order.shippingAddress?.phone) return;
-        if (newStatus === 'pending' || newStatus === 'delivered') return;
+━━━━━━━━━━━━━━━
 
-        const phone = user.phone || order.shippingAddress.phone;
-        const isArabic = user.language === 'ar';
+مرحباً ${name}،
+تم توصيل طلبك رقم *${order.orderNumber}* بنجاح! 🎉
 
-        const statusTranslations = {
-            confirmed: isArabic ? 'تم تأكيد طلبك ويجري تجهيزه' : 'Your order is confirmed and being prepared',
-            packed: isArabic ? 'تم تغليف طلبك وجاهز للشحن' : 'Your order is packed and ready for shipping',
-            processing: isArabic ? 'طلبك قيد المعالجة' : 'Your order is processing',
-            handed_over: isArabic ? 'تم تسليم طلبك لشركة الشحن' : 'Your order has been handed over to delivery',
-            out_for_delivery: isArabic ? 'طلبك في الطريق إليك الآن 🛵' : 'Your order is out for delivery now 🛵',
-            cancelled: isArabic ? 'تم إلغاء طلبك' : 'Your order has been cancelled'
-        };
+📸 صورة التوصيل: ${fullProofUrl}
+📄 عرض الإيصال: ${receiptUrl}
 
-        const statusMsg = statusTranslations[newStatus];
-        if (!statusMsg) return;
-
-        const message = isArabic 
-            ? `مرحباً ${user.name || 'عميلنا العزيز'}،\nتحديث بخصوص طلبك رقم *${order.orderNumber}* 📦\n\n${statusMsg}`
-            : `Hello ${user.name || 'Valued Customer'},\nUpdate for your order *${order.orderNumber}* 📦\n\n${statusMsg}`;
+شكراً لتسوقكم مع ARTÉVA Maison! ✨`;
 
         return this.sendMessage(phone, message);
     }

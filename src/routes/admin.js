@@ -165,4 +165,22 @@ router.get('/backups/:backupName/download', protect, admin, downloadBackup);
 router.post('/backups/create', protect, admin, createBackup);
 router.post('/backups/:backupName/restore', protect, admin, restoreBackup);
 
+// One-time migration: backfill tracking tokens for existing orders
+router.post('/migrate/tracking-tokens', protect, admin, async (req, res) => {
+    try {
+        const Order = require('../models/Order');
+        const crypto = require('crypto');
+        const orders = await Order.find({ $or: [{ trackingToken: { $exists: false } }, { trackingToken: null }, { trackingToken: '' }] });
+        let count = 0;
+        for (const order of orders) {
+            order.trackingToken = crypto.randomBytes(16).toString('hex');
+            await order.save();
+            count++;
+        }
+        res.json({ success: true, message: `Backfilled ${count} orders with tracking tokens` });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 module.exports = router;
