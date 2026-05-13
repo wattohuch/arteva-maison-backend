@@ -319,10 +319,10 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
     await order.save();
 
-    // Send WhatsApp notification to OWNER and CUSTOMER about status change
+    // Send WhatsApp notification to CUSTOMER about status change (owner only gets new orders)
     try {
         const whatsapp = require('../services/whatsappService');
-        await whatsapp.notifyOwnerOrderStatusChange(order, order.user, oldStatus, status);
+        // await whatsapp.notifyOwnerOrderStatusChange(order, order.user, oldStatus, status); // DISABLED: Owner only gets new order notifications
         await whatsapp.notifyCustomerOrderStatusChange(order, order.user, status);
     } catch (whatsappErr) {
         console.error('Failed to send WhatsApp notification:', whatsappErr);
@@ -961,12 +961,9 @@ const generateReceipt = asyncHandler(async (req, res) => {
         throw new Error('Receipt can only be generated for paid orders');
     }
 
-    const isArabic = order.user.language === 'ar';
-    const daysSinceOrder = Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000));
-    const canCancel = daysSinceOrder <= 14;
-
-    // Generate receipt HTML
-    const receiptHtml = generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder);
+    // Use new pixel-perfect receipt template
+    const { generateReceiptHTML } = require('../utils/receiptTemplate');
+    const receiptHtml = generateReceiptHTML(order);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(receiptHtml);
@@ -1009,191 +1006,6 @@ const setRevenuePassword = asyncHandler(async (req, res) => {
         message: 'Revenue password set successfully'
     });
 });
-
-// Helper function to generate receipt HTML (compact, single-page print)
-function generateReceiptHTML(order, isArabic, canCancel, daysSinceOrder) {
-    const dir = isArabic ? 'rtl' : 'ltr';
-    const align = isArabic ? 'right' : 'left';
-    const oppositeAlign = isArabic ? 'left' : 'right';
-    
-    const texts = isArabic ? {
-        title: 'إيصال الطلب',
-        orderNumber: 'رقم الطلب',
-        orderDate: 'تاريخ الطلب',
-        customer: 'العميل',
-        email: 'البريد الإلكتروني',
-        phone: 'الهاتف',
-        shippingAddress: 'عنوان الشحن',
-        items: 'المنتجات',
-        sku: 'رقم',
-        product: 'المنتج',
-        quantity: 'الكمية',
-        price: 'السعر',
-        total: 'المجموع',
-        subtotal: 'المجموع الفرعي',
-        shipping: 'التوصيل',
-        grandTotal: 'المبلغ المدفوع',
-        paymentMethod: 'طريقة الدفع',
-        paymentStatus: 'حالة الدفع',
-        paid: 'مدفوع',
-        refundPolicy: 'سياسة الإرجاع',
-        refundNotice: `إرجاع خلال ١٤ يومًا للمنتجات غير المفتوحة (${daysSinceOrder} يوم منذ الطلب)`,
-        refundExpired: `انتهت فترة الإرجاع (${daysSinceOrder} يومًا)`,
-        contactUs: 'واتساب: 96550683207+',
-        thankYou: 'شكراً لتسوقكم!'
-    } : {
-        title: 'Order Receipt',
-        orderNumber: 'Order Number',
-        orderDate: 'Order Date',
-        customer: 'Customer',
-        email: 'Email',
-        phone: 'Phone',
-        shippingAddress: 'Shipping Address',
-        items: 'Items',
-        sku: 'SKU',
-        product: 'Product',
-        quantity: 'Qty',
-        price: 'Price',
-        total: 'Total',
-        subtotal: 'Subtotal',
-        shipping: 'Delivery',
-        grandTotal: 'Total Paid',
-        paymentMethod: 'Payment',
-        paymentStatus: 'Status',
-        paid: 'Paid',
-        refundPolicy: 'Return Policy',
-        refundNotice: `14-day return on unopened items (${daysSinceOrder} days since order)`,
-        refundExpired: `Return period expired (${daysSinceOrder} days)`,
-        contactUs: 'WhatsApp: +96550683207',
-        thankYou: 'Thank you for shopping with us!'
-    };
-
-    const refundBgColor = canCancel ? '#d1fae5' : '#fef3c7';
-    const refundTextColor = canCancel ? '#065f46' : '#92400e';
-    const refundMessage = canCancel ? texts.refundNotice : texts.refundExpired;
-
-    const itemsHtml = order.items.map(item => {
-        const productName = isArabic && item.nameAr ? item.nameAr : item.name;
-        const sku = item.sku || '—';
-        return `
-            <tr>
-                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; font-size: 10px; font-family: monospace; color: #888;">${sku}</td>
-                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: ${align}; font-size: 12px;">${productName}</td>
-                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: center; font-size: 12px;">${item.quantity}</td>
-                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign}; font-size: 12px;">${item.price.toFixed(3)}</td>
-                <td style="padding: 5px 3px; border-bottom: 1px solid #e6e1d6; text-align: ${oppositeAlign}; font-weight: 600; font-size: 12px;">${(item.price * item.quantity).toFixed(3)} ${order.currency}</td>
-            </tr>
-        `;
-    }).join('');
-
-    const shippingAddress = order.shippingAddress;
-    const addressText = `${shippingAddress.street}, ${shippingAddress.city}${shippingAddress.state ? ', ' + shippingAddress.state : ''}, ${shippingAddress.country}`;
-
-    return `
-<!DOCTYPE html>
-<html lang="${isArabic ? 'ar' : 'en'}" dir="${dir}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${texts.title} - ${order.orderNumber}</title>
-    <style>
-        @page { size: A4; margin: 8mm 10mm; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: ${isArabic ? "'Tajawal', 'Arial', sans-serif" : "'Arial', sans-serif"}; 
-            background: #fff; 
-            padding: 12px;
-            direction: ${dir};
-            font-size: 12px;
-            color: #333;
-        }
-        .header { 
-            text-align: center; 
-            border-bottom: 2px solid #D4AF37;
-            padding-bottom: 8px;
-            margin-bottom: 10px;
-        }
-        .header h1 { font-size: 22px; letter-spacing: 2px; margin-bottom: 2px; }
-        .header p { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
-        .meta-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; }
-        .meta-item .label { font-size: 9px; color: #888; text-transform: uppercase; }
-        .meta-item .value { font-weight: 600; }
-        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-        .info-box { background: #fafaf8; border: 1px solid #e6e1d6; border-radius: 4px; padding: 8px; }
-        .info-box .label { font-size: 9px; color: #888; text-transform: uppercase; margin-bottom: 2px; }
-        .info-box p { font-size: 11px; line-height: 1.4; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-        th { background: #f5f2ec; padding: 4px 3px; text-align: ${align}; font-size: 10px; text-transform: uppercase; color: #888; }
-        .totals { width: 220px; margin-${isArabic ? 'right' : 'left'}: auto; }
-        .total-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
-        .total-row.grand { border-top: 2px solid #D4AF37; margin-top: 4px; padding-top: 4px; font-size: 14px; font-weight: bold; }
-        .refund { background: ${refundBgColor}; color: ${refundTextColor}; padding: 6px 8px; border-radius: 4px; margin: 8px 0; border-left: 3px solid ${refundTextColor}; font-size: 10px; text-align: ${align}; }
-        .footer { text-align: center; font-size: 9px; color: #888; border-top: 1px solid #e6e1d6; padding-top: 6px; margin-top: 8px; }
-        @media print {
-            body { padding: 0; }
-            .info-grid, .info-box, .refund { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>ARTÉVA MAISON</h1>
-        <p>${texts.title}</p>
-    </div>
-    
-    <div class="meta-row">
-        <div class="meta-item"><div class="label">${texts.orderNumber}</div><div class="value">${order.orderNumber}</div></div>
-        <div class="meta-item"><div class="label">${texts.orderDate}</div><div class="value">${new Date(order.createdAt).toLocaleDateString(isArabic ? 'ar-KW' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</div></div>
-        <div class="meta-item"><div class="label">${texts.paymentMethod}</div><div class="value">${order.paymentMethod}</div></div>
-        <div class="meta-item"><div class="label">${texts.paymentStatus}</div><div class="value" style="color: #16a34a; font-weight: 700;">✓ ${texts.paid}</div></div>
-    </div>
-
-    <div class="info-grid">
-        <div class="info-box">
-            <div class="label">${texts.customer}</div>
-            <p style="font-weight: 600;">${order.user.name}</p>
-            <p>${order.user.email}</p>
-            <p>${order.user.phone || ''}</p>
-        </div>
-        <div class="info-box">
-            <div class="label">${texts.shippingAddress}</div>
-            <p>${addressText}</p>
-        </div>
-    </div>
-
-    <table>
-        <thead>
-            <tr>
-                <th style="width: 12%;">${texts.sku}</th>
-                <th style="width: 38%;">${texts.product}</th>
-                <th style="text-align: center; width: 10%;">${texts.quantity}</th>
-                <th style="text-align: ${oppositeAlign}; width: 18%;">${texts.price}</th>
-                <th style="text-align: ${oppositeAlign}; width: 22%;">${texts.total}</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${itemsHtml}
-        </tbody>
-    </table>
-
-    <div class="totals">
-        <div class="total-row"><span>${texts.subtotal}</span><span>${order.subtotal.toFixed(3)} ${order.currency}</span></div>
-        <div class="total-row"><span>${texts.shipping}</span><span>${order.shippingCost.toFixed(3)} ${order.currency}</span></div>
-        <div class="total-row grand"><span>${texts.grandTotal}</span><span>${order.total.toFixed(3)} ${order.currency}</span></div>
-    </div>
-
-    <div class="refund">
-        <strong>${texts.refundPolicy}:</strong> ${refundMessage}
-    </div>
-
-    <div class="footer">
-        <p style="font-weight: 600; color: #D4AF37;">${texts.thankYou}</p>
-        <p>${texts.contactUs} • www.artevamaisonkw.com</p>
-    </div>
-</body>
-</html>
-    `.trim();
-}
 
 
 // @desc    Get detailed revenue analytics per product per price
