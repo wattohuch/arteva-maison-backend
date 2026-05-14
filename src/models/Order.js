@@ -127,7 +127,8 @@ const orderSchema = new mongoose.Schema({
     },
     deliveredAt: Date,
     cancelledAt: Date,
-    paidAt: Date
+    paidAt: Date,
+    printedAt: Date
 }, {
     timestamps: true
 });
@@ -179,5 +180,6 @@ orderSchema.index({ user: 1, createdAt: -1 });
 // orderNumber already has unique index from schema definition
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
+orderSchema.index({ printedAt: 1, paymentStatus: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

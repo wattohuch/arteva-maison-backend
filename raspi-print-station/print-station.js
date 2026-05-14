@@ -183,7 +183,7 @@ async function initBrowser() {
   browser = await puppeteer.launch({
     executablePath: chromePath || '/usr/bin/chromium-browser',
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--font-render-hinting=none', '--disable-lcd-text'],
   });
   log(`🌐 Chromium started (${chromePath || 'default'})`);
 }
@@ -294,11 +294,15 @@ async function htmlToPrint(html, filename, printerName) {
 
   const page = await browser.newPage();
   try {
-    await page.goto(`file://${htmlPath}`, { waitUntil: 'load', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 2000)); // Let QR/fonts render
+    // Ultra-high DPI viewport for crystal clear text
+    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 3 });
+    await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await new Promise(r => setTimeout(r, 4000)); // Extra time for fonts + QR to render at full quality
     await page.pdf({
       path: pdfPath, format: PAPER, printBackground: true,
-      margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' },
+      margin: { top: '6mm', right: '8mm', bottom: '6mm', left: '8mm' },
+      preferCSSPageSize: true,
+      scale: 1,
     });
   } finally {
     await page.close();
@@ -312,8 +316,9 @@ async function htmlToPrint(html, filename, printerName) {
     printerName = currentPrinter;
   }
 
-  // Send to printer with flush delay
-  const cmd = printerName ? `lpr -P "${printerName}" "${pdfPath}"` : `lpr "${pdfPath}"`;
+  // Send to printer with maximum quality CUPS options
+  const qualityOpts = '-o print-quality=5 -o Resolution=1200dpi -o ColorModel=RGB -o MediaType=Plain';
+  const cmd = printerName ? `lpr -P "${printerName}" ${qualityOpts} "${pdfPath}"` : `lpr ${qualityOpts} "${pdfPath}"`;
   await execAsync(cmd);
 
   // Printer buffer flush delay

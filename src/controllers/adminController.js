@@ -1391,6 +1391,60 @@ const getIPVisitorLog = asyncHandler(async (req, res) => {
 });
 
 
+// @desc    Get site settings (WhatsApp, Instagram)
+// @route   GET /api/admin/site-settings
+// @access  Public (no auth - needed for frontend pages)
+const getSiteSettings = asyncHandler(async (req, res) => {
+    const SiteSettings = require('../models/SiteSettings');
+    let settings = await SiteSettings.findOne({ key: 'main' });
+    if (!settings) {
+        // Create default settings if none exist
+        settings = await SiteSettings.create({ key: 'main' });
+    }
+    res.json({
+        success: true,
+        data: {
+            whatsappNumber: settings.whatsappNumber,
+            whatsappDisplay: settings.whatsappDisplay,
+            instagramHandle: settings.instagramHandle,
+            updatedAt: settings.updatedAt
+        }
+    });
+});
+
+// @desc    Update site settings (WhatsApp, Instagram)
+// @route   PUT /api/admin/site-settings
+// @access  Private/Admin
+const updateSiteSettings = asyncHandler(async (req, res) => {
+    const SiteSettings = require('../models/SiteSettings');
+    const { whatsappNumber, whatsappDisplay, instagramHandle } = req.body;
+
+    let settings = await SiteSettings.findOne({ key: 'main' });
+    if (!settings) {
+        settings = new SiteSettings({ key: 'main' });
+    }
+
+    if (whatsappNumber !== undefined) settings.whatsappNumber = whatsappNumber.replace(/[^0-9]/g, '');
+    if (whatsappDisplay !== undefined) settings.whatsappDisplay = whatsappDisplay;
+    if (instagramHandle !== undefined) settings.instagramHandle = instagramHandle.replace('@', '');
+    settings.updatedBy = req.user._id;
+
+    await settings.save();
+
+    console.log(`[SETTINGS] Site settings updated by ${req.user.email}: WA=${settings.whatsappNumber}, IG=${settings.instagramHandle}`);
+
+    res.json({
+        success: true,
+        data: {
+            whatsappNumber: settings.whatsappNumber,
+            whatsappDisplay: settings.whatsappDisplay,
+            instagramHandle: settings.instagramHandle,
+            updatedAt: settings.updatedAt
+        },
+        message: 'Site settings updated successfully'
+    });
+});
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -1417,5 +1471,7 @@ module.exports = {
     getRevenueAnalytics,
     updateProductDiscount,
     getCustomerOrderHistory,
-    updateOrderReceipt
+    updateOrderReceipt,
+    getSiteSettings,
+    updateSiteSettings
 };

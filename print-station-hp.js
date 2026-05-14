@@ -116,7 +116,7 @@ async function saveLastProcessedOrder(orderId) {
 async function keepBackendAwake() {
   try {
     await axios.get(`${CONFIG.apiUrl}/api/products`, {
-      timeout: 30000,
+      timeout: 90000, // 90 seconds - allow time for MongoDB to wake up
     });
     log('✓ Backend keep-alive ping successful');
   } catch (error) {
@@ -131,7 +131,7 @@ async function fetchOrderById(orderId) {
       headers: {
         'Authorization': `Bearer ${CONFIG.apiKey}`,
       },
-      timeout: 60000,
+      timeout: 90000, // 90 seconds - allow time for MongoDB to wake up
     });
 
     return response.data.order;
@@ -159,7 +159,7 @@ async function fetchNewOrders() {
       headers: {
         'Authorization': `Bearer ${CONFIG.apiKey}`,
       },
-      timeout: 60000,
+      timeout: 90000, // 90 seconds - allow time for MongoDB to wake up
     });
 
     return response.data.orders || [];
@@ -195,7 +195,7 @@ async function fetchReceiptHTML(orderId) {
         headers: {
           'Authorization': `Bearer ${CONFIG.apiKey}`,
         },
-        timeout: 60000,
+        timeout: 90000, // 90 seconds - allow time for MongoDB to wake up
       }
     );
 
@@ -230,7 +230,9 @@ async function printReceipt(order) {
     const pdfPath = path.join(CONFIG.tempDir, `receipt-${order.orderNumber}.pdf`);
     const page = await browser.newPage();
     
-    await page.goto(`file://${htmlPath}`, {
+    // Use absolute path for file:// URL
+    const absoluteHtmlPath = path.resolve(htmlPath);
+    await page.goto(`file://${absoluteHtmlPath}`, {
       waitUntil: 'networkidle0',
     });
     
@@ -358,7 +360,9 @@ async function printShippingLabel(order) {
     const pdfPath = path.join(CONFIG.tempDir, `label-${order.orderNumber}.pdf`);
     const page = await browser.newPage();
     
-    await page.goto(`file://${htmlPath}`, {
+    // Use absolute path for file:// URL
+    const absoluteHtmlPath = path.resolve(htmlPath);
+    await page.goto(`file://${absoluteHtmlPath}`, {
       waitUntil: 'networkidle0',
     });
     
@@ -488,7 +492,9 @@ async function printPackingSlip(order) {
     const pdfPath = path.join(CONFIG.tempDir, `packing-${order.orderNumber}.pdf`);
     const page = await browser.newPage();
     
-    await page.goto(`file://${htmlPath}`, {
+    // Use absolute path for file:// URL
+    const absoluteHtmlPath = path.resolve(htmlPath);
+    await page.goto(`file://${absoluteHtmlPath}`, {
       waitUntil: 'networkidle0',
     });
     

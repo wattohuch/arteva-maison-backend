@@ -13,11 +13,14 @@ echo ""
 # 1. System packages
 echo "📦 Installing system packages..."
 sudo apt update -qq
-sudo apt install -y chromium-browser cups hplip
+# Try chromium first (modern Pi OS), fall back to chromium-browser
+sudo apt install -y cups || true
+sudo apt install -y chromium 2>/dev/null || sudo apt install -y chromium-browser 2>/dev/null || echo "⚠ Chromium not found in apt — please install manually"
+sudo apt install -y printer-driver-hpcups 2>/dev/null || sudo apt install -y hplip 2>/dev/null || echo "⚠ HP drivers not found — install manually if using HP printer"
 
 # 2. Add user to lpadmin group
 echo "👤 Adding $USER to printer group..."
-sudo usermod -aG lpadmin $USER
+sudo usermod -aG lpadmin "$USER"
 
 # 3. Enable CUPS
 echo "🖨️  Enabling CUPS..."
@@ -72,9 +75,11 @@ sudo systemctl enable arteva-print.service
 
 # 8. Install watchdog cron job
 echo "🐕 Installing watchdog..."
-chmod +x "$SCRIPT_DIR/watchdog.sh"
-# Remove old cron entry if exists, then add new one
-(crontab -l 2>/dev/null | grep -v "watchdog.sh" ; echo "* * * * * $SCRIPT_DIR/watchdog.sh >> $SCRIPT_DIR/logs/watchdog.log 2>&1") | crontab -
+if [ -f "$SCRIPT_DIR/watchdog.sh" ]; then
+    chmod +x "$SCRIPT_DIR/watchdog.sh"
+    # Remove old cron entry if exists, then add new one
+    (crontab -l 2>/dev/null | grep -v "watchdog.sh" ; echo "* * * * * $SCRIPT_DIR/watchdog.sh >> $SCRIPT_DIR/logs/watchdog.log 2>&1") | crontab -
+fi
 
 echo ""
 echo "  ╔══════════════════════════════════════╗"

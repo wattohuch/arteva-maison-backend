@@ -26,10 +26,16 @@ const {
     getRevenueAnalytics,
     updateProductDiscount,
     getCustomerOrderHistory,
-    updateOrderReceipt
+    updateOrderReceipt,
+    getSiteSettings,
+    updateSiteSettings
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
+
+// Site Settings (public GET for frontend, protected PUT for admin)
+router.get('/site-settings', getSiteSettings);
+router.put('/site-settings', protect, admin, updateSiteSettings);
 
 // Stats
 router.get('/stats', protect, admin, getDashboardStats);

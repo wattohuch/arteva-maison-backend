@@ -11,7 +11,7 @@ const path = require('path');
 // QR Code generation (base64 data URL with high error correction)
 async function generateQR(text) {
   return await QRCode.toDataURL(text, {
-    width: 200, margin: 1, errorCorrectionLevel: 'H',
+    width: 400, margin: 1, errorCorrectionLevel: 'H',
     color: { dark: '#2c241b', light: '#ffffff' }
   });
 }
@@ -85,11 +85,12 @@ async function buildReceiptHTML(order) {
     --font-body: 'Montserrat', sans-serif;
     --font-arabic: 'Noto Sans Arabic', sans-serif;
   }
-  @page { size: A4; margin: 8mm 10mm; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:var(--font-body); color:var(--color-text); background:#fff; padding:20px; max-width:800px; margin:0 auto; font-size:13px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page { size: A4; margin: 6mm 8mm; }
+  * { margin:0; padding:0; box-sizing:border-box; page-break-inside:avoid; }
+  html { height:100%; }
+  body { font-family:var(--font-body); color:var(--color-text); background:#fff; padding:14px 18px; max-width:800px; margin:0 auto; font-size:12px; line-height:1.35; -webkit-print-color-adjust:exact; print-color-adjust:exact; text-rendering:geometricPrecision; -webkit-font-smoothing:subpixel-antialiased; font-smooth:always; }
 
-  .header { text-align:center; margin-bottom:16px; padding-bottom:10px; border-bottom:2px solid var(--color-gold); }
+  .header { text-align:center; margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid var(--color-gold); }
   .header-logo { max-width:220px; height:auto; margin-bottom:8px; }
   .logo-text { display:flex; flex-direction:column; align-items:center; line-height:1.1; margin-bottom:6px; }
   .logo-text .main { font-family:var(--font-display); font-size:28px; font-weight:700; letter-spacing:0.15em; color:var(--color-text); }
@@ -97,29 +98,29 @@ async function buildReceiptHTML(order) {
   .receipt-title { font-size:11px; text-transform:uppercase; letter-spacing:2px; color:var(--color-text-light); }
   .receipt-title-ar { font-family:var(--font-arabic); font-size:11px; color:var(--color-text-light); margin-top:2px; direction:rtl; }
 
-  .order-meta { display:flex; justify-content:space-between; margin-bottom:14px; }
-  .meta-group h3 { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--color-text-light); margin:0 0 3px 0; }
-  .meta-group .ar-label { font-family:var(--font-arabic); font-size:9px; color:#999; direction:rtl; display:block; }
-  .meta-group p { margin:0; font-weight:500; font-size:13px; }
+  .order-meta { display:flex; justify-content:space-between; margin-bottom:10px; }
+  .meta-group h3 { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:var(--color-text-light); margin:0 0 2px 0; }
+  .meta-group .ar-label { font-family:var(--font-arabic); font-size:8px; color:#999; direction:rtl; display:block; }
+  .meta-group p { margin:0; font-weight:500; font-size:12px; }
 
-  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; padding:12px; background:#fafaf8; border-radius:6px; border:1px solid var(--color-border); }
-  .info-grid .meta-group p { font-size:12px; }
+  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; padding:8px 10px; background:#fafaf8; border-radius:6px; border:1px solid var(--color-border); }
+  .info-grid .meta-group p { font-size:11px; }
 
-  .items-table { width:100%; border-collapse:collapse; margin-bottom:14px; }
-  .items-table th { text-align:left; padding:6px 4px; border-bottom:1px solid var(--color-border); font-family:var(--font-display); font-size:13px; }
-  .items-table td { padding:8px 4px; border-bottom:1px solid var(--color-border); font-size:12px; }
-  .sku-col { color:var(--color-text-light); font-size:11px; font-family:monospace; }
+  .items-table { width:100%; border-collapse:collapse; margin-bottom:10px; }
+  .items-table th { text-align:left; padding:4px 3px; border-bottom:1px solid var(--color-border); font-family:var(--font-display); font-size:11px; }
+  .items-table td { padding:5px 3px; border-bottom:1px solid var(--color-border); font-size:11px; line-height:1.3; }
+  .sku-col { color:var(--color-text-light); font-size:10px; font-family:monospace; }
 
-  .total-section { width:260px; margin-left:auto; }
-  .total-row { display:flex; justify-content:space-between; padding:3px 0; font-size:12px; }
-  .total-row.final { border-top:2px solid var(--color-border); margin-top:6px; padding-top:6px; font-weight:700; font-size:15px; }
+  .total-section { width:240px; margin-left:auto; }
+  .total-row { display:flex; justify-content:space-between; padding:2px 0; font-size:11px; }
+  .total-row.final { border-top:2px solid var(--color-border); margin-top:4px; padding-top:4px; font-weight:700; font-size:14px; }
 
   .status-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; text-transform:capitalize; }
 
-  .qr-section { display:flex; align-items:center; justify-content:center; gap:30px; margin-top:14px; padding:14px; border:1.5px solid var(--color-gold); border-radius:8px; background:#fafaf8; }
+  .qr-section { display:flex; align-items:center; justify-content:center; gap:24px; margin-top:10px; padding:10px; border:1.5px solid var(--color-gold); border-radius:8px; background:#fafaf8; }
   .qr-box { text-align:center; }
-  .qr-code-wrapper { position:relative; width:100px; height:100px; margin:0 auto; }
-  .qr-code-wrapper img { width:100px; height:100px; border:2px solid var(--color-gold); border-radius:6px; }
+  .qr-code-wrapper { position:relative; width:80px; height:80px; margin:0 auto; }
+  .qr-code-wrapper img { width:80px; height:80px; border:2px solid var(--color-gold); border-radius:6px; image-rendering:pixelated; }
   .qr-logo-overlay { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:30px; height:30px; background:#fff; border-radius:4px; display:flex; flex-direction:column; align-items:center; justify-content:center; border:1px solid var(--color-gold); line-height:1; padding:2px; }
   .qr-logo-overlay .qo-main { font-family:var(--font-display); font-size:9px; font-weight:700; color:var(--color-text); letter-spacing:0.5px; }
   .qr-logo-overlay .qo-sub { font-family:var(--font-display); font-size:5px; font-weight:400; color:var(--color-gold); letter-spacing:1px; }
@@ -128,14 +129,23 @@ async function buildReceiptHTML(order) {
   .qr-label { font-size:11px; font-weight:600; color:var(--color-text); margin-top:6px; }
   .qr-label-ar { font-family:var(--font-arabic); font-size:10px; color:var(--color-text-light); direction:rtl; }
 
-  .return-policy { margin-top:14px; padding:10px 12px; background:#fffbeb; border:1px solid #f59e0b33; border-radius:6px; border-left:3px solid var(--color-gold); }
-  .return-policy h4 { font-family:var(--font-display); font-size:14px; margin:0 0 4px; color:var(--color-text); }
-  .return-policy .ar-title { font-family:var(--font-arabic); font-size:12px; direction:rtl; margin:0 0 6px; color:var(--color-text); font-weight:600; }
-  .return-policy p { margin:2px 0; font-size:11px; color:var(--color-text-light); line-height:1.5; }
+  .return-policy { margin-top:10px; padding:8px 10px; background:#fffbeb; border:1px solid #f59e0b33; border-radius:6px; border-left:3px solid var(--color-gold); }
+  .return-policy h4 { font-family:var(--font-display); font-size:12px; margin:0 0 3px; color:var(--color-text); }
+  .return-policy .ar-title { font-family:var(--font-arabic); font-size:11px; direction:rtl; margin:0 0 4px; color:var(--color-text); font-weight:600; }
+  .return-policy p { margin:1px 0; font-size:10px; color:var(--color-text-light); line-height:1.4; }
   .return-policy .ar-text { font-family:var(--font-arabic); direction:rtl; text-align:right; }
 
-  .footer { margin-top:14px; text-align:center; font-size:11px; color:var(--color-text-light); border-top:1px solid var(--color-border); padding-top:10px; }
-  .footer .ar-footer { font-family:var(--font-arabic); direction:rtl; margin-top:4px; }
+  .footer { margin-top:10px; text-align:center; font-size:10px; color:var(--color-text-light); border-top:1px solid var(--color-border); padding-top:8px; }
+  .footer .ar-footer { font-family:var(--font-arabic); direction:rtl; margin-top:3px; }
+
+  /* Print-specific overrides */
+  @media print {
+    html, body { height:auto; overflow:hidden; }
+    body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    * { page-break-inside:avoid !important; text-rendering:geometricPrecision !important; }
+    .qr-code-wrapper img { image-rendering:pixelated; -webkit-image-rendering:crisp-edges; }
+    img { image-rendering:-webkit-optimize-contrast; }
+  }
 </style>
 </head>
 <body>
@@ -226,8 +236,8 @@ async function buildReceiptHTML(order) {
   <div class="ar-title">سياسة الإرجاع والاستبدال</div>
   <p>Products may be returned or exchanged within <strong>14 days</strong> of delivery, provided they are <strong>unopened</strong> and in their <strong>original condition and packaging</strong>.</p>
   <p class="ar-text">يمكن إرجاع أو استبدال المنتجات خلال <strong>١٤ يومًا</strong> من التسليم، بشرط أن تكون <strong>غير مفتوحة</strong> وفي <strong>حالتها وتغليفها الأصلي</strong>.</p>
-  <p style="margin-top:4px">Contact us via WhatsApp: <strong>+965 5068 3207</strong></p>
-  <p class="ar-text">تواصلوا معنا عبر واتساب: <strong>+965 5068 3207</strong></p>
+  <p style="margin-top:4px">For returns, email us at: <strong>artevamaison@gmail.com</strong></p>
+  <p class="ar-text">للإرجاع، تواصلوا معنا عبر البريد الإلكتروني: <strong>artevamaison@gmail.com</strong></p>
 </div>
 
 <div class="footer">
@@ -235,6 +245,23 @@ async function buildReceiptHTML(order) {
   <p class="ar-footer">شكراً لتسوقكم مع أرتيفا ميزون</p>
   <p>artevamaison@gmail.com • www.artevamaisonkw.com</p>
 </div>
+
+</div>
+
+<script>
+// Dynamic single-page scaler: shrinks content if it overflows A4 height
+(function() {
+  var A4_HEIGHT_PX = 1045; // ~277mm printable at 96dpi minus margins
+  var body = document.body;
+  var h = body.scrollHeight;
+  if (h > A4_HEIGHT_PX) {
+    var scale = Math.max(0.72, A4_HEIGHT_PX / h);
+    body.style.transform = 'scale(' + scale + ')';
+    body.style.transformOrigin = 'top left';
+    body.style.width = (100 / scale) + '%';
+  }
+})();
+</script>
 
 </body></html>`;
 }
