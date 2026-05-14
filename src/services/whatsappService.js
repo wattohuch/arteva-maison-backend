@@ -17,8 +17,10 @@ class WhatsAppService {
     constructor() {
         this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
         this.apiToken = process.env.GREEN_API_TOKEN || '';
-        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96565611566',
-            process.env.WHATSAPP_OWNER_PHONE || '96551008567';
+        
+        const envPhones = process.env.WHATSAPP_OWNER_PHONE ? process.env.WHATSAPP_OWNER_PHONE.split(',').map(p => p.trim()) : [];
+        this.ownerPhones = envPhones.length > 0 ? envPhones : ['96565611566', '96551008567'];
+        
         // Green API uses instance-specific URLs (e.g., https://7107.api.green-api.com)
         const apiHost = process.env.GREEN_API_URL || 'https://api.green-api.com';
         this.baseUrl = `${apiHost}/waInstance${this.instanceId}`;
@@ -30,7 +32,7 @@ class WhatsAppService {
         if (this.isConnected) {
             console.log('✅ WhatsApp Service (Green API) initialized');
             console.log(`   Instance: ${this.instanceId}`);
-            console.log(`   Owner: ${this.ownerPhone}`);
+            console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
             this.checkStatus();
         } else {
             console.log('⚠️ WhatsApp Service: GREEN_API_INSTANCE_ID or GREEN_API_TOKEN not set');
@@ -168,7 +170,7 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return this.sendMessage(this.ownerPhone, message);
+        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     /**
@@ -202,7 +204,7 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return this.sendMessage(this.ownerPhone, message);
+        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     /**
@@ -242,7 +244,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return this.sendMessage(this.ownerPhone, message);
+        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     /**
@@ -264,7 +266,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return this.sendMessage(this.ownerPhone, message);
+        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     // ═══════════════════════════════════════════════════
