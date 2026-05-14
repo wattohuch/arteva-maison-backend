@@ -300,7 +300,7 @@ async function htmlToPrint(html, filename, printerName) {
     await new Promise(r => setTimeout(r, 4000)); // Extra time for fonts + QR to render at full quality
     await page.pdf({
       path: pdfPath, format: PAPER, printBackground: true,
-      margin: { top: '6mm', right: '8mm', bottom: '6mm', left: '8mm' },
+      margin: { top: '8mm', right: '10mm', bottom: '8mm', left: '10mm' },
       preferCSSPageSize: true,
       scale: 1,
     });

@@ -11,7 +11,10 @@ const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
 async function run() {
     console.log('Connecting to MongoDB...');
-    await mongoose.connect(MONGO_URI);
+    await mongoose.connect(MONGO_URI, {
+        serverSelectionTimeoutMS: 30000,
+        family: 4  // Force IPv4 — fixes DNS SRV resolution issues
+    });
     console.log('Connected.');
 
     const Order = require('../src/models/Order');
