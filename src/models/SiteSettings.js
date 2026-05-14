@@ -21,6 +21,10 @@ const siteSettingsSchema = new mongoose.Schema({
         default: 'arteva.maison',
         trim: true
     },
+    whatsappOwnerPhones: {
+        type: [String],
+        default: ['96565611566', '96551008567']
+    },
     updatedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'

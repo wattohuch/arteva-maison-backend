@@ -13,6 +13,8 @@
  *   5. Set env vars: GREEN_API_INSTANCE_ID and GREEN_API_TOKEN
  */
 
+const SiteSettings = require('../models/SiteSettings');
+
 class WhatsAppService {
     constructor() {
         this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
@@ -24,7 +26,12 @@ class WhatsAppService {
         // Green API uses instance-specific URLs (e.g., https://7107.api.green-api.com)
         const apiHost = process.env.GREEN_API_URL || 'https://api.green-api.com';
         this.baseUrl = `${apiHost}/waInstance${this.instanceId}`;
-        this.frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
+        
+        let frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
+        if (frontendUrl.includes('onrender.com') || frontendUrl.includes('backend')) {
+            frontendUrl = 'https://www.artevamaisonkw.com';
+        }
+        this.frontendUrl = frontendUrl;
 
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
@@ -137,6 +144,21 @@ class WhatsAppService {
     // ═══════════════════════════════════════════════════
 
     /**
+     * Get dynamic owner phones from DB or fallback to env/defaults
+     */
+    async getOwnerPhones() {
+        try {
+            const settings = await SiteSettings.findOne({ key: 'main' });
+            if (settings && settings.whatsappOwnerPhones && settings.whatsappOwnerPhones.length > 0) {
+                return settings.whatsappOwnerPhones;
+            }
+        } catch (error) {
+            console.error('Error fetching owner phones from settings:', error.message);
+        }
+        return this.ownerPhones;
+    }
+
+    /**
      * Notify owner about new order
      */
     async notifyOwnerNewOrder(order, user) {
@@ -170,7 +192,8 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const ownerPhones = await this.getOwnerPhones();
+        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     /**
@@ -204,7 +227,8 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const ownerPhones = await this.getOwnerPhones();
+        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     /**
@@ -244,7 +268,8 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const ownerPhones = await this.getOwnerPhones();
+        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     /**
@@ -266,7 +291,8 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
         `.trim();
 
-        return Promise.all(this.ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const ownerPhones = await this.getOwnerPhones();
+        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
     }
 
     // ═══════════════════════════════════════════════════

@@ -1407,6 +1407,7 @@ const getSiteSettings = asyncHandler(async (req, res) => {
             whatsappNumber: settings.whatsappNumber,
             whatsappDisplay: settings.whatsappDisplay,
             instagramHandle: settings.instagramHandle,
+            whatsappOwnerPhones: settings.whatsappOwnerPhones,
             updatedAt: settings.updatedAt
         }
     });
@@ -1417,7 +1418,7 @@ const getSiteSettings = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const updateSiteSettings = asyncHandler(async (req, res) => {
     const SiteSettings = require('../models/SiteSettings');
-    const { whatsappNumber, whatsappDisplay, instagramHandle } = req.body;
+    const { whatsappNumber, whatsappDisplay, instagramHandle, whatsappOwnerPhones } = req.body;
 
     let settings = await SiteSettings.findOne({ key: 'main' });
     if (!settings) {
@@ -1427,6 +1428,13 @@ const updateSiteSettings = asyncHandler(async (req, res) => {
     if (whatsappNumber !== undefined) settings.whatsappNumber = whatsappNumber.replace(/[^0-9]/g, '');
     if (whatsappDisplay !== undefined) settings.whatsappDisplay = whatsappDisplay;
     if (instagramHandle !== undefined) settings.instagramHandle = instagramHandle.replace('@', '');
+    if (whatsappOwnerPhones !== undefined) {
+        if (Array.isArray(whatsappOwnerPhones)) {
+            settings.whatsappOwnerPhones = whatsappOwnerPhones;
+        } else if (typeof whatsappOwnerPhones === 'string') {
+            settings.whatsappOwnerPhones = whatsappOwnerPhones.split(',').map(p => p.trim()).filter(Boolean);
+        }
+    }
     settings.updatedBy = req.user._id;
 
     await settings.save();
@@ -1439,6 +1447,7 @@ const updateSiteSettings = asyncHandler(async (req, res) => {
             whatsappNumber: settings.whatsappNumber,
             whatsappDisplay: settings.whatsappDisplay,
             instagramHandle: settings.instagramHandle,
+            whatsappOwnerPhones: settings.whatsappOwnerPhones,
             updatedAt: settings.updatedAt
         },
         message: 'Site settings updated successfully'
