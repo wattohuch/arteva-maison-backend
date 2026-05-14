@@ -1,0 +1,24 @@
+{
+  "name": "arteva-print-station",
+  "version": "3.0.0",
+  "description": "Arteva Maison – Production-Grade Raspberry Pi Print Station",
+  "main": "print-station.js",
+  "scripts": {
+    "start": "node print-station.js",
+    "test-print": "TEST_MODE=true node print-station.js",
+    "check-printer": "node -e \"const {execSync}=require('child_process'); console.log('CUPS printers:'); console.log(execSync('lpstat -p -d').toString());\"",
+    "check-health": "node -e \"const http=require('http'); http.get('http://localhost:3100/health', r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>console.log(JSON.parse(d)))}).on('error',e=>console.log('Not running:',e.message))\"",
+    "retry-failed": "node -e \"const fs=require('fs'),p=require('path'),d=p.join(__dirname,'queue','failed');if(fs.existsSync(d)){const f=fs.readdirSync(d);f.forEach(x=>{fs.renameSync(p.join(d,x),p.join(__dirname,'queue','pending',x));console.log('Requeued:',x)});console.log(f.length+' jobs requeued')}else{console.log('No failed jobs')}\""
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "puppeteer-core": "^22.0.0",
+    "qrcode": "^1.5.4",
+    "winston": "^3.11.0",
+    "winston-daily-rotate-file": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
