@@ -193,7 +193,12 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
         `.trim();
 
         const ownerPhones = await this.getOwnerPhones();
-        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const results = [];
+        for (const phone of ownerPhones) {
+            results.push(await this.sendMessage(phone, message));
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return results;
     }
 
     /**
@@ -228,7 +233,12 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
         `.trim();
 
         const ownerPhones = await this.getOwnerPhones();
-        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const results = [];
+        for (const phone of ownerPhones) {
+            results.push(await this.sendMessage(phone, message));
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return results;
     }
 
     /**
@@ -269,7 +279,12 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         `.trim();
 
         const ownerPhones = await this.getOwnerPhones();
-        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const results = [];
+        for (const phone of ownerPhones) {
+            results.push(await this.sendMessage(phone, message));
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return results;
     }
 
     /**
@@ -292,7 +307,12 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         `.trim();
 
         const ownerPhones = await this.getOwnerPhones();
-        return Promise.all(ownerPhones.map(phone => this.sendMessage(phone, message)));
+        const results = [];
+        for (const phone of ownerPhones) {
+            results.push(await this.sendMessage(phone, message));
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        return results;
     }
 
     // ═══════════════════════════════════════════════════

@@ -68,6 +68,35 @@ const createOrder = asyncHandler(async (req, res) => {
     cart.items = [];
     await cart.save();
 
+    // Auto-save shipping address if user is logged in
+    try {
+        if (req.user && shippingAddress) {
+            // Re-fetch user to modify
+            const User = require('../models/User');
+            const userDoc = await User.findById(req.user._id);
+            if (userDoc) {
+                const existingAddress = userDoc.addresses.find(a => 
+                    a.street.toLowerCase() === shippingAddress.street.toLowerCase() &&
+                    a.city.toLowerCase() === shippingAddress.city.toLowerCase()
+                );
+                if (!existingAddress) {
+                    userDoc.addresses.push({
+                        street: shippingAddress.street,
+                        city: shippingAddress.city,
+                        state: shippingAddress.state || '',
+                        country: shippingAddress.country || 'Kuwait',
+                        zipCode: shippingAddress.zipCode || '',
+                        phone: shippingAddress.phone || userDoc.phone || '',
+                        label: userDoc.addresses.length === 0 ? 'Home' : `Address ${userDoc.addresses.length + 1}`
+                    });
+                    await userDoc.save();
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error saving user address:', e.message);
+    }
+
     // Notify admin dashboard in real-time
     try {
         emitNewOrder(order);
