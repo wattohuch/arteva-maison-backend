@@ -17,15 +17,16 @@ class WhatsAppService {
     constructor() {
         this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
         this.apiToken = process.env.GREEN_API_TOKEN || '';
-        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96550683207';
+        this.ownerPhone = process.env.WHATSAPP_OWNER_PHONE || '96565611566',
+            process.env.WHATSAPP_OWNER_PHONE || '96551008567';
         // Green API uses instance-specific URLs (e.g., https://7107.api.green-api.com)
         const apiHost = process.env.GREEN_API_URL || 'https://api.green-api.com';
         this.baseUrl = `${apiHost}/waInstance${this.instanceId}`;
         this.frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
-        
+
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
-        
+
         if (this.isConnected) {
             console.log('✅ WhatsApp Service (Green API) initialized');
             console.log(`   Instance: ${this.instanceId}`);
@@ -92,7 +93,7 @@ class WhatsAppService {
             }
 
             const chatId = `${phone}@c.us`;
-            
+
             const res = await fetch(`${this.baseUrl}/sendMessage/${this.apiToken}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -100,7 +101,7 @@ class WhatsAppService {
             });
 
             const data = await res.json();
-            
+
             if (data.idMessage) {
                 console.log(`📱 WhatsApp sent to ${phone} ✅ (${data.idMessage})`);
                 return { success: true, messageId: data.idMessage };
@@ -138,7 +139,7 @@ class WhatsAppService {
      */
     async notifyOwnerNewOrder(order, user) {
         const isArabic = user.language === 'ar';
-        
+
         const message = `
 🔔 *${isArabic ? 'طلب جديد' : 'NEW ORDER RECEIVED'}*
 
@@ -153,9 +154,9 @@ class WhatsAppService {
 
 *${isArabic ? `المنتجات (${order.items.length})` : `Items (${order.items.length})`}:*
 ${order.items.map(item => {
-    const productName = (isArabic && item.nameAr) ? item.nameAr : item.name;
-    return `• ${productName} x${item.quantity} - ${item.price} ${order.currency}`;
-}).join('\n')}
+            const productName = (isArabic && item.nameAr) ? item.nameAr : item.name;
+            return `• ${productName} x${item.quantity} - ${item.price} ${order.currency}`;
+        }).join('\n')}
 
 📍 *${isArabic ? 'عنوان التوصيل' : 'Delivery Address'}:*
 ${order.shippingAddress.street}
@@ -176,7 +177,7 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
     async notifyOwnerOrderCancellation(order, user, reason) {
         const wasPaid = order.paymentStatus === 'paid';
         const isArabic = user.language === 'ar';
-        
+
         const message = `
 ❌ *${isArabic ? 'تم إلغاء الطلب' : 'ORDER CANCELLED'}*
 
@@ -209,7 +210,7 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
      */
     async notifyOwnerOrderStatusChange(order, user, oldStatus, newStatus) {
         const isArabic = false; // Always English for owner
-        
+
         const statusEmoji = {
             pending: '⏳', confirmed: '✅', packed: '📦',
             processing: '⚙️', handed_over: '🚚',
@@ -249,7 +250,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
      */
     async notifyOwnerPaymentReceived(order, user) {
         const isArabic = false; // Always English for owner
-        
+
         const message = `
 💰 *${isArabic ? 'تم استلام الدفع' : 'PAYMENT RECEIVED'}*
 
@@ -400,7 +401,7 @@ ${linksAr}`;
      */
     async notifyCustomerDelivery(order, user, proofUrl) {
         if (!user.phone && !order.shippingAddress?.phone) return;
-        
+
         const phone = user.phone || order.shippingAddress.phone;
         const name = user.name || 'Valued Customer';
         const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';

@@ -66,21 +66,6 @@ const logger = winston.createLogger({
   ),
   transports: [
     new winston.transports.Console(),
-    new winston.transports.DailyRotateFile({
-      dirname: LOGS_DIR,
-      filename: 'print-station-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      maxSize: '10m',
-      maxFiles: '30d',
-    }),
-    new winston.transports.DailyRotateFile({
-      dirname: LOGS_DIR,
-      filename: 'error-%DATE%.log',
-      datePattern: 'YYYY-MM-DD',
-      level: 'error',
-      maxSize: '10m',
-      maxFiles: '30d',
-    }),
   ],
 });
 
@@ -316,8 +301,8 @@ async function htmlToPrint(html, filename, printerName) {
     printerName = currentPrinter;
   }
 
-  // Send to printer with maximum quality CUPS options
-  const qualityOpts = '-o print-quality=5 -o Resolution=1200dpi -o ColorModel=RGB -o MediaType=Plain';
+  // Send to printer — options match lpoptions -l output exactly
+  const qualityOpts = '-o cupsPrintQuality=Best -o ColorModel=Color -o PageSize=A4';
   const cmd = printerName ? `lpr -P "${printerName}" ${qualityOpts} "${pdfPath}"` : `lpr ${qualityOpts} "${pdfPath}"`;
   await execAsync(cmd);
 
