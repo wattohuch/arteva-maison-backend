@@ -50,6 +50,7 @@ const orderSchema = new mongoose.Schema({
         country: { type: String, default: 'Kuwait' },
         zipCode: String,
         phone: String,
+        label: { type: String, default: 'Home' },
         // Delivery coordinates for map display
         coordinates: {
             lat: Number,

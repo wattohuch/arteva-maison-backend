@@ -39,11 +39,20 @@ class WhatsAppService {
         if (this.isConnected) {
             console.log('✅ WhatsApp Service (Green API) initialized');
             console.log(`   Instance: ${this.instanceId}`);
+            console.log(`   API URL: ${apiHost}`);
             console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
             this.checkStatus();
         } else {
-            console.log('⚠️ WhatsApp Service: GREEN_API_INSTANCE_ID or GREEN_API_TOKEN not set');
-            console.log('   Sign up at https://green-api.com (free tier)');
+            console.error('╔══════════════════════════════════════════════════════╗');
+            console.error('║  ❌ WHATSAPP NOTIFICATIONS ARE DISABLED!             ║');
+            console.error('║                                                      ║');
+            console.error('║  Missing env vars:                                   ║');
+            if (!this.instanceId) console.error('║    → GREEN_API_INSTANCE_ID                           ║');
+            if (!this.apiToken)   console.error('║    → GREEN_API_TOKEN                                 ║');
+            console.error('║                                                      ║');
+            console.error('║  Setup: https://green-api.com (free tier)            ║');
+            console.error('║  1. Create instance → 2. Scan QR → 3. Set env vars  ║');
+            console.error('╚══════════════════════════════════════════════════════╝');
         }
     }
 

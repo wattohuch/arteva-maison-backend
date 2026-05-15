@@ -121,16 +121,22 @@ router.put('/printer/url', protect, admin, async (req, res) => {
 router.get('/whatsapp-status', protect, admin, async (req, res) => {
     try {
         const whatsapp = require('../services/whatsappService');
+        const ownerPhones = await whatsapp.getOwnerPhones();
         const connected = await whatsapp.checkStatus();
         res.json({
             success: true,
             connected,
             provider: 'Green API',
             instanceId: process.env.GREEN_API_INSTANCE_ID || 'NOT SET',
-            ownerPhone: process.env.WHATSAPP_OWNER_PHONE || 'NOT SET',
-            message: connected
-                ? '✅ WhatsApp (Green API) is connected and ready'
-                : '❌ Not connected. Go to https://console.green-api.com and scan QR code'
+            apiUrl: process.env.GREEN_API_URL || 'NOT SET (using default)',
+            tokenSet: !!(process.env.GREEN_API_TOKEN),
+            ownerPhones: ownerPhones,
+            ownerPhoneCount: ownerPhones.length,
+            message: !process.env.GREEN_API_INSTANCE_ID || !process.env.GREEN_API_TOKEN
+                ? '❌ GREEN_API_INSTANCE_ID or GREEN_API_TOKEN not set in env vars. WhatsApp is DISABLED.'
+                : connected
+                    ? `✅ WhatsApp ready — will notify ${ownerPhones.length} owner(s): ${ownerPhones.join(', ')}`
+                    : '❌ Not connected. Go to https://console.green-api.com and scan QR code'
         });
     } catch (e) {
         res.json({ success: false, connected: false, message: e.message });

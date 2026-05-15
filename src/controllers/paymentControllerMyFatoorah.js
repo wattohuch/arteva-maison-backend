@@ -297,13 +297,55 @@ const verifyPayment = asyncHandler(async (req, res) => {
             // Don't fail the payment verification if email fails
         }
 
-        // Send WhatsApp notifications (customer only - owner gets notified via notifyOwnerNewOrder)
+        // Send WhatsApp notifications to BOTH owners + customer
         try {
             const whatsapp = require('../services/whatsappService');
-            // await whatsapp.notifyOwnerPaymentReceived(order, order.user); // DISABLED: Owner only gets new order notifications
+            await whatsapp.notifyOwnerNewOrder(order, order.user);
             await whatsapp.notifyCustomerNewOrder(order, order.user);
         } catch (whatsappErr) {
             console.error('WhatsApp notification error:', whatsappErr);
+        }
+
+        // Notify admin dashboard in real-time
+        try {
+            const { emitNewOrder } = require('../socketHandler');
+            emitNewOrder(order);
+        } catch (socketErr) {
+            console.error('Socket notification error:', socketErr.message);
+        }
+
+        // Auto-save shipping address with coordinates
+        try {
+            const User = require('../models/User');
+            const userDoc = await User.findById(order.user._id || order.user);
+            if (userDoc && order.shippingAddress) {
+                const existingAddress = userDoc.addresses.find(a =>
+                    a.street && order.shippingAddress.street &&
+                    a.street.toLowerCase() === order.shippingAddress.street.toLowerCase() &&
+                    a.city && order.shippingAddress.city &&
+                    a.city.toLowerCase() === order.shippingAddress.city.toLowerCase()
+                );
+                if (!existingAddress) {
+                    const newAddr = {
+                        street: order.shippingAddress.street,
+                        city: order.shippingAddress.city,
+                        state: order.shippingAddress.state || '',
+                        country: order.shippingAddress.country || 'Kuwait',
+                        zipCode: order.shippingAddress.zipCode || '',
+                        phone: order.shippingAddress.phone || '',
+                        label: order.shippingAddress.label || (userDoc.addresses.length === 0 ? 'Home' : `Address ${userDoc.addresses.length + 1}`),
+                        isDefault: userDoc.addresses.length === 0
+                    };
+                    if (order.shippingAddress.coordinates) {
+                        newAddr.coordinates = order.shippingAddress.coordinates;
+                    }
+                    userDoc.addresses.push(newAddr);
+                    await userDoc.save();
+                    console.log(`[ADDRESS] Auto-saved address for user ${userDoc.email}`);
+                }
+            }
+        } catch (addrErr) {
+            console.error('Auto-save address error:', addrErr.message);
         }
 
         await order.save();
@@ -369,12 +411,20 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 await sendOrderConfirmation(order, order.user);
             } catch (emailErr) { /* silent */ }
 
-            // Send WhatsApp notifications (customer only - owner gets notified via notifyOwnerNewOrder)
+            // Send WhatsApp notifications to BOTH owners + customer
             try {
                 const whatsapp = require('../services/whatsappService');
-                // await whatsapp.notifyOwnerPaymentReceived(order, order.user); // DISABLED: Owner only gets new order notifications
+                await whatsapp.notifyOwnerNewOrder(order, order.user);
                 await whatsapp.notifyCustomerNewOrder(order, order.user);
-            } catch (whatsappErr) { /* silent */ }
+            } catch (whatsappErr) {
+                console.error('WhatsApp webhook notification error:', whatsappErr.message);
+            }
+
+            // Notify admin dashboard in real-time
+            try {
+                const { emitNewOrder } = require('../socketHandler');
+                emitNewOrder(order);
+            } catch (socketErr) { /* silent */ }
 
             await order.save();
         }
@@ -535,13 +585,72 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 console.error('Email send failed:', emailErr);
             }
 
-            // Send WhatsApp notifications (customer only - owner gets notified via notifyOwnerNewOrder)
+            // Send WhatsApp notifications to BOTH owners + customer
             try {
                 const whatsapp = require('../services/whatsappService');
-                // await whatsapp.notifyOwnerPaymentReceived(order, order.user); // DISABLED: Owner only gets new order notifications
+                await whatsapp.notifyOwnerNewOrder(order, order.user);
                 await whatsapp.notifyCustomerNewOrder(order, order.user);
             } catch (whatsappErr) {
-                console.error('WhatsApp notification error:', whatsappErr);
+                console.error('WhatsApp callback notification error:', whatsappErr.message);
+            }
+
+            // Notify admin dashboard in real-time
+            try {
+                const { emitNewOrder } = require('../socketHandler');
+                emitNewOrder(order);
+            } catch (socketErr) {
+                console.error('Socket notification error:', socketErr.message);
+            }
+
+            // Auto-print receipt
+            try {
+                const { autoPrintReceipt } = require('../services/printService');
+                autoPrintReceipt(order, order.user).then(async (result) => {
+                    if (result && result.success) {
+                        try {
+                            await Order.findByIdAndUpdate(order._id, { printedAt: new Date() });
+                            console.log(`[PRINT] ✅ printedAt set for ${order.orderNumber}`);
+                        } catch (dbErr) {
+                            console.error(`[PRINT] Failed to set printedAt:`, dbErr.message);
+                        }
+                    }
+                }).catch(e => console.error('Auto-print error:', e.message));
+            } catch (printErr) {
+                console.error('Print service error:', printErr.message);
+            }
+
+            // Auto-save shipping address with coordinates
+            try {
+                const User = require('../models/User');
+                const userDoc = await User.findById(order.user._id || order.user);
+                if (userDoc && order.shippingAddress) {
+                    const existingAddress = userDoc.addresses.find(a =>
+                        a.street && order.shippingAddress.street &&
+                        a.street.toLowerCase() === order.shippingAddress.street.toLowerCase() &&
+                        a.city && order.shippingAddress.city &&
+                        a.city.toLowerCase() === order.shippingAddress.city.toLowerCase()
+                    );
+                    if (!existingAddress) {
+                        const newAddr = {
+                            street: order.shippingAddress.street,
+                            city: order.shippingAddress.city,
+                            state: order.shippingAddress.state || '',
+                            country: order.shippingAddress.country || 'Kuwait',
+                            zipCode: order.shippingAddress.zipCode || '',
+                            phone: order.shippingAddress.phone || '',
+                            label: order.shippingAddress.label || (userDoc.addresses.length === 0 ? 'Home' : `Address ${userDoc.addresses.length + 1}`),
+                            isDefault: userDoc.addresses.length === 0
+                        };
+                        if (order.shippingAddress.coordinates) {
+                            newAddr.coordinates = order.shippingAddress.coordinates;
+                        }
+                        userDoc.addresses.push(newAddr);
+                        await userDoc.save();
+                        console.log(`[ADDRESS] Auto-saved address for user ${userDoc.email}`);
+                    }
+                }
+            } catch (addrErr) {
+                console.error('Auto-save address error:', addrErr.message);
             }
 
             await order.save();
