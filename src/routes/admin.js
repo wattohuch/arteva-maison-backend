@@ -85,59 +85,6 @@ router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
     }
 });
 
-// TEMPORARY: Mock order creation for testing
-router.get('/mock-order-test', async (req, res) => {
-    try {
-        const Order = require('../models/Order');
-        const Product = require('../models/Product');
-        const User = require('../models/User');
-        const whatsapp = require('../services/whatsappService');
-
-        const product = await Product.findOne({});
-        let user = await User.findOne({ phone: { $regex: '97295917' } });
-        if (!user) user = await User.findOne({ role: 'admin' });
-
-        const orderNumber = `ART-${Math.floor(100000 + Math.random() * 900000)}`;
-        const mockOrder = await Order.create({
-            user: user._id,
-            orderNumber,
-            orderStatus: 'confirmed',
-            paymentStatus: 'paid',
-            paymentMethod: 'knet',
-            items: [{
-                product: product._id,
-                name: product.name,
-                nameAr: product.nameAr || product.name,
-                sku: product.sku || 'MOCK-001',
-                price: product.price || 10,
-                quantity: 1
-            }],
-            shippingAddress: {
-                street: 'Mock Street',
-                city: 'Kuwait City',
-                country: 'Kuwait',
-                phone: '97295917',
-                fullName: 'Test Customer 97295917'
-            },
-            subtotal: product.price || 10,
-            shippingCost: 2,
-            total: (product.price || 10) + 2
-        });
-
-        const { emitNewOrder } = require('../socketHandler');
-        try { emitNewOrder(mockOrder); } catch (e) {}
-        
-        try {
-            await whatsapp.notifyOwnerNewOrder(mockOrder, { name: 'Test', phone: '97295917' });
-            await whatsapp.notifyCustomerNewOrder(mockOrder, { name: 'Test', phone: '97295917' });
-        } catch (e) {}
-
-        res.json({ success: true, orderNumber });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
-
 // Printer status check — diagnose connectivity
 router.get('/printer/status', protect, admin, async (req, res) => {
     try {
