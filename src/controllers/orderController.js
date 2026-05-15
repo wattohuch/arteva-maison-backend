@@ -75,7 +75,7 @@ const createOrder = asyncHandler(async (req, res) => {
             const User = require('../models/User');
             const userDoc = await User.findById(req.user._id);
             if (userDoc) {
-                const existingAddress = userDoc.addresses.find(a => 
+                const existingAddress = userDoc.addresses.find(a =>
                     a.street.toLowerCase() === shippingAddress.street.toLowerCase() &&
                     a.city.toLowerCase() === shippingAddress.city.toLowerCase()
                 );
@@ -415,9 +415,9 @@ const checkCanCancel = asyncHandler(async (req, res) => {
     }
 
     const daysSinceOrder = Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000));
-    const canCancel = daysSinceOrder <= 14 && 
-                      order.orderStatus !== 'delivered' && 
-                      order.orderStatus !== 'cancelled';
+    const canCancel = daysSinceOrder <= 14 &&
+        order.orderStatus !== 'delivered' &&
+        order.orderStatus !== 'cancelled';
 
     res.json({
         success: true,
@@ -426,9 +426,9 @@ const checkCanCancel = asyncHandler(async (req, res) => {
         daysRemaining: canCancel ? 14 - daysSinceOrder : 0,
         reason: !canCancel ? (
             daysSinceOrder > 14 ? 'Cancellation period expired (14 days)' :
-            order.orderStatus === 'delivered' ? 'Order already delivered' :
-            order.orderStatus === 'cancelled' ? 'Order already cancelled' :
-            'Unknown'
+                order.orderStatus === 'delivered' ? 'Order already delivered' :
+                    order.orderStatus === 'cancelled' ? 'Order already cancelled' :
+                        'Unknown'
         ) : null
     });
 });
