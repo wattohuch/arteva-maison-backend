@@ -126,7 +126,18 @@ const createOrder = asyncHandler(async (req, res) => {
     // Auto-print receipt via HP ePrint (background, non-blocking)
     try {
         const { autoPrintReceipt } = require('../services/printService');
-        autoPrintReceipt(order, req.user).catch(e => {
+        autoPrintReceipt(order, req.user).then(async (result) => {
+            if (result && result.success) {
+                try {
+                    await Order.findByIdAndUpdate(order._id, { printedAt: new Date() });
+                    console.log(`[PRINT] ✅ printedAt set for ${order.orderNumber}`);
+                } catch (dbErr) {
+                    console.error(`[PRINT] Failed to set printedAt for ${order.orderNumber}:`, dbErr.message);
+                }
+            } else {
+                console.log(`[PRINT] ⚠️ Auto-print did not succeed for ${order.orderNumber}, leaving for local agent`);
+            }
+        }).catch(e => {
             console.error('Auto-print error:', e.message);
         });
     } catch (e) {

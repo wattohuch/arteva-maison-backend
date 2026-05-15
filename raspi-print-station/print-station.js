@@ -119,7 +119,8 @@ async function checkPrinterReady(name) {
   if (!name) return false;
   try {
     const { stdout } = await execAsync(`lpstat -p "${name}"`);
-    return !stdout.includes('disabled') && !stdout.includes('rejecting');
+    const ready = !stdout.includes('disabled') && !stdout.includes('rejecting');
+    return ready;
   } catch (_) {
     return false;
   }
@@ -146,10 +147,41 @@ async function waitForPrinter() {
   }
 }
 
+// Non-blocking printer check — returns name or null
+async function tryDetectPrinter() {
+  const name = await detectPrinter();
+  if (name && await checkPrinterReady(name)) {
+    currentPrinter = name;
+    printerReady = true;
+    return name;
+  }
+  printerReady = false;
+  return null;
+}
+
+// Periodic printer health check — when printer comes back, flush queue
+function startPrinterHealthCheck() {
+  setInterval(async () => {
+    const wasPrinterReady = printerReady;
+    const name = await tryDetectPrinter();
+    if (name && !wasPrinterReady) {
+      // Printer just came back online!
+      log(`🟢 PRINTER BACK ONLINE: ${name} — flushing pending queue...`);
+      try {
+        await processPendingQueue(name);
+      } catch (e) {
+        log(`⚠ Error flushing queue: ${e.message}`, 'warn');
+      }
+    }
+  }, 10000); // Check every 10 seconds
+  log('💓 Printer health check started (every 10s)');
+}
+
 // ── Browser Init ────────────────────────────────────────────
 async function initBrowser() {
   if (browser) {
     try { await browser.close(); } catch (_) {}
+    browser = null;
   }
   const chromePaths = [
     '/usr/bin/chromium-browser', '/usr/bin/chromium',
@@ -170,7 +202,19 @@ async function initBrowser() {
     headless: 'new',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--font-render-hinting=none', '--disable-lcd-text'],
   });
+  // Auto-restart browser if it crashes
+  browser.on('disconnected', () => {
+    log('⚠ Chromium crashed/disconnected — will restart on next print', 'warn');
+    browser = null;
+  });
   log(`🌐 Chromium started (${chromePath || 'default'})`);
+}
+
+async function ensureBrowser() {
+  if (!browser || !browser.isConnected()) {
+    log('🔄 Restarting Chromium...');
+    await initBrowser();
+  }
 }
 
 // ── Queue Management ────────────────────────────────────────
@@ -274,8 +318,8 @@ async function htmlToPrint(html, filename, printerName) {
 
   await fsp.writeFile(htmlPath, html, 'utf8');
 
-  // Ensure browser is alive
-  if (!browser || !browser.isConnected()) await initBrowser();
+  // Ensure browser is alive (auto-restart if crashed)
+  await ensureBrowser();
 
   const page = await browser.newPage();
   try {
@@ -320,6 +364,15 @@ async function htmlToPrint(html, filename, printerName) {
 async function printJob(order, filename, printerName) {
   const num = order.orderNumber || order._id;
   log(`📦 Printing order ${num}...`);
+
+  // Verify printer is ready RIGHT before printing
+  if (!printerName || !await checkPrinterReady(printerName)) {
+    const detected = await tryDetectPrinter();
+    if (!detected) {
+      throw new Error('Printer not available — will retry when printer comes back');
+    }
+    printerName = detected;
+  }
 
   if (PRINT_RECEIPT) {
     log(`  🖨️  Generating receipt...`);
@@ -464,7 +517,7 @@ async function runTest(printerName) {
 async function main() {
   console.log('');
   console.log('  ╔══════════════════════════════════════════╗');
-  console.log('  ║  ARTÉVA MAISON — Print Station v3        ║');
+  console.log('  ║  ARTÉVA MAISON — Print Station v3.1      ║');
   console.log('  ║  Production-Grade • Fault-Tolerant       ║');
   console.log('  ╚══════════════════════════════════════════╝');
   console.log('');
@@ -472,6 +525,7 @@ async function main() {
   log(`Host:     ${os.hostname()}`);
   log(`Node:     ${process.version}`);
   log(`API:      ${API_URL}`);
+  log(`Printer:  ${PRINTER || '(auto-detect)'}`);
   log(`Poll:     every ${POLL_MS / 1000}s`);
   log(`Retries:  ${MAX_RETRIES} max per job`);
 
@@ -479,8 +533,13 @@ async function main() {
   const pendingJobs = await loadPendingQueue();
   log(`📋 Pending jobs from disk: ${pendingJobs.length}`);
 
-  // 2. Detect & wait for printer
-  const printerName = await waitForPrinter();
+  // 2. Try to detect printer (NON-BLOCKING — don't wait forever)
+  const printerName = await tryDetectPrinter();
+  if (printerName) {
+    log(`✅ Printer ready: ${printerName}`);
+  } else {
+    log(`⚠ No printer detected yet — orders will queue to disk and print when printer comes online`, 'warn');
+  }
 
   // 3. Init browser
   await initBrowser();
@@ -491,20 +550,29 @@ async function main() {
   // 5. Start watchdog heartbeat
   startWatchdog();
 
+  // 6. Start periodic printer health check (auto-flushes queue when printer returns)
+  startPrinterHealthCheck();
+
   // Test mode
   if (TEST_MODE) {
+    if (!printerName) {
+      log('❌ Cannot run test — no printer detected. Run: lpstat -p -d', 'error');
+      process.exit(1);
+    }
     await runTest(printerName);
     await browser.close();
     process.exit(0);
   }
 
-  // 6. Process any pending jobs first
-  if (pendingJobs.length > 0) {
+  // 7. Process any pending jobs first (if printer is available)
+  if (pendingJobs.length > 0 && printerName) {
     log(`🔄 Resuming ${pendingJobs.length} pending job(s) from previous session...`);
     await processPendingQueue(printerName);
+  } else if (pendingJobs.length > 0) {
+    log(`⏳ ${pendingJobs.length} pending job(s) waiting for printer to come online...`);
   }
 
-  // 7. Quick API check
+  // 8. Quick API check
   try {
     const orders = await pollOrders();
     log(`✓ API connected — ${orders.length} order(s) in queue`);
@@ -517,8 +585,8 @@ async function main() {
   log('   Press Ctrl+C to stop.');
   log('');
 
-  // 8. Begin poll loop
-  await pollLoop(printerName);
+  // 9. Begin poll loop (always runs — queues to disk even without printer)
+  await pollLoop(currentPrinter);
 }
 
 // ── Graceful shutdown ───────────────────────────────────────

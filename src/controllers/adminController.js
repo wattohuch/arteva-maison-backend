@@ -718,6 +718,7 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
     // Daily breakdown (last 30 days) using aggregation
     const thirtyDaysAgo = new Date(todayStart);
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD
 
     const dailyBreakdown = await Order.aggregate([
         {
@@ -739,6 +740,30 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
         },
         { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
     ]);
+
+    // Visitor stats per date (last 30 days) — unique IPs and total views
+    let dailyVisitors = {};
+    try {
+        const ProductView = require('../models/ProductView');
+        const visitorAgg = await ProductView.aggregate([
+            { $match: { date: { $gte: thirtyDaysAgoStr } } },
+            {
+                $group: {
+                    _id: '$date',
+                    totalViews: { $sum: 1 },
+                    uniqueIPs: { $addToSet: '$ip' }
+                }
+            }
+        ]);
+        visitorAgg.forEach(v => {
+            dailyVisitors[v._id] = {
+                visitors: v.uniqueIPs.length,
+                views: v.totalViews
+            };
+        });
+    } catch (e) {
+        console.error('[REVENUE] Visitor aggregation failed:', e.message);
+    }
 
     // Monthly breakdown (last 12 months) using aggregation
     const monthlyBreakdown = await Order.aggregate([
@@ -790,11 +815,17 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
                 canCancel: new Date() - new Date(order.createdAt) <= 14 * 24 * 60 * 60 * 1000,
                 daysSinceOrder: Math.floor((new Date() - new Date(order.createdAt)) / (24 * 60 * 60 * 1000))
             })),
-            dailyBreakdown: dailyBreakdown.map(d => ({
-                date: `${d._id.year}-${String(d._id.month).padStart(2, '0')}-${String(d._id.day).padStart(2, '0')}`,
-                revenue: d.revenue,
-                orders: d.orders
-            })),
+            dailyBreakdown: dailyBreakdown.map(d => {
+                const dateStr = `${d._id.year}-${String(d._id.month).padStart(2, '0')}-${String(d._id.day).padStart(2, '0')}`;
+                const vis = dailyVisitors[dateStr] || { visitors: 0, views: 0 };
+                return {
+                    date: dateStr,
+                    revenue: d.revenue,
+                    orders: d.orders,
+                    visitors: vis.visitors,
+                    views: vis.views
+                };
+            }),
             monthlyBreakdown: monthlyBreakdown.map(m => ({
                 year: m._id.year,
                 month: m._id.month,

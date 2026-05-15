@@ -193,11 +193,24 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
         `.trim();
 
         const ownerPhones = await this.getOwnerPhones();
+        console.log(`[WA-OWNER] Sending new order notification to ${ownerPhones.length} phone(s): ${ownerPhones.join(', ')}`);
         const results = [];
-        for (const phone of ownerPhones) {
-            results.push(await this.sendMessage(phone, message));
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        for (let i = 0; i < ownerPhones.length; i++) {
+            const phone = ownerPhones[i];
+            try {
+                const result = await this.sendMessage(phone, message);
+                results.push(result);
+                console.log(`[WA-OWNER] Phone ${i+1}/${ownerPhones.length} (${phone}): ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
+            } catch (err) {
+                console.error(`[WA-OWNER] Phone ${i+1}/${ownerPhones.length} (${phone}): ❌ Exception: ${err.message}`);
+                results.push({ success: false, error: err.message });
+            }
+            // Rate limit protection: 1.5s between sends
+            if (i < ownerPhones.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
         }
+        console.log(`[WA-OWNER] Notification complete: ${results.filter(r => r.success).length}/${ownerPhones.length} delivered`);
         return results;
     }
 
@@ -234,9 +247,15 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
 
         const ownerPhones = await this.getOwnerPhones();
         const results = [];
-        for (const phone of ownerPhones) {
-            results.push(await this.sendMessage(phone, message));
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        for (let i = 0; i < ownerPhones.length; i++) {
+            try {
+                const result = await this.sendMessage(ownerPhones[i], message);
+                results.push(result);
+            } catch (err) {
+                console.error(`[WA-OWNER] Cancel notify to ${ownerPhones[i]} failed: ${err.message}`);
+                results.push({ success: false, error: err.message });
+            }
+            if (i < ownerPhones.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
         return results;
     }
@@ -280,9 +299,15 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 
         const ownerPhones = await this.getOwnerPhones();
         const results = [];
-        for (const phone of ownerPhones) {
-            results.push(await this.sendMessage(phone, message));
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        for (let i = 0; i < ownerPhones.length; i++) {
+            try {
+                const result = await this.sendMessage(ownerPhones[i], message);
+                results.push(result);
+            } catch (err) {
+                console.error(`[WA-OWNER] Status notify to ${ownerPhones[i]} failed: ${err.message}`);
+                results.push({ success: false, error: err.message });
+            }
+            if (i < ownerPhones.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
         return results;
     }
@@ -308,9 +333,15 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
 
         const ownerPhones = await this.getOwnerPhones();
         const results = [];
-        for (const phone of ownerPhones) {
-            results.push(await this.sendMessage(phone, message));
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        for (let i = 0; i < ownerPhones.length; i++) {
+            try {
+                const result = await this.sendMessage(ownerPhones[i], message);
+                results.push(result);
+            } catch (err) {
+                console.error(`[WA-OWNER] Payment notify to ${ownerPhones[i]} failed: ${err.message}`);
+                results.push({ success: false, error: err.message });
+            }
+            if (i < ownerPhones.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
         return results;
     }

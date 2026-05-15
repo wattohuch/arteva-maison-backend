@@ -76,9 +76,10 @@ router.get('/customer-orders/:email', protect, admin, getCustomerOrderHistory);
 // Manual receipt re-print
 router.post('/print-receipt/:orderId', protect, admin, async (req, res) => {
     try {
-        const { printExistingOrderReceipt } = require('../services/printService');
-        const result = await printExistingOrderReceipt(req.params.orderId);
-        res.json({ success: result.success, message: result.success ? 'Receipt sent to printer' : result.error });
+        const Order = require('../models/Order');
+        // Unset printedAt so the Raspberry Pi poll loop picks it up within 30s
+        await Order.findByIdAndUpdate(req.params.orderId, { $unset: { printedAt: 1 } });
+        res.json({ success: true, message: 'Receipt sent to print queue! The Pi will print it in < 30 seconds.' });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -145,16 +146,20 @@ router.get('/print-queue/poll', async (req, res) => {
     }
     try {
         const Order = require('../models/Order');
-        // Find paid orders not yet printed (no printedAt flag)
+        // Find paid orders not yet printed, created within last 7 days only
+        // This prevents stale old orders from resurfacing after agent restart
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const orders = await Order.find({
             paymentStatus: 'paid',
-            printedAt: { $exists: false }
+            printedAt: { $exists: false },
+            createdAt: { $gte: sevenDaysAgo }
         })
         .populate('user', 'name email phone')
         .sort({ createdAt: -1 })
         .limit(5)
         .lean();
 
+        console.log(`[PRINT-POLL] Found ${orders.length} unprinted order(s) from last 7 days`);
         res.json({ success: true, count: orders.length, orders });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
@@ -167,7 +172,17 @@ router.post('/print-queue/done/:orderId', async (req, res) => {
     }
     try {
         const Order = require('../models/Order');
-        await Order.findByIdAndUpdate(req.params.orderId, { printedAt: new Date() });
+        // Idempotent: only set printedAt if not already set
+        const result = await Order.findOneAndUpdate(
+            { _id: req.params.orderId, printedAt: { $exists: false } },
+            { printedAt: new Date() },
+            { new: true }
+        );
+        if (!result) {
+            console.log(`[PRINT-DONE] Order ${req.params.orderId} already marked as printed`);
+            return res.json({ success: true, message: 'Already marked as printed' });
+        }
+        console.log(`[PRINT-DONE] Marked order ${result.orderNumber} as printed`);
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
