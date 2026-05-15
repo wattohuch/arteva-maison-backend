@@ -246,7 +246,13 @@ async function loadPendingQueue() {
         const data = JSON.parse(await fsp.readFile(path.join(PENDING_DIR, f), 'utf8'));
         jobs.push({ filename: f, ...data });
       } catch (e) {
-        log(`⚠ Corrupt queue file ${f}: ${e.message}`, 'warn');
+        log(`⚠ Corrupt queue file ${f}: ${e.message} — moving to failed/`, 'warn');
+        try {
+          await fsp.rename(path.join(PENDING_DIR, f), path.join(FAILED_DIR, f));
+        } catch (_) {
+          // If rename fails, just delete it to stop the spam
+          try { await fsp.unlink(path.join(PENDING_DIR, f)); } catch (_) {}
+        }
       }
     }
     return jobs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -294,7 +300,7 @@ async function updateRetry(filename, error) {
 // ── API Calls ───────────────────────────────────────────────
 async function pollOrders() {
   const { data } = await axios.get(`${API_URL}/api/admin/print-queue/poll`, {
-    params: { key: PRINT_KEY }, timeout: 30000,
+    params: { key: PRINT_KEY }, timeout: 60000,
   });
   if (!data.success) throw new Error(data.message || 'API error');
   lastPollTime = new Date().toISOString();
@@ -437,7 +443,12 @@ async function pollLoop(printerName) {
       }
     } catch (err) {
       const msg = err.response ? `HTTP ${err.response.status}` : err.message;
-      log(`⚠ Poll error: ${msg}`, 'warn');
+      // Only log non-timeout errors at warn level; timeouts are expected with Render cold starts
+      if (msg.includes('timeout')) {
+        log(`⏳ API timeout (Render cold start?) — retrying next cycle...`);
+      } else {
+        log(`⚠ Poll error: ${msg}`, 'warn');
+      }
       // Even if API fails, try to print any pending queue items
       try { await processPendingQueue(printerName); } catch (_) {}
     }
