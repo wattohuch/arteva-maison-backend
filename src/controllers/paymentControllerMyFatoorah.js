@@ -309,11 +309,10 @@ const verifyPayment = asyncHandler(async (req, res) => {
             // Don't fail the payment verification if email fails
         }
 
-        // Send WhatsApp notifications to BOTH owners + customer
+        // Send WhatsApp notifications to BOTH owners + customer (background — don't block response)
         try {
             const whatsapp = require('../services/whatsappService');
-            await whatsapp.notifyOwnerNewOrder(order, order.user);
-            await whatsapp.notifyCustomerNewOrder(order, order.user);
+            whatsapp.sendAllOrderNotifications(order, order.user);
         } catch (whatsappErr) {
             console.error('WhatsApp notification error:', whatsappErr);
         }
@@ -423,11 +422,10 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 await sendOrderConfirmation(order, order.user);
             } catch (emailErr) { /* silent */ }
 
-            // Send WhatsApp notifications to BOTH owners + customer
+            // Send WhatsApp notifications to BOTH owners + customer (background — don't block webhook)
             try {
                 const whatsapp = require('../services/whatsappService');
-                await whatsapp.notifyOwnerNewOrder(order, order.user);
-                await whatsapp.notifyCustomerNewOrder(order, order.user);
+                whatsapp.sendAllOrderNotifications(order, order.user);
             } catch (whatsappErr) {
                 console.error('WhatsApp webhook notification error:', whatsappErr.message);
             }
@@ -603,11 +601,10 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 console.error('Email send failed:', emailErr);
             }
 
-            // Send WhatsApp notifications to BOTH owners + customer
+            // Send WhatsApp notifications to BOTH owners + customer (background — don't block redirect)
             try {
                 const whatsapp = require('../services/whatsappService');
-                await whatsapp.notifyOwnerNewOrder(order, order.user);
-                await whatsapp.notifyCustomerNewOrder(order, order.user);
+                whatsapp.sendAllOrderNotifications(order, order.user);
             } catch (whatsappErr) {
                 console.error('WhatsApp callback notification error:', whatsappErr.message);
             }

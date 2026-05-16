@@ -23,6 +23,8 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const http = require('http');
+const https = require('https');
+const dns = require('dns');
 const { exec } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
@@ -31,8 +33,29 @@ const winston = require('winston');
 require('winston-daily-rotate-file');
 const { buildReceiptHTML, buildLabelHTML } = require('./templates');
 
+// ── HTTP Agent (keep-alive + forced IPv4) ────────────────────
+// Force IPv4 to avoid IPv6 routing issues on Raspberry Pi
+dns.setDefaultResultOrder('ipv4first');
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 5,
+  timeout: 180000,
+  family: 4, // Force IPv4
+});
+
+const api = axios.create({
+  baseURL: (process.env.API_URL || 'https://arteva-maison-backend-gy1x.onrender.com').replace(/\/+$/, ''),
+  timeout: 180000,  // 180s — generous for Render cold starts
+  httpsAgent,
+  headers: { 'Connection': 'keep-alive' },
+  // Force IPv4 at the axios level too
+  family: 4,
+});
+
 // ── Config ──────────────────────────────────────────────────
-const API_URL    = (process.env.API_URL || 'https://arteva-maison-backend-gy1x.onrender.com').replace(/\/+$/, '');
+const API_URL    = api.defaults.baseURL;
 const PRINT_KEY  = process.env.PRINT_KEY || 'arteva-print-2026';
 const POLL_MS    = (parseInt(process.env.POLL_SECONDS) || 30) * 1000;
 const PRINTER    = process.env.PRINTER_NAME || '';
@@ -232,7 +255,14 @@ async function saveToQueue(order) {
     lastError: null,
   };
   const filename = queueFilename(order);
-  await fsp.writeFile(path.join(PENDING_DIR, filename), JSON.stringify(job, null, 2));
+  const finalPath = path.join(PENDING_DIR, filename);
+  const tmpPath = finalPath + '.tmp';
+  
+  // Atomic write: Write to .tmp first, then rename. 
+  // This prevents corrupt JSON files if the Pi loses power mid-write.
+  await fsp.writeFile(tmpPath, JSON.stringify(job, null, 2));
+  await fsp.rename(tmpPath, finalPath);
+  
   log(`📥 Queued to disk: ${job.orderNumber} → ${filename}`);
   return filename;
 }
@@ -289,7 +319,12 @@ async function updateRetry(filename, error) {
       await moveToFailed(filename, error);
       return false;
     }
-    await fsp.writeFile(fp, JSON.stringify(job, null, 2));
+    
+    // Atomic update
+    const tmpPath = fp + '.tmp';
+    await fsp.writeFile(tmpPath, JSON.stringify(job, null, 2));
+    await fsp.rename(tmpPath, fp);
+    
     log(`🔄 Retry ${job.retries}/${MAX_RETRIES} for ${job.orderNumber}: ${error}`);
     return true;
   } catch (_) {
@@ -297,10 +332,34 @@ async function updateRetry(filename, error) {
   }
 }
 
-// ── API Calls ───────────────────────────────────────────────
+// ── API Calls with Retry ────────────────────────────────────
+async function apiRequest(method, url, options = {}, retries = 3) {
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await api({ method, url, ...options });
+      return res;
+    } catch (err) {
+      lastErr = err;
+      const code = err.code || '';
+      const status = err.response?.status;
+      const msg = status ? `HTTP ${status}` : `${code} ${err.message}`;
+
+      if (attempt < retries) {
+        const delay = Math.min(5000 * attempt, 15000); // 5s, 10s, 15s
+        log(`⚠ API attempt ${attempt}/${retries} failed: ${msg} — retrying in ${delay/1000}s...`, 'warn');
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        log(`❌ API failed after ${retries} attempts: ${msg}`, 'error');
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function pollOrders() {
-  const { data } = await axios.get(`${API_URL}/api/admin/print-queue/poll`, {
-    params: { key: PRINT_KEY }, timeout: 60000,
+  const { data } = await apiRequest('get', '/api/admin/print-queue/poll', {
+    params: { key: PRINT_KEY },
   });
   if (!data.success) throw new Error(data.message || 'API error');
   lastPollTime = new Date().toISOString();
@@ -309,9 +368,9 @@ async function pollOrders() {
 
 async function markPrinted(orderId) {
   try {
-    await axios.post(`${API_URL}/api/admin/print-queue/done/${orderId}`, null, {
-      params: { key: PRINT_KEY }, timeout: 15000,
-    });
+    await apiRequest('post', `/api/admin/print-queue/done/${orderId}`, {
+      params: { key: PRINT_KEY },
+    }, 2);
   } catch (e) {
     log(`⚠ Could not mark ${orderId} as printed in API: ${e.message}. Will retry.`, 'warn');
   }
@@ -421,10 +480,17 @@ async function processPendingQueue(printerName) {
 }
 
 // ── Poll loop ───────────────────────────────────────────────
+let consecutiveFailures = 0;
+
 async function pollLoop(printerName) {
   while (true) {
     try {
       const orders = await pollOrders();
+      if (consecutiveFailures > 0) {
+        log(`🟢 API reconnected after ${consecutiveFailures} failed attempts!`);
+      }
+      consecutiveFailures = 0;
+
       if (orders.length > 0) {
         log(`🔔 Found ${orders.length} new order(s) to print!`);
         for (const order of orders) {
@@ -442,18 +508,28 @@ async function pollLoop(printerName) {
         }
       }
     } catch (err) {
-      const msg = err.response ? `HTTP ${err.response.status}` : err.message;
-      // Only log non-timeout errors at warn level; timeouts are expected with Render cold starts
-      if (msg.includes('timeout')) {
-        log(`⏳ API timeout (Render cold start?) — retrying next cycle...`);
-      } else {
-        log(`⚠ Poll error: ${msg}`, 'warn');
+      consecutiveFailures++;
+      const code = err.code || '';
+      const msg = err.response ? `HTTP ${err.response.status}` : `${code} ${err.message}`;
+
+      if (consecutiveFailures <= 3) {
+        log(`⚠ Poll failed (${consecutiveFailures}): ${msg}`, 'warn');
+      } else if (consecutiveFailures === 4) {
+        log(`⚠ Poll keeps failing. Running network diagnostics...`, 'warn');
+        await runNetworkDiagnostics();
+      } else if (consecutiveFailures % 10 === 0) {
+        log(`⚠ Poll still failing (${consecutiveFailures} in a row): ${msg}`, 'warn');
+        await runNetworkDiagnostics();
       }
       // Even if API fails, try to print any pending queue items
       try { await processPendingQueue(printerName); } catch (_) {}
     }
 
-    await new Promise(r => setTimeout(r, POLL_MS));
+    // Adaptive polling: if failing repeatedly, poll less often to avoid hammering
+    const delay = consecutiveFailures > 5
+      ? Math.min(POLL_MS * 2, 120000)  // Max 2 min between polls when failing
+      : POLL_MS;
+    await new Promise(r => setTimeout(r, delay));
   }
 }
 
@@ -525,10 +601,65 @@ async function runTest(printerName) {
 }
 
 // ── Main ────────────────────────────────────────────────────
+// ── Network Diagnostics ─────────────────────────────────────
+async function runNetworkDiagnostics() {
+  log('🔍 ── NETWORK DIAGNOSTICS ──');
+
+  // 1. Check basic internet
+  try {
+    const { stdout } = await execAsync('ping -c 1 -W 5 8.8.8.8', { timeout: 10000 });
+    log('  ✅ Internet: OK (can reach 8.8.8.8)');
+  } catch (_) {
+    log('  ❌ Internet: FAILED (cannot ping 8.8.8.8)', 'error');
+    return;
+  }
+
+  // 2. Check DNS resolution
+  try {
+    const hostname = new URL(API_URL).hostname;
+    const addresses = await new Promise((resolve, reject) => {
+      dns.resolve4(hostname, (err, addrs) => err ? reject(err) : resolve(addrs));
+    });
+    log(`  ✅ DNS: ${hostname} → ${addresses.join(', ')}`);
+  } catch (e) {
+    log(`  ❌ DNS: Failed to resolve ${new URL(API_URL).hostname}: ${e.message}`, 'error');
+    return;
+  }
+
+  // 3. Check TCP connectivity to Render
+  try {
+    const hostname = new URL(API_URL).hostname;
+    await new Promise((resolve, reject) => {
+      const socket = require('net').createConnection({ host: hostname, port: 443, family: 4, timeout: 15000 });
+      socket.on('connect', () => { socket.destroy(); resolve(); });
+      socket.on('timeout', () => { socket.destroy(); reject(new Error('TCP timeout')); });
+      socket.on('error', reject);
+    });
+    log('  ✅ TCP:443: Connection established');
+  } catch (e) {
+    log(`  ❌ TCP:443: ${e.message} — Render may be unreachable from this network`, 'error');
+    return;
+  }
+
+  // 4. Quick HTTPS test
+  try {
+    const res = await api.get('/api/admin/print-queue/poll', {
+      params: { key: PRINT_KEY },
+      timeout: 30000,
+    });
+    log(`  ✅ HTTPS: API responded — ${res.data?.count || 0} orders in queue`);
+  } catch (e) {
+    const code = e.code || '';
+    log(`  ❌ HTTPS: ${code} ${e.message}`, 'error');
+  }
+
+  log('🔍 ── END DIAGNOSTICS ──');
+}
+
 async function main() {
   console.log('');
   console.log('  ╔══════════════════════════════════════════╗');
-  console.log('  ║  ARTÉVA MAISON — Print Station v3.1      ║');
+  console.log('  ║  ARTÉVA MAISON — Print Station v3.2      ║');
   console.log('  ║  Production-Grade • Fault-Tolerant       ║');
   console.log('  ╚══════════════════════════════════════════╝');
   console.log('');
@@ -536,6 +667,7 @@ async function main() {
   log(`Host:     ${os.hostname()}`);
   log(`Node:     ${process.version}`);
   log(`API:      ${API_URL}`);
+  log(`Timeout:  180s per request, 3 retries`);
   log(`Printer:  ${PRINTER || '(auto-detect)'}`);
   log(`Poll:     every ${POLL_MS / 1000}s`);
   log(`Retries:  ${MAX_RETRIES} max per job`);
@@ -583,13 +715,10 @@ async function main() {
     log(`⏳ ${pendingJobs.length} pending job(s) waiting for printer to come online...`);
   }
 
-  // 8. Quick API check
-  try {
-    const orders = await pollOrders();
-    log(`✓ API connected — ${orders.length} order(s) in queue`);
-  } catch (err) {
-    log(`⚠ API check failed: ${err.message}. Will keep retrying...`, 'warn');
-  }
+  // 8. Network diagnostics + API check
+  log('');
+  log('🔌 Testing API connection...');
+  await runNetworkDiagnostics();
 
   log('');
   log('🟢 Print station running. Waiting for new orders...');

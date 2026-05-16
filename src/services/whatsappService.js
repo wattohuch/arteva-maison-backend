@@ -39,7 +39,7 @@ class WhatsAppService {
         // concurrent owner+customer notifications don't collide.
         this._messageQueue = [];
         this._isProcessingQueue = false;
-        this._sendDelayMs = 3000; // 3s gap between messages
+        this._sendDelayMs = 5000; // 5s gap between messages (Green API free tier rate limit)
 
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
@@ -195,6 +195,7 @@ class WhatsAppService {
     async _sendDirect(phone, message) {
         try {
             const chatId = `${phone}@c.us`;
+            console.log(`[WA-SEND] Sending to ${chatId} via ${this.baseUrl}/sendMessage/...`);
 
             const res = await fetch(`${this.baseUrl}/sendMessage/${this.apiToken}`, {
                 method: 'POST',
@@ -202,19 +203,65 @@ class WhatsAppService {
                 body: JSON.stringify({ chatId, message })
             });
 
-            const data = await res.json();
+            const responseText = await res.text();
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseErr) {
+                console.error(`❌ WhatsApp non-JSON response from Green API for ${phone}: ${responseText.substring(0, 200)}`);
+                return { success: false, error: `Non-JSON response: ${responseText.substring(0, 100)}` };
+            }
 
             if (data.idMessage) {
                 console.log(`📱 WhatsApp sent to ${phone} ✅ (${data.idMessage})`);
                 return { success: true, messageId: data.idMessage };
             } else {
                 console.error(`❌ WhatsApp send failed to ${phone}:`, JSON.stringify(data));
-                return { success: false, error: data.message || 'Send failed' };
+                return { success: false, error: data.message || JSON.stringify(data) };
             }
         } catch (error) {
             console.error(`❌ WhatsApp error to ${phone}:`, error.message);
             return { success: false, error: error.message };
         }
+    }
+
+    /**
+     * Check if a phone number has WhatsApp (Green API)
+     */
+    async checkWhatsapp(phone) {
+        try {
+            const formatted = this.formatPhone(phone);
+            if (!formatted) return false;
+            const res = await fetch(`${this.baseUrl}/checkWhatsapp/${this.apiToken}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phoneNumber: parseInt(formatted) })
+            });
+            const data = await res.json();
+            console.log(`[WA-CHECK] ${formatted}: existsWhatsapp=${data.existsWhatsapp}`);
+            return data.existsWhatsapp === true;
+        } catch (e) {
+            console.error(`[WA-CHECK] Error checking ${phone}:`, e.message);
+            return true; // Assume exists on error, try sending anyway
+        }
+    }
+
+    /**
+     * Fire-and-forget: Send all order notifications (owners + customer) in the background.
+     * Use this in payment callbacks so the redirect happens immediately.
+     */
+    sendAllOrderNotifications(order, user) {
+        // Fire and forget — don't await, don't block the HTTP response
+        setImmediate(async () => {
+            try {
+                console.log(`[WA-NOTIFY] Starting background notifications for ${order.orderNumber}`);
+                await this.notifyOwnerNewOrder(order, user);
+                await this.notifyCustomerNewOrder(order, user);
+                console.log(`[WA-NOTIFY] All notifications sent for ${order.orderNumber}`);
+            } catch (err) {
+                console.error(`[WA-NOTIFY] Background notification error for ${order.orderNumber}:`, err.message);
+            }
+        });
     }
 
     /**
@@ -452,6 +499,16 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         }
 
         const phone = rawPhone;
+        const formatted = this.formatPhone(phone);
+        console.log(`[WA-CUSTOMER] Formatted phone: ${formatted}`);
+
+        // Check if customer has WhatsApp before sending
+        const hasWhatsApp = await this.checkWhatsapp(formatted);
+        if (!hasWhatsApp) {
+            console.warn(`[WA-CUSTOMER] ⚠ Phone ${formatted} does NOT have WhatsApp. Skipping notification for ${order.orderNumber}.`);
+            return { success: false, error: `Phone ${formatted} not on WhatsApp` };
+        }
+
         const name = user.name || 'Valued Customer';
 
         const trackUrl = this.buildTrackingUrl(order);
