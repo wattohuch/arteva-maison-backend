@@ -3,7 +3,7 @@ const crypto = require('crypto');
 global.crypto = crypto.webcrypto || crypto;
 globalThis.crypto = crypto.webcrypto || crypto;
 
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const https = require('https');
 
@@ -50,7 +50,8 @@ async function startAgent() {
         auth: state,
         printQRInTerminal: true,
         logger,
-        browser: ['Arteva Maison', 'MacOS', '1.0.0']
+        browser: Browsers.macOS('Desktop'),
+        syncFullHistory: false
     });
 
     sock.ev.on('connection.update', (update) => {
