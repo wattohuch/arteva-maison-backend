@@ -415,8 +415,8 @@ async function htmlToPrint(html, filename, printerName) {
 
   const page = await browser.newPage();
   try {
-    // Ultra-high DPI viewport for crystal clear text
-    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 3 });
+    // Standard viewport (deviceScaleFactor: 1 prevents OOM crashes on Raspberry Pi)
+    await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
     await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 60000 });
     await new Promise(r => setTimeout(r, 4000)); // Extra time for fonts + QR to render at full quality
     await page.pdf({
