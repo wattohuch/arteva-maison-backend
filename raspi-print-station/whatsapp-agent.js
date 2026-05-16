@@ -1,3 +1,7 @@
+// Polyfill for older Node.js versions
+const crypto = require('crypto');
+if (!global.crypto) global.crypto = crypto;
+
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const https = require('https');
