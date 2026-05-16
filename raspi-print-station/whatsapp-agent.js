@@ -1,6 +1,7 @@
 // Polyfill for older Node.js versions
 const crypto = require('crypto');
-if (!global.crypto) global.crypto = crypto;
+global.crypto = crypto.webcrypto || crypto;
+globalThis.crypto = crypto.webcrypto || crypto;
 
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
