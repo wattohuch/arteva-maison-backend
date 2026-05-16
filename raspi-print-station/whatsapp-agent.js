@@ -3,7 +3,7 @@ const crypto = require('crypto');
 global.crypto = crypto.webcrypto || crypto;
 globalThis.crypto = crypto.webcrypto || crypto;
 
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const https = require('https');
 
@@ -42,11 +42,14 @@ async function apiRequest(endpoint, method = 'GET', body = null) {
 async function startAgent() {
     console.log('🔄 Initializing WhatsApp Agent...');
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    console.log(`📱 Using WhatsApp Web v${version.join('.')}`);
     
     // Disable noisy logs from Baileys
     const logger = pino({ level: 'silent' });
 
     const sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: true,
         logger,
