@@ -195,6 +195,51 @@ router.post('/print-queue/done/:orderId', async (req, res) => {
     }
 });
 
+// ═══════════════════════════════════════════════════
+// RASPBERRY PI WHATSAPP AGENT ENDPOINTS
+// ═══════════════════════════════════════════════════
+
+router.get('/whatsapp-queue/poll', async (req, res) => {
+    if (req.query.key !== PRINT_AGENT_KEY) {
+        return res.status(401).json({ success: false, message: 'Invalid key' });
+    }
+    try {
+        const WhatsAppQueue = require('../models/WhatsAppQueue');
+        // Fetch up to 10 pending messages
+        const messages = await WhatsAppQueue.find({ status: 'pending' })
+            .sort({ createdAt: 1 })
+            .limit(10)
+            .lean();
+
+        res.json({ success: true, count: messages.length, messages });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+router.post('/whatsapp-queue/status/:id', async (req, res) => {
+    if (req.query.key !== PRINT_AGENT_KEY) {
+        return res.status(401).json({ success: false, message: 'Invalid key' });
+    }
+    try {
+        const { status, errorLog } = req.body;
+        const WhatsAppQueue = require('../models/WhatsAppQueue');
+        
+        const updateData = { status, $inc: { attempts: 1 } };
+        if (errorLog) updateData.errorLog = errorLog;
+
+        const result = await WhatsAppQueue.findByIdAndUpdate(
+            req.params.id,
+            updateData,
+            { new: true }
+        );
+
+        res.json({ success: true, message: result });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
 // Products
 router.route('/products')
     .get(protect, admin, getAdminProducts)

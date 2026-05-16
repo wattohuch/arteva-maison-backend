@@ -144,134 +144,29 @@ class WhatsAppService {
     }
 
     /**
-     * Send WhatsApp message via Green API (FIFO queued with retry)
-     * All messages go through a serial queue to prevent rate limit conflicts.
-     * Returns a Promise that resolves when the message is actually sent.
+     * Enqueue WhatsApp message into the database for the Raspberry Pi to pick up
      */
-    async sendMessage(to, message) {
-        if (!this.instanceId || !this.apiToken) {
-            console.warn('⚠️ WhatsApp not configured. Set GREEN_API_INSTANCE_ID and GREEN_API_TOKEN');
-            return { success: false, error: 'Not configured' };
-        }
-
+    async sendMessage(to, message, type = 'test', orderId = null) {
         const phone = this.formatPhone(to);
         if (!phone) {
             console.warn('⚠️ Invalid phone number:', to);
             return { success: false, error: 'Invalid phone' };
         }
 
-        // Enqueue and wait for serial processing
-        return new Promise((resolve) => {
-            this._messageQueue.push({ phone, message, resolve, attempt: 0 });
-            console.log(`[WA-FIFO] Enqueued message to ${phone} (queue size: ${this._messageQueue.length})`);
-            this._processQueue(); // Kick off processing if idle
-        });
-    }
-
-    /**
-     * Process the FIFO queue serially — one message at a time.
-     * 10s delay between messages. 3 retries per message with 15s backoff.
-     */
-    async _processQueue() {
-        if (this._isProcessingQueue) return; // Already processing
-        this._isProcessingQueue = true;
-
-        console.log(`[WA-FIFO] Queue processing started (${this._messageQueue.length} job(s))`);
-
-        while (this._messageQueue.length > 0) {
-            const job = this._messageQueue.shift();
-            let result = null;
-
-            // Try sending with retries
-            for (let attempt = 1; attempt <= this._maxRetries; attempt++) {
-                job.attempt = attempt;
-                console.log(`[WA-FIFO] Sending to ${job.phone} (attempt ${attempt}/${this._maxRetries})...`);
-                
-                result = await this._sendDirect(job.phone, job.message);
-
-                if (result.success) {
-                    break; // Success! Move to next message
-                }
-
-                // Failed — check if retryable
-                const isRateLimit = (result.error || '').toLowerCase().includes('rate') ||
-                                    (result.error || '').toLowerCase().includes('limit') ||
-                                    (result.error || '').toLowerCase().includes('too many') ||
-                                    (result.error || '').includes('429');
-                
-                if (attempt < this._maxRetries) {
-                    const retryDelay = isRateLimit ? this._retryDelayMs * 2 : this._retryDelayMs;
-                    console.log(`[WA-FIFO] ⏳ Retry in ${retryDelay/1000}s for ${job.phone} (${result.error})`);
-                    await new Promise(r => setTimeout(r, retryDelay));
-                } else {
-                    console.error(`[WA-FIFO] ❌ All ${this._maxRetries} attempts failed for ${job.phone}: ${result.error}`);
-                }
-            }
-
-            job.resolve(result);
-
-            // Wait between messages to respect rate limits
-            if (this._messageQueue.length > 0) {
-                console.log(`[WA-FIFO] ⏳ Waiting ${this._sendDelayMs/1000}s before next message (${this._messageQueue.length} remaining)...`);
-                await new Promise(r => setTimeout(r, this._sendDelayMs));
-            }
-        }
-
-        console.log(`[WA-FIFO] Queue empty — all messages processed`);
-        this._isProcessingQueue = false;
-    }
-
-    /**
-     * Direct send to Green API — internal, called only by _processQueue.
-     */
-    async _sendDirect(phone, message) {
         try {
-            const chatId = `${phone}@c.us`;
-            const url = `${this.baseUrl}/sendMessage/${this.apiToken}`;
-
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chatId, message }),
-                signal: controller.signal,
+            const WhatsAppQueue = require('../models/WhatsAppQueue');
+            const newMsg = new WhatsAppQueue({
+                phone,
+                message,
+                type,
+                order: orderId
             });
-            clearTimeout(timeout);
-
-            const responseText = await res.text();
-            console.log(`[WA-SEND] Response for ${phone}: HTTP ${res.status} — ${responseText.substring(0, 200)}`);
-
-            // Handle HTTP-level rate limiting
-            if (res.status === 429) {
-                return { success: false, error: '429 Rate limited by Green API' };
-            }
-            if (res.status >= 400) {
-                return { success: false, error: `HTTP ${res.status}: ${responseText.substring(0, 100)}` };
-            }
-
-            let data;
-            try {
-                data = JSON.parse(responseText);
-            } catch (parseErr) {
-                return { success: false, error: `Non-JSON response: ${responseText.substring(0, 100)}` };
-            }
-
-            if (data.idMessage) {
-                console.log(`📱 WhatsApp DELIVERED to ${phone} ✅ (${data.idMessage})`);
-                return { success: true, messageId: data.idMessage };
-            } else {
-                console.error(`❌ WhatsApp REJECTED for ${phone}:`, JSON.stringify(data));
-                return { success: false, error: data.message || JSON.stringify(data) };
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.error(`❌ WhatsApp TIMEOUT for ${phone} (30s)`);
-                return { success: false, error: 'Request timeout (30s)' };
-            }
-            console.error(`❌ WhatsApp ERROR for ${phone}:`, error.message);
-            return { success: false, error: error.message };
+            await newMsg.save();
+            console.log(`[WA-QUEUE] Enqueued message to ${phone} (type: ${type}) for Raspberry Pi`);
+            return { success: true, queued: true };
+        } catch (err) {
+            console.error(`❌ WhatsApp Enqueue error for ${phone}:`, err.message);
+            return { success: false, error: err.message };
         }
     }
 
@@ -373,7 +268,7 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
         for (let i = 0; i < ownerPhones.length; i++) {
             const phone = ownerPhones[i];
             try {
-                const result = await this.sendMessage(phone, message);
+                const result = await this.sendMessage(phone, message, 'owner_new_order', order._id);
                 results.push(result);
                 console.log(`[WA-OWNER] Phone ${i+1}/${ownerPhones.length} (${phone}): ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
             } catch (err) {
@@ -420,7 +315,7 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
         const results = [];
         for (let i = 0; i < ownerPhones.length; i++) {
             try {
-                const result = await this.sendMessage(ownerPhones[i], message);
+                const result = await this.sendMessage(ownerPhones[i], message, 'status_update', order._id);
                 results.push(result);
             } catch (err) {
                 console.error(`[WA-OWNER] Cancel notify to ${ownerPhones[i]} failed: ${err.message}`);
@@ -471,7 +366,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         const results = [];
         for (let i = 0; i < ownerPhones.length; i++) {
             try {
-                const result = await this.sendMessage(ownerPhones[i], message);
+                const result = await this.sendMessage(ownerPhones[i], message, 'status_update', order._id);
                 results.push(result);
             } catch (err) {
                 console.error(`[WA-OWNER] Status notify to ${ownerPhones[i]} failed: ${err.message}`);
@@ -504,7 +399,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         const results = [];
         for (let i = 0; i < ownerPhones.length; i++) {
             try {
-                const result = await this.sendMessage(ownerPhones[i], message);
+                const result = await this.sendMessage(ownerPhones[i], message, 'status_update', order._id);
                 results.push(result);
             } catch (err) {
                 console.error(`[WA-OWNER] Payment notify to ${ownerPhones[i]} failed: ${err.message}`);
@@ -566,7 +461,7 @@ We will notify you when your order ships.
 📄 عرض الإيصال: ${receiptUrl}
 📍 تتبع الطلب: ${trackUrl}`;
 
-        const result = await this.sendMessage(phone, message);
+        const result = await this.sendMessage(phone, message, 'customer_new_order', order._id);
         console.log(`[WA-CUSTOMER] Result for ${order.orderNumber}: ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
         return result;
     }
@@ -662,7 +557,7 @@ ${status.ar}
 
 ${linksAr}`;
 
-        const result = await this.sendMessage(phone, message);
+        const result = await this.sendMessage(phone, message, 'status_update', order._id);
         console.log(`[WA-CUSTOMER] Status change result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
@@ -705,7 +600,7 @@ Thank you for shopping with ARTÉVA Maison! ✨
 
 شكراً لتسوقكم مع ARTÉVA Maison! ✨`;
 
-        const result = await this.sendMessage(phone, message);
+        const result = await this.sendMessage(phone, message, 'status_update', order._id);
         console.log(`[WA-CUSTOMER] Delivery result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
