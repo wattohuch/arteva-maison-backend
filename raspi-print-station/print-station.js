@@ -258,9 +258,17 @@ async function saveToQueue(order) {
   const finalPath = path.join(PENDING_DIR, filename);
   const tmpPath = finalPath + '.tmp';
   
-  // Atomic write: Write to .tmp first, then rename. 
-  // This prevents corrupt JSON files if the Pi loses power mid-write.
-  await fsp.writeFile(tmpPath, JSON.stringify(job, null, 2));
+  // Atomic write with fsync: Guarantees data is written to physical disk before rename.
+  // This completely prevents corrupt JSON files if the Pi loses power abruptly.
+  let filehandle;
+  try {
+    filehandle = await fsp.open(tmpPath, 'w');
+    await filehandle.writeFile(JSON.stringify(job, null, 2));
+    await filehandle.sync(); // Force flush to SD card
+  } finally {
+    if (filehandle) await filehandle.close();
+  }
+  
   await fsp.rename(tmpPath, finalPath);
   
   log(`📥 Queued to disk: ${job.orderNumber} → ${filename}`);
@@ -303,7 +311,18 @@ async function moveToFailed(filename, error) {
     const job = JSON.parse(await fsp.readFile(fp, 'utf8'));
     job.lastError = error;
     job.failedAt = new Date().toISOString();
-    await fsp.writeFile(path.join(FAILED_DIR, filename), JSON.stringify(job, null, 2));
+    const failedPath = path.join(FAILED_DIR, filename);
+    const tmpFailedPath = failedPath + '.tmp';
+    
+    let filehandle;
+    try {
+      filehandle = await fsp.open(tmpFailedPath, 'w');
+      await filehandle.writeFile(JSON.stringify(job, null, 2));
+      await filehandle.sync();
+    } finally {
+      if (filehandle) await filehandle.close();
+    }
+    await fsp.rename(tmpFailedPath, failedPath);
     await fsp.unlink(fp);
   } catch (_) {}
 }
@@ -320,9 +339,17 @@ async function updateRetry(filename, error) {
       return false;
     }
     
-    // Atomic update
+    // Atomic update with fsync
     const tmpPath = fp + '.tmp';
-    await fsp.writeFile(tmpPath, JSON.stringify(job, null, 2));
+    let filehandle;
+    try {
+      filehandle = await fsp.open(tmpPath, 'w');
+      await filehandle.writeFile(JSON.stringify(job, null, 2));
+      await filehandle.sync();
+    } finally {
+      if (filehandle) await filehandle.close();
+    }
+    
     await fsp.rename(tmpPath, fp);
     
     log(`🔄 Retry ${job.retries}/${MAX_RETRIES} for ${job.orderNumber}: ${error}`);
