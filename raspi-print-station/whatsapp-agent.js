@@ -7,7 +7,7 @@ const { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLa
 const pino = require('pino');
 const https = require('https');
 
-const API_KEY = process.env.API_KEY || 'arteva_secret_2024_print';
+const API_KEY = process.env.PRINT_KEY || 'arteva-print-2026';
 const BASE_URL = process.env.API_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
 
 const POLL_INTERVAL = 10000; // 10 seconds
