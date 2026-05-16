@@ -53,7 +53,7 @@ async function startAgent() {
         auth: state,
         printQRInTerminal: true,
         logger,
-        browser: Browsers.macOS('Desktop'),
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false
     });
 
