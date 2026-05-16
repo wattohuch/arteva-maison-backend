@@ -4,12 +4,19 @@ const Product = require('../models/Product');
 const { asyncHandler } = require('../middleware/error');
 const { paginate } = require('../utils/helpers');
 const { emitNewOrder } = require('../socketHandler');
+const { WhatsAppService } = require('../services/whatsappService');
 
 // @desc    Create new order
 // @route   POST /api/orders
 // @access  Private
 const createOrder = asyncHandler(async (req, res) => {
     const { shippingAddress, paymentMethod, notes } = req.body;
+
+    // Normalize phone number to international format before saving
+    if (shippingAddress && shippingAddress.phone) {
+        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
+        console.log(`[ORDER] Normalized shipping phone: ${shippingAddress.phone}`);
+    }
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');

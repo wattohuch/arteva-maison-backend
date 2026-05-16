@@ -33,6 +33,14 @@ class WhatsAppService {
         }
         this.frontendUrl = frontendUrl;
 
+        // ── FIFO Message Queue ──────────────────────────────────
+        // Green API free tier has rate limits (~1 msg/sec).
+        // All sendMessage calls go through this serial queue so
+        // concurrent owner+customer notifications don't collide.
+        this._messageQueue = [];
+        this._isProcessingQueue = false;
+        this._sendDelayMs = 3000; // 3s gap between messages
+
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
 
@@ -41,6 +49,7 @@ class WhatsAppService {
             console.log(`   Instance: ${this.instanceId}`);
             console.log(`   API URL: ${apiHost}`);
             console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
+            console.log(`   FIFO queue delay: ${this._sendDelayMs}ms`);
             this.checkStatus();
         } else {
             console.error('╔══════════════════════════════════════════════════════╗');
@@ -81,9 +90,14 @@ class WhatsAppService {
      */
     formatPhone(phone) {
         if (!phone) return null;
+        let raw = String(phone).trim();
         // Remove all non-digits
-        let cleaned = phone.replace(/[^\d]/g, '');
-        // If starts with 0, assume Kuwait, add 965
+        let cleaned = raw.replace(/[^\d]/g, '');
+        // Strip international dialing prefix 00
+        if (cleaned.startsWith('00')) {
+            cleaned = cleaned.substring(2);
+        }
+        // If starts with 0 (local format), assume Kuwait, replace with 965
         if (cleaned.startsWith('0')) {
             cleaned = '965' + cleaned.substring(1);
         }
@@ -91,11 +105,47 @@ class WhatsAppService {
         if (cleaned.length === 8) {
             cleaned = '965' + cleaned;
         }
+        // Prevent duplicate country code (e.g. 96596597295917)
+        if (cleaned.length > 11 && cleaned.startsWith('965965')) {
+            cleaned = cleaned.substring(3);
+        }
+        if (raw !== cleaned) {
+            console.log(`[WA-PHONE] Normalized: "${raw}" → "${cleaned}"`);
+        }
         return cleaned;
     }
 
     /**
-     * Send WhatsApp message via Green API
+     * Normalize phone to international format for storage (+965XXXXXXXX)
+     * Can be used by controllers before saving to DB
+     */
+    static normalizePhoneInternational(phone, defaultCountryCode = '965') {
+        if (!phone) return phone;
+        let cleaned = String(phone).trim().replace(/[^\d]/g, '');
+        // Strip 00 prefix
+        if (cleaned.startsWith('00')) {
+            cleaned = cleaned.substring(2);
+        }
+        // If starts with 0 (local), replace with country code
+        if (cleaned.startsWith('0')) {
+            cleaned = defaultCountryCode + cleaned.substring(1);
+        }
+        // If 8 digits (Kuwait local), add country code
+        if (cleaned.length === 8) {
+            cleaned = defaultCountryCode + cleaned;
+        }
+        // Prevent duplicate country code
+        const cc = defaultCountryCode;
+        if (cleaned.length > 11 && cleaned.startsWith(cc + cc)) {
+            cleaned = cleaned.substring(cc.length);
+        }
+        return '+' + cleaned;
+    }
+
+    /**
+     * Send WhatsApp message via Green API (FIFO queued)
+     * All messages go through a serial queue to prevent rate limit conflicts.
+     * Returns a Promise that resolves when the message is actually sent.
      */
     async sendMessage(to, message) {
         if (!this.instanceId || !this.apiToken) {
@@ -103,13 +153,47 @@ class WhatsAppService {
             return { success: false, error: 'Not configured' };
         }
 
-        try {
-            const phone = this.formatPhone(to);
-            if (!phone) {
-                console.warn('⚠️ Invalid phone number:', to);
-                return { success: false, error: 'Invalid phone' };
-            }
+        const phone = this.formatPhone(to);
+        if (!phone) {
+            console.warn('⚠️ Invalid phone number:', to);
+            return { success: false, error: 'Invalid phone' };
+        }
 
+        // Enqueue and wait for serial processing
+        return new Promise((resolve) => {
+            this._messageQueue.push({ phone, message, resolve });
+            console.log(`[WA-FIFO] Enqueued message to ${phone} (queue size: ${this._messageQueue.length})`);
+            this._processQueue(); // Kick off processing if idle
+        });
+    }
+
+    /**
+     * Process the FIFO queue serially — one message at a time with delay between sends.
+     * This prevents Green API rate limit errors when sending to owner1 + owner2 + customer.
+     */
+    async _processQueue() {
+        if (this._isProcessingQueue) return; // Already processing
+        this._isProcessingQueue = true;
+
+        while (this._messageQueue.length > 0) {
+            const job = this._messageQueue.shift();
+            const result = await this._sendDirect(job.phone, job.message);
+            job.resolve(result);
+
+            // Wait between messages to respect rate limits
+            if (this._messageQueue.length > 0) {
+                await new Promise(r => setTimeout(r, this._sendDelayMs));
+            }
+        }
+
+        this._isProcessingQueue = false;
+    }
+
+    /**
+     * Direct send to Green API — internal, called only by _processQueue.
+     */
+    async _sendDirect(phone, message) {
+        try {
             const chatId = `${phone}@c.us`;
 
             const res = await fetch(`${this.baseUrl}/sendMessage/${this.apiToken}`, {
@@ -128,7 +212,7 @@ class WhatsAppService {
                 return { success: false, error: data.message || 'Send failed' };
             }
         } catch (error) {
-            console.error(`❌ WhatsApp error to ${to}:`, error.message);
+            console.error(`❌ WhatsApp error to ${phone}:`, error.message);
             return { success: false, error: error.message };
         }
     }
@@ -214,10 +298,6 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
                 console.error(`[WA-OWNER] Phone ${i+1}/${ownerPhones.length} (${phone}): ❌ Exception: ${err.message}`);
                 results.push({ success: false, error: err.message });
             }
-            // Rate limit protection: 1.5s between sends
-            if (i < ownerPhones.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
-            }
         }
         console.log(`[WA-OWNER] Notification complete: ${results.filter(r => r.success).length}/${ownerPhones.length} delivered`);
         return results;
@@ -264,7 +344,6 @@ ${isArabic ? 'تواصل مع العميل لترتيب الاسترداد:' : '
                 console.error(`[WA-OWNER] Cancel notify to ${ownerPhones[i]} failed: ${err.message}`);
                 results.push({ success: false, error: err.message });
             }
-            if (i < ownerPhones.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
         return results;
     }
@@ -316,7 +395,6 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
                 console.error(`[WA-OWNER] Status notify to ${ownerPhones[i]} failed: ${err.message}`);
                 results.push({ success: false, error: err.message });
             }
-            if (i < ownerPhones.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
         return results;
     }
@@ -350,7 +428,6 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
                 console.error(`[WA-OWNER] Payment notify to ${ownerPhones[i]} failed: ${err.message}`);
                 results.push({ success: false, error: err.message });
             }
-            if (i < ownerPhones.length - 1) await new Promise(r => setTimeout(r, 1500));
         }
         return results;
     }
@@ -363,8 +440,18 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
      * Notify customer about new order confirmation (BILINGUAL)
      */
     async notifyCustomerNewOrder(order, user) {
-        if (!user.phone && !order.shippingAddress?.phone) return;
-        const phone = user.phone || order.shippingAddress.phone;
+        const rawPhone = user.phone || order.shippingAddress?.phone;
+        console.log(`[WA-CUSTOMER] notifyCustomerNewOrder for ${order.orderNumber}`);
+        console.log(`[WA-CUSTOMER]   user.phone: ${user.phone || '(none)'}`);
+        console.log(`[WA-CUSTOMER]   shippingAddress.phone: ${order.shippingAddress?.phone || '(none)'}`);
+        console.log(`[WA-CUSTOMER]   resolved rawPhone: ${rawPhone || '(none)'}`);
+
+        if (!rawPhone) {
+            console.warn(`[WA-CUSTOMER] ❌ No phone number available for customer ${user.name || 'unknown'} on order ${order.orderNumber}. Skipping.`);
+            return { success: false, error: 'No customer phone' };
+        }
+
+        const phone = rawPhone;
         const name = user.name || 'Valued Customer';
 
         const trackUrl = this.buildTrackingUrl(order);
@@ -394,7 +481,9 @@ We will notify you when your order ships.
 📄 عرض الإيصال: ${receiptUrl}
 📍 تتبع الطلب: ${trackUrl}`;
 
-        return this.sendMessage(phone, message);
+        const result = await this.sendMessage(phone, message);
+        console.log(`[WA-CUSTOMER] Result for ${order.orderNumber}: ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
+        return result;
     }
 
     /**
@@ -402,11 +491,18 @@ We will notify you when your order ships.
      * Sends for ALL meaningful statuses with appropriate links
      */
     async notifyCustomerOrderStatusChange(order, user, newStatus) {
-        if (!user.phone && !order.shippingAddress?.phone) return;
+        const rawPhone = user.phone || order.shippingAddress?.phone;
+        console.log(`[WA-CUSTOMER] notifyCustomerOrderStatusChange → ${newStatus} for ${order.orderNumber}, phone: ${rawPhone || '(none)'}`);
+
+        if (!rawPhone) {
+            console.warn(`[WA-CUSTOMER] ❌ No phone for status change notification on ${order.orderNumber}. Skipping.`);
+            return { success: false, error: 'No customer phone' };
+        }
+
         // Skip pending (handled by notifyCustomerNewOrder) and delivered (handled by notifyCustomerDelivery)
         if (newStatus === 'pending' || newStatus === 'delivered') return;
 
-        const phone = user.phone || order.shippingAddress.phone;
+        const phone = rawPhone;
         const name = user.name || 'Valued Customer';
         const trackUrl = this.buildTrackingUrl(order);
         const receiptUrl = this.buildReceiptUrl(order);
@@ -481,16 +577,24 @@ ${status.ar}
 
 ${linksAr}`;
 
-        return this.sendMessage(phone, message);
+        const result = await this.sendMessage(phone, message);
+        console.log(`[WA-CUSTOMER] Status change result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
+        return result;
     }
 
     /**
      * Notify customer about delivery with proof URL (BILINGUAL)
      */
     async notifyCustomerDelivery(order, user, proofUrl) {
-        if (!user.phone && !order.shippingAddress?.phone) return;
+        const rawPhone = user.phone || order.shippingAddress?.phone;
+        console.log(`[WA-CUSTOMER] notifyCustomerDelivery for ${order.orderNumber}, phone: ${rawPhone || '(none)'}`);
 
-        const phone = user.phone || order.shippingAddress.phone;
+        if (!rawPhone) {
+            console.warn(`[WA-CUSTOMER] ❌ No phone for delivery notification on ${order.orderNumber}. Skipping.`);
+            return { success: false, error: 'No customer phone' };
+        }
+
+        const phone = rawPhone;
         const name = user.name || 'Valued Customer';
         const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
         const fullProofUrl = `${backendUrl}${proofUrl}`;
@@ -516,8 +620,14 @@ Thank you for shopping with ARTÉVA Maison! ✨
 
 شكراً لتسوقكم مع ARTÉVA Maison! ✨`;
 
-        return this.sendMessage(phone, message);
+        const result = await this.sendMessage(phone, message);
+        console.log(`[WA-CUSTOMER] Delivery result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
+        return result;
     }
 }
 
+// Export singleton instance
 module.exports = new WhatsAppService();
+
+// Also export the class for static method access
+module.exports.WhatsAppService = WhatsAppService;

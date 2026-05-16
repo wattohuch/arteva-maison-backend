@@ -29,12 +29,31 @@ class MyFatoorahService {
         try {
             console.log('MyFatoorah initiatePayment - Base URL:', this.baseUrl);
             console.log('MyFatoorah initiatePayment - Order Data:', JSON.stringify(orderData, null, 2));
+
+            // Clean phone number - same logic as executePayment
+            let rawPhone = (orderData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
+            rawPhone = rawPhone.replace(/^00/, '');
+            if (!rawPhone || rawPhone.length < 4) {
+                rawPhone = '96500000000';
+            }
+            let mobileCountryCode = '965';
+            let cleanPhone = rawPhone;
+            const gccCodes = ['965', '966', '971', '974', '973', '968'];
+            const matchedCode = gccCodes.find(code => rawPhone.startsWith(code));
+            if (matchedCode) {
+                mobileCountryCode = matchedCode;
+                cleanPhone = rawPhone.substring(matchedCode.length);
+            }
+            if (!cleanPhone || cleanPhone.length < 4) {
+                cleanPhone = '00000000';
+            }
+
             const payload = {
                 CustomerName: orderData.customerName,
                 InvoiceValue: orderData.amount,
                 DisplayCurrencyIso: orderData.currency || 'KWD',
                 CustomerEmail: orderData.customerEmail,
-                CustomerMobile: orderData.customerPhone,
+                CustomerMobile: cleanPhone,
                 CallBackUrl: `${process.env.BACKEND_URL || 'https://arteva-maison-backend-gy1x.onrender.com'}/api/payments/callback`,
                 ErrorUrl: `${process.env.FRONTEND_URL}/payment-error.html`,
                 Language: orderData.language || 'en',
@@ -46,7 +65,7 @@ class MyFatoorahService {
                     UnitPrice: item.price
                 })),
                 // Enable payment methods
-                MobileCountryCode: '+965' // Kuwait
+                MobileCountryCode: mobileCountryCode
             };
 
             const response = await axios.post(

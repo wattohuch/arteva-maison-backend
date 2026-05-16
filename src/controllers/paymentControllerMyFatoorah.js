@@ -4,6 +4,7 @@ const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const myfatoorah = require('../services/myfatoorahService');
 const { sendOrderConfirmation } = require('../services/emailService');
+const { WhatsAppService } = require('../services/whatsappService');
 
 // @desc    Get available payment methods
 // @route   GET /api/payments/methods
@@ -23,6 +24,12 @@ const getPaymentMethods = asyncHandler(async (req, res) => {
 // @access  Private
 const createPaymentSession = asyncHandler(async (req, res) => {
     const { paymentMethod, shippingAddress } = req.body;
+
+    // Normalize phone before processing
+    if (shippingAddress && shippingAddress.phone) {
+        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
+        console.log(`[PAYMENT-SESSION] Normalized phone: ${shippingAddress.phone}`);
+    }
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
@@ -103,9 +110,14 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 const executePayment = asyncHandler(async (req, res) => {
     const { paymentMethodId, shippingAddress } = req.body;
 
+    // Normalize phone before processing
+    if (shippingAddress && shippingAddress.phone) {
+        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
+    }
+
     console.log('=== EXECUTE PAYMENT REQUEST ===');
     console.log('Payment Method ID:', paymentMethodId);
-    console.log('Shipping Address:', JSON.stringify(shippingAddress, null, 2));
+    console.log('Shipping Phone (normalized):', shippingAddress?.phone);
     console.log('User:', req.user.email);
 
     // paymentMethodId: 1=KNET, 2=VISA/Master, 20=Apple Pay
@@ -438,6 +450,12 @@ const handleWebhook = asyncHandler(async (req, res) => {
 // @access  Private
 const processCOD = asyncHandler(async (req, res) => {
     const { shippingAddress } = req.body;
+
+    // Normalize phone before processing
+    if (shippingAddress && shippingAddress.phone) {
+        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
+        console.log(`[COD] Normalized phone: ${shippingAddress.phone}`);
+    }
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
