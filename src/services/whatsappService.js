@@ -34,12 +34,13 @@ class WhatsAppService {
         this.frontendUrl = frontendUrl;
 
         // ── FIFO Message Queue ──────────────────────────────────
-        // Green API free tier has rate limits (~1 msg/sec).
-        // All sendMessage calls go through this serial queue so
-        // concurrent owner+customer notifications don't collide.
+        // Green API free tier: VERY strict rate limits (~1 msg per 10s).
+        // All sendMessage calls go through a serial queue with retry.
         this._messageQueue = [];
         this._isProcessingQueue = false;
-        this._sendDelayMs = 5000; // 5s gap between messages (Green API free tier rate limit)
+        this._sendDelayMs = 10000; // 10s gap — Green API free tier needs this
+        this._maxRetries = 3;      // Retry failed sends up to 3 times
+        this._retryDelayMs = 15000; // 15s wait before retry
 
         // Check connection on startup
         this.isConnected = !!(this.instanceId && this.apiToken);
@@ -49,7 +50,7 @@ class WhatsAppService {
             console.log(`   Instance: ${this.instanceId}`);
             console.log(`   API URL: ${apiHost}`);
             console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
-            console.log(`   FIFO queue delay: ${this._sendDelayMs}ms`);
+            console.log(`   Queue: ${this._sendDelayMs}ms delay, ${this._maxRetries} retries`);
             this.checkStatus();
         } else {
             console.error('╔══════════════════════════════════════════════════════╗');
@@ -143,7 +144,7 @@ class WhatsAppService {
     }
 
     /**
-     * Send WhatsApp message via Green API (FIFO queued)
+     * Send WhatsApp message via Green API (FIFO queued with retry)
      * All messages go through a serial queue to prevent rate limit conflicts.
      * Returns a Promise that resolves when the message is actually sent.
      */
@@ -161,31 +162,62 @@ class WhatsAppService {
 
         // Enqueue and wait for serial processing
         return new Promise((resolve) => {
-            this._messageQueue.push({ phone, message, resolve });
+            this._messageQueue.push({ phone, message, resolve, attempt: 0 });
             console.log(`[WA-FIFO] Enqueued message to ${phone} (queue size: ${this._messageQueue.length})`);
             this._processQueue(); // Kick off processing if idle
         });
     }
 
     /**
-     * Process the FIFO queue serially — one message at a time with delay between sends.
-     * This prevents Green API rate limit errors when sending to owner1 + owner2 + customer.
+     * Process the FIFO queue serially — one message at a time.
+     * 10s delay between messages. 3 retries per message with 15s backoff.
      */
     async _processQueue() {
         if (this._isProcessingQueue) return; // Already processing
         this._isProcessingQueue = true;
 
+        console.log(`[WA-FIFO] Queue processing started (${this._messageQueue.length} job(s))`);
+
         while (this._messageQueue.length > 0) {
             const job = this._messageQueue.shift();
-            const result = await this._sendDirect(job.phone, job.message);
+            let result = null;
+
+            // Try sending with retries
+            for (let attempt = 1; attempt <= this._maxRetries; attempt++) {
+                job.attempt = attempt;
+                console.log(`[WA-FIFO] Sending to ${job.phone} (attempt ${attempt}/${this._maxRetries})...`);
+                
+                result = await this._sendDirect(job.phone, job.message);
+
+                if (result.success) {
+                    break; // Success! Move to next message
+                }
+
+                // Failed — check if retryable
+                const isRateLimit = (result.error || '').toLowerCase().includes('rate') ||
+                                    (result.error || '').toLowerCase().includes('limit') ||
+                                    (result.error || '').toLowerCase().includes('too many') ||
+                                    (result.error || '').includes('429');
+                
+                if (attempt < this._maxRetries) {
+                    const retryDelay = isRateLimit ? this._retryDelayMs * 2 : this._retryDelayMs;
+                    console.log(`[WA-FIFO] ⏳ Retry in ${retryDelay/1000}s for ${job.phone} (${result.error})`);
+                    await new Promise(r => setTimeout(r, retryDelay));
+                } else {
+                    console.error(`[WA-FIFO] ❌ All ${this._maxRetries} attempts failed for ${job.phone}: ${result.error}`);
+                }
+            }
+
             job.resolve(result);
 
             // Wait between messages to respect rate limits
             if (this._messageQueue.length > 0) {
+                console.log(`[WA-FIFO] ⏳ Waiting ${this._sendDelayMs/1000}s before next message (${this._messageQueue.length} remaining)...`);
                 await new Promise(r => setTimeout(r, this._sendDelayMs));
             }
         }
 
+        console.log(`[WA-FIFO] Queue empty — all messages processed`);
         this._isProcessingQueue = false;
     }
 
@@ -195,71 +227,74 @@ class WhatsAppService {
     async _sendDirect(phone, message) {
         try {
             const chatId = `${phone}@c.us`;
-            console.log(`[WA-SEND] Sending to ${chatId} via ${this.baseUrl}/sendMessage/...`);
+            const url = `${this.baseUrl}/sendMessage/${this.apiToken}`;
 
-            const res = await fetch(`${this.baseUrl}/sendMessage/${this.apiToken}`, {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chatId, message })
+                body: JSON.stringify({ chatId, message }),
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
 
             const responseText = await res.text();
+            console.log(`[WA-SEND] Response for ${phone}: HTTP ${res.status} — ${responseText.substring(0, 200)}`);
+
+            // Handle HTTP-level rate limiting
+            if (res.status === 429) {
+                return { success: false, error: '429 Rate limited by Green API' };
+            }
+            if (res.status >= 400) {
+                return { success: false, error: `HTTP ${res.status}: ${responseText.substring(0, 100)}` };
+            }
+
             let data;
             try {
                 data = JSON.parse(responseText);
             } catch (parseErr) {
-                console.error(`❌ WhatsApp non-JSON response from Green API for ${phone}: ${responseText.substring(0, 200)}`);
                 return { success: false, error: `Non-JSON response: ${responseText.substring(0, 100)}` };
             }
 
             if (data.idMessage) {
-                console.log(`📱 WhatsApp sent to ${phone} ✅ (${data.idMessage})`);
+                console.log(`📱 WhatsApp DELIVERED to ${phone} ✅ (${data.idMessage})`);
                 return { success: true, messageId: data.idMessage };
             } else {
-                console.error(`❌ WhatsApp send failed to ${phone}:`, JSON.stringify(data));
+                console.error(`❌ WhatsApp REJECTED for ${phone}:`, JSON.stringify(data));
                 return { success: false, error: data.message || JSON.stringify(data) };
             }
         } catch (error) {
-            console.error(`❌ WhatsApp error to ${phone}:`, error.message);
+            if (error.name === 'AbortError') {
+                console.error(`❌ WhatsApp TIMEOUT for ${phone} (30s)`);
+                return { success: false, error: 'Request timeout (30s)' };
+            }
+            console.error(`❌ WhatsApp ERROR for ${phone}:`, error.message);
             return { success: false, error: error.message };
-        }
-    }
-
-    /**
-     * Check if a phone number has WhatsApp (Green API)
-     */
-    async checkWhatsapp(phone) {
-        try {
-            const formatted = this.formatPhone(phone);
-            if (!formatted) return false;
-            const res = await fetch(`${this.baseUrl}/checkWhatsapp/${this.apiToken}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phoneNumber: parseInt(formatted) })
-            });
-            const data = await res.json();
-            console.log(`[WA-CHECK] ${formatted}: existsWhatsapp=${data.existsWhatsapp}`);
-            return data.existsWhatsapp === true;
-        } catch (e) {
-            console.error(`[WA-CHECK] Error checking ${phone}:`, e.message);
-            return true; // Assume exists on error, try sending anyway
         }
     }
 
     /**
      * Fire-and-forget: Send all order notifications (owners + customer) in the background.
      * Use this in payment callbacks so the redirect happens immediately.
+     * Messages are sent serially with 10s gaps and retries.
      */
     sendAllOrderNotifications(order, user) {
         // Fire and forget — don't await, don't block the HTTP response
         setImmediate(async () => {
             try {
-                console.log(`[WA-NOTIFY] Starting background notifications for ${order.orderNumber}`);
-                await this.notifyOwnerNewOrder(order, user);
-                await this.notifyCustomerNewOrder(order, user);
-                console.log(`[WA-NOTIFY] All notifications sent for ${order.orderNumber}`);
+                console.log(`[WA-NOTIFY] ═══ Starting notifications for ${order.orderNumber} ═══`);
+                const ownerResults = await this.notifyOwnerNewOrder(order, user);
+                const ownerSuccess = ownerResults.filter(r => r.success).length;
+                console.log(`[WA-NOTIFY] Owners: ${ownerSuccess}/${ownerResults.length} delivered`);
+                
+                const customerResult = await this.notifyCustomerNewOrder(order, user);
+                console.log(`[WA-NOTIFY] Customer: ${customerResult.success ? '✅' : '❌ ' + (customerResult.error || 'unknown')}`);
+                
+                console.log(`[WA-NOTIFY] ═══ Notifications complete for ${order.orderNumber} ═══`);
             } catch (err) {
-                console.error(`[WA-NOTIFY] Background notification error for ${order.orderNumber}:`, err.message);
+                console.error(`[WA-NOTIFY] ❌ FATAL error for ${order.orderNumber}:`, err.message, err.stack);
             }
         });
     }
@@ -501,13 +536,6 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         const phone = rawPhone;
         const formatted = this.formatPhone(phone);
         console.log(`[WA-CUSTOMER] Formatted phone: ${formatted}`);
-
-        // Check if customer has WhatsApp before sending
-        const hasWhatsApp = await this.checkWhatsapp(formatted);
-        if (!hasWhatsApp) {
-            console.warn(`[WA-CUSTOMER] ⚠ Phone ${formatted} does NOT have WhatsApp. Skipping notification for ${order.orderNumber}.`);
-            return { success: false, error: `Phone ${formatted} not on WhatsApp` };
-        }
 
         const name = user.name || 'Valued Customer';
 
