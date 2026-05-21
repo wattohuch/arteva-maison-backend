@@ -143,11 +143,17 @@ router.get('/whatsapp-status', protect, admin, async (req, res) => {
     }
 });
 
-// Print Agent Polling (no JWT — uses shared API key for Windows 7 compatibility)
+// Print Agent Polling (no JWT — uses shared API key)
 const PRINT_AGENT_KEY = process.env.PRINT_AGENT_KEY || 'arteva-print-2026';
 
+// Helper: Accept key from X-API-Key header (preferred) or query param (backward compat)
+function checkAgentKey(req) {
+    const key = req.headers['x-api-key'] || req.query.key;
+    return key === PRINT_AGENT_KEY;
+}
+
 router.get('/print-queue/poll', async (req, res) => {
-    if (req.query.key !== PRINT_AGENT_KEY) {
+    if (!checkAgentKey(req)) {
         return res.status(401).json({ success: false, message: 'Invalid key' });
     }
     try {
@@ -173,7 +179,7 @@ router.get('/print-queue/poll', async (req, res) => {
 });
 
 router.post('/print-queue/done/:orderId', async (req, res) => {
-    if (req.query.key !== PRINT_AGENT_KEY) {
+    if (!checkAgentKey(req)) {
         return res.status(401).json({ success: false, message: 'Invalid key' });
     }
     try {
@@ -200,7 +206,7 @@ router.post('/print-queue/done/:orderId', async (req, res) => {
 // ═══════════════════════════════════════════════════
 
 router.get('/whatsapp-queue/poll', async (req, res) => {
-    if (req.query.key !== PRINT_AGENT_KEY) {
+    if (!checkAgentKey(req)) {
         return res.status(401).json({ success: false, message: 'Invalid key' });
     }
     try {
@@ -218,7 +224,7 @@ router.get('/whatsapp-queue/poll', async (req, res) => {
 });
 
 router.post('/whatsapp-queue/status/:id', async (req, res) => {
-    if (req.query.key !== PRINT_AGENT_KEY) {
+    if (!checkAgentKey(req)) {
         return res.status(401).json({ success: false, message: 'Invalid key' });
     }
     try {
@@ -235,6 +241,39 @@ router.post('/whatsapp-queue/status/:id', async (req, res) => {
         );
 
         res.json({ success: true, message: result });
+    } catch (e) {
+        res.status(500).json({ success: false, message: e.message });
+    }
+});
+
+// Re-queue transient failures (called by WhatsApp agent on reconnect)
+router.post('/whatsapp-queue/requeue-transient', async (req, res) => {
+    if (!checkAgentKey(req)) {
+        return res.status(401).json({ success: false, message: 'Invalid key' });
+    }
+    try {
+        const WhatsAppQueue = require('../models/WhatsAppQueue');
+        // Only re-queue messages that failed due to transient connection errors
+        // and were created within the last 24 hours (don't resurrect ancient failures)
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const result = await WhatsAppQueue.updateMany(
+            {
+                status: 'failed',
+                createdAt: { $gte: oneDayAgo },
+                $or: [
+                    { errorLog: /connection closed/i },
+                    { errorLog: /connection lost/i },
+                    { errorLog: /will retry on reconnect/i },
+                    { errorLog: /will be re-queued/i }
+                ]
+            },
+            {
+                $set: { status: 'pending', errorLog: 'Re-queued after reconnect' },
+                $inc: { attempts: 0 }  // Keep attempt count for diagnostics
+            }
+        );
+        console.log(`[WA-REQUEUE] Re-queued ${result.modifiedCount} transient failure(s)`);
+        res.json({ success: true, requeued: result.modifiedCount });
     } catch (e) {
         res.status(500).json({ success: false, message: e.message });
     }

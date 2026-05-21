@@ -1,6 +1,6 @@
 {
   "name": "arteva-print-station",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "Arteva Maison – Production-Hardened Raspberry Pi Print + WhatsApp Station",
   "main": "print-station.js",
   "scripts": {

@@ -110,6 +110,14 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 const executePayment = asyncHandler(async (req, res) => {
     const { paymentMethodId, shippingAddress } = req.body;
 
+    // Validate paymentMethodId — must be a known numeric value
+    const validMethods = [1, 2, 6, 11, 20]; // KNET, VISA/MC, Mada, STC Pay, Apple Pay
+    const methodId = parseInt(paymentMethodId);
+    if (!methodId || !validMethods.includes(methodId)) {
+        res.status(400);
+        throw new Error(`Invalid payment method: ${paymentMethodId}`);
+    }
+
     // Normalize phone before processing
     if (shippingAddress && shippingAddress.phone) {
         shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
@@ -498,8 +506,12 @@ const processCOD = asyncHandler(async (req, res) => {
         });
     }
 
-    // Send confirmation email
-    await sendOrderConfirmation(order, req.user);
+    // Send confirmation email (don't fail order if email fails)
+    try {
+        await sendOrderConfirmation(order, req.user);
+    } catch (emailErr) {
+        console.error('COD email send failed:', emailErr.message);
+    }
 
     // Send WhatsApp notifications (owner + customer)
     try {

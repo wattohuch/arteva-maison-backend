@@ -1,12 +1,35 @@
 /**
  * ARTÉVA MAISON — Receipt & Label HTML Templates
- * Extracted from print-station.js for modularity.
- * These templates exactly match receipt.html from the frontend.
+ * PRODUCTION-HARDENED v5
+ *
+ * v5 Security Fixes:
+ *  - escapeHTML() on ALL user-supplied fields (prevents XSS → RCE via Chromium)
+ *  - Removed external Google Fonts CDN (true offline rendering)
+ *  - Null-safe field access throughout (no crashes on missing data)
+ *  - Safe toFixed() on all numeric fields
  */
 
 const QRCode = require('qrcode');
 const fsSync = require('fs');
 const path = require('path');
+
+// ── HTML Escaping (prevents XSS injection in Chromium renderer) ──
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Safe number formatting — never crashes on null/undefined/NaN
+function safeFixed(val, digits = 3) {
+  const num = parseFloat(val);
+  if (isNaN(num)) return '0.000';
+  return num.toFixed(digits);
+}
 
 // QR Code generation (base64 data URL with high error correction)
 async function generateQR(text) {
@@ -30,21 +53,23 @@ function getLogoBase64() {
   return _logoCache || null;
 }
 
-// Build receipt HTML — EXACT match of receipt.html from frontend
+// Build receipt HTML — all user data escaped for XSS prevention
 async function buildReceiptHTML(order) {
-  const receiptQR = await generateQR('https://www.artevamaisonkw.com/receipt.html?order=' + (order.orderNumber || ''));
+  if (!order) throw new Error('buildReceiptHTML: order is null');
+
+  const receiptQR = await generateQR('https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || ''));
   const whatsappQR = await generateQR('https://wa.me/96550683207');
   const logoB64 = getLogoBase64();
   const date = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const customer = order.user || {};
   const addr = order.shippingAddress || {};
   const items = order.items || [];
-  const statusRaw = (order.orderStatus || 'pending').replace(/_/g, ' ');
-  const payStatusRaw = (order.paymentStatus || 'pending').replace(/_/g, ' ');
+  const statusRaw = escapeHTML((order.orderStatus || 'pending').replace(/_/g, ' '));
+  const payStatusRaw = escapeHTML((order.paymentStatus || 'pending').replace(/_/g, ' '));
   const payMap = { cod: 'Cash on Delivery / الدفع عند الاستلام', knet: 'KNET / كي نت', card: 'Credit/Debit Card / بطاقة ائتمان', applepay: 'Apple Pay / أبل باي', myfatoorah: 'Online Payment / دفع إلكتروني' };
-  const payMethod = payMap[order.paymentMethod] || (order.paymentMethod || 'N/A').toUpperCase();
-  const customerName = customer.name || addr.fullName || 'Guest';
-  const addressParts = [addr.street || addr.address || addr.addressLine1, addr.area, addr.block ? 'Block ' + addr.block : '', addr.city, addr.governorate || addr.state, addr.country].filter(Boolean);
+  const payMethod = escapeHTML(payMap[order.paymentMethod] || (order.paymentMethod || 'N/A').toUpperCase());
+  const customerName = escapeHTML(customer.name || addr.fullName || 'Guest');
+  const addressParts = [addr.street || addr.address || addr.addressLine1, addr.area, addr.block ? 'Block ' + addr.block : '', addr.city, addr.governorate || addr.state, addr.country].filter(Boolean).map(escapeHTML);
 
   const statusBadge = ['confirmed','delivered'].includes(order.orderStatus)
     ? 'background:#d1fae5;color:#065f46' : order.orderStatus === 'cancelled'
@@ -54,36 +79,41 @@ async function buildReceiptHTML(order) {
     ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
 
   const itemsHTML = items.map(it => {
-    const sku = it.sku || '—';
-    const total = ((it.price || 0) * (it.quantity || 1)).toFixed(3);
+    const sku = escapeHTML(it.sku || '—');
+    const name = escapeHTML(it.name || 'Unknown');
+    const nameAr = escapeHTML(it.nameAr || '');
+    const price = safeFixed(it.price);
+    const qty = parseInt(it.quantity) || 1;
+    const total = safeFixed((parseFloat(it.price) || 0) * qty);
     return `<tr>
       <td class="sku-col">${sku}</td>
       <td>
-        <div style="font-weight:500">${it.name}</div>
-        ${it.nameAr ? '<div style="font-size:10px;color:#888;font-family:var(--font-arabic);direction:rtl">' + it.nameAr + '</div>' : ''}
+        <div style="font-weight:500">${name}</div>
+        ${nameAr ? '<div style="font-size:10px;color:#888;font-family:var(--font-arabic);direction:rtl">' + nameAr + '</div>' : ''}
       </td>
-      <td>${(it.price||0).toFixed(3)} KWD</td>
-      <td style="text-align:center">${it.quantity}</td>
+      <td>${price} KWD</td>
+      <td style="text-align:center">${qty}</td>
       <td style="text-align:right">${total} KWD</td>
     </tr>`;
   }).join('');
+
+  const escapedOrderNumber = escapeHTML(order.orderNumber || 'N/A');
+  const escapedEmail = escapeHTML(customer.email || '');
+  const escapedPhone = escapeHTML(customer.phone || addr.phone || '');
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&family=Noto+Sans+Arabic:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
     --color-text: #2c241b;
     --color-text-light: #666;
     --color-border: #e6e1d6;
     --color-gold: #D4AF37;
-    --font-display: 'Cormorant Garamond', serif;
-    --font-body: 'Montserrat', sans-serif;
-    --font-arabic: 'Noto Sans Arabic', sans-serif;
+    --font-display: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+    --font-body: 'Montserrat', 'Segoe UI', Arial, sans-serif;
+    --font-arabic: 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
   }
 
   body {
@@ -195,11 +225,11 @@ async function buildReceiptHTML(order) {
 <div class="order-meta">
   <div class="meta-group">
     <h3>Order Number <span class="ar-label">رقم الطلب</span></h3>
-    <p>${order.orderNumber || 'N/A'}</p>
+    <p>${escapedOrderNumber}</p>
   </div>
   <div class="meta-group">
     <h3>Date <span class="ar-label">التاريخ</span></h3>
-    <p>${date}</p>
+    <p>${escapeHTML(date)}</p>
   </div>
   <div class="meta-group">
     <h3>Order Status <span class="ar-label">حالة الطلب</span></h3>
@@ -211,8 +241,8 @@ async function buildReceiptHTML(order) {
   <div class="meta-group">
     <h3>Customer Details <span class="ar-label">بيانات العميل</span></h3>
     <p style="font-weight:600;margin-bottom:2px">${customerName}</p>
-    <p style="font-size:11px;color:#666;font-weight:400">${customer.email || ''}</p>
-    <p style="font-size:11px;color:#666;font-weight:400">${customer.phone || addr.phone || ''}</p>
+    <p style="font-size:11px;color:#666;font-weight:400">${escapedEmail}</p>
+    <p style="font-size:11px;color:#666;font-weight:400">${escapedPhone}</p>
   </div>
   <div class="meta-group">
     <h3>Shipping Address <span class="ar-label">عنوان الشحن</span></h3>
@@ -243,9 +273,9 @@ async function buildReceiptHTML(order) {
 </table>
 
 <div class="total-section">
-  <div class="total-row"><span>Subtotal / المجموع الفرعي</span><span>${(order.subtotal || order.total || 0).toFixed(3)} KWD</span></div>
-  <div class="total-row"><span>Delivery / التوصيل</span><span>${(order.shippingCost || 0).toFixed(3)} KWD</span></div>
-  <div class="total-row final"><span>Total Paid / المبلغ المدفوع</span><span>${(order.total || 0).toFixed(3)} KWD</span></div>
+  <div class="total-row"><span>Subtotal / المجموع الفرعي</span><span>${safeFixed(order.subtotal || order.total)} KWD</span></div>
+  <div class="total-row"><span>Delivery / التوصيل</span><span>${safeFixed(order.shippingCost)} KWD</span></div>
+  <div class="total-row final"><span>Total Paid / المبلغ المدفوع</span><span>${safeFixed(order.total)} KWD</span></div>
 </div>
 
 <div class="qr-section">
@@ -268,7 +298,7 @@ async function buildReceiptHTML(order) {
 </div>
 
 <div class="return-policy">
-  <h4>Return & Exchange Policy</h4>
+  <h4>Return &amp; Exchange Policy</h4>
   <div class="ar-title">سياسة الإرجاع والاستبدال</div>
   <p>Products may be returned or exchanged within <strong>14 days</strong> of delivery, provided they are <strong>unopened</strong> and in their <strong>original condition and packaging</strong>.</p>
   <p class="ar-text">يمكن إرجاع أو استبدال المنتجات خلال <strong>١٤ يومًا</strong> من التسليم، بشرط أن تكون <strong>غير مفتوحة</strong> وفي <strong>حالتها وتغليفها الأصلي</strong>.</p>
@@ -302,8 +332,9 @@ async function buildReceiptHTML(order) {
 </body></html>`;
 }
 
-// Build shipping label HTML
+// Build shipping label HTML — all user data escaped
 function buildLabelHTML(order) {
+  if (!order) return '<html><body><p>Error: No order data</p></body></html>';
   const addr = order.shippingAddress || {};
   const customer = order.user || {};
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -315,16 +346,16 @@ function buildLabelHTML(order) {
     .addr{border:2px solid #D4AF37;padding:10mm;margin:10mm 0;background:#fafaf8} .addr .v{font-size:18pt;line-height:1.5}
   </style></head><body>
     <div class="h"><h1>ARTÉVA MAISON</h1><p style="font-size:14pt;color:#888">SHIPPING LABEL</p></div>
-    <div class="s"><div class="l">Order Number</div><div class="v">${order.orderNumber}</div></div>
+    <div class="s"><div class="l">Order Number</div><div class="v">${escapeHTML(order.orderNumber)}</div></div>
     <div class="s"><div class="l">From</div><div class="v">Artéva Maison<br>Kuwait</div></div>
     <div class="addr"><div class="l">Deliver To</div><div class="v">
-      ${addr.fullName || customer.name || 'Customer'}<br>
-      ${addr.phone || customer.phone || ''}<br><br>
-      ${addr.street || addr.address || addr.addressLine1 || ''}<br>
-      ${[addr.area, addr.block ? 'Block ' + addr.block : '', addr.city].filter(Boolean).join(', ')}<br>
-      ${addr.governorate || addr.state || ''}<br>${addr.country || 'Kuwait'}
+      ${escapeHTML(addr.fullName || customer.name || 'Customer')}<br>
+      ${escapeHTML(addr.phone || customer.phone || '')}<br><br>
+      ${escapeHTML(addr.street || addr.address || addr.addressLine1 || '')}<br>
+      ${[addr.area, addr.block ? 'Block ' + addr.block : '', addr.city].filter(Boolean).map(escapeHTML).join(', ')}<br>
+      ${escapeHTML(addr.governorate || addr.state || '')}<br>${escapeHTML(addr.country || 'Kuwait')}
     </div></div>
   </body></html>`;
 }
 
-module.exports = { buildReceiptHTML, buildLabelHTML };
+module.exports = { buildReceiptHTML, buildLabelHTML, escapeHTML, safeFixed };

@@ -83,13 +83,22 @@ const apiLimiter = rateLimit({
     message: { success: false, message: 'Too many requests, please try again later.' }
 });
 
-// Stricter rate limiting — auth routes
+// Stricter rate limiting — auth routes (15 attempts per 15 min to prevent brute force)
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 50, // Increased for testing - reduce to 10 after launch
+    max: 15,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many login attempts, please try again later.' }
+});
+
+// Payment rate limiter — prevent payment abuse
+const paymentLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20, // 20 payment attempts per 15 min
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many payment attempts, please try again later.' }
 });
 
 // CORS configuration
@@ -104,7 +113,7 @@ const corsOptions = {
         // Allow requests with no origin (mobile apps, Postman, server-to-server)
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+        if (allowedOrigins.indexOf(origin) !== -1 || origin === 'https://arteva-maison-frontend.vercel.app') {
             callback(null, true);
         } else if (!isProd && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
             // Only allow localhost in development
@@ -126,8 +135,9 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// Note: NoSQL injection prevention removed due to Express 5.x incompatibility
-// Mongoose provides built-in protection against NoSQL injection through strict schemas
+// NoSQL injection prevention — sanitize request body/query/params
+const sanitizeRequest = require('./middleware/sanitize');
+app.use(sanitizeRequest);
 // Additional validation is done via express-validator in routes
 
 // Logging — only in development
@@ -154,7 +164,7 @@ app.use('/api/products', apiLimiter, require('./routes/products'));
 app.use('/api/categories', apiLimiter, require('./routes/categories'));
 app.use('/api/cart', apiLimiter, require('./routes/cart'));
 app.use('/api/orders', apiLimiter, require('./routes/orders'));
-app.use('/api/payments', apiLimiter, require('./routes/payments'));
+app.use('/api/payments', paymentLimiter, require('./routes/payments'));
 app.use('/api/contact', apiLimiter, require('./routes/contact'));
 app.use('/api/delivery', apiLimiter, require('./routes/delivery'));
 app.use('/api/admin', apiLimiter, require('./routes/admin'));
