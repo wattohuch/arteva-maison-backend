@@ -4,6 +4,7 @@ const {
     createPromoCode,
     getAllPromoCodes,
     getPromoCodeById,
+    getPromoCodeStats,
     updatePromoCode,
     deletePromoCode,
     addProductsToPromo,
@@ -24,6 +25,9 @@ router.route('/:id')
     .get(protect, admin, getPromoCodeById)
     .put(protect, admin, updatePromoCode)
     .delete(protect, admin, deletePromoCode);
+
+// Stats/analytics for a promo code
+router.get('/:id/stats', protect, admin, getPromoCodeStats);
 
 // Product management within a promo code
 router.post('/:id/products', protect, admin, addProductsToPromo);

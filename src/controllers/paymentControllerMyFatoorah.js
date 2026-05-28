@@ -2,6 +2,7 @@ const { asyncHandler } = require('../middleware/error');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
+const PromoCode = require('../models/PromoCode');
 const myfatoorah = require('../services/myfatoorahService');
 const { sendOrderConfirmation } = require('../services/emailService');
 const { WhatsAppService } = require('../services/whatsappService');
@@ -108,7 +109,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 // @route   POST /api/payments/execute
 // @access  Private
 const executePayment = asyncHandler(async (req, res) => {
-    const { paymentMethodId, shippingAddress } = req.body;
+    const { paymentMethodId, shippingAddress, promoCode: promoCodeStr } = req.body;
 
     // Validate paymentMethodId — must be a known numeric value
     const validMethods = [1, 2, 6, 11, 20]; // KNET, VISA/MC, Mada, STC Pay, Apple Pay
@@ -147,9 +148,88 @@ const executePayment = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
-    const total = subtotal + shippingCost;
 
-    console.log('Order totals - Subtotal:', subtotal, 'Shipping:', shippingCost, 'Total:', total);
+    // ── Promo Code Validation & Discount ──
+    let promoData = null;
+    let totalDiscount = 0;
+
+    const cartProductItems = cart.items.map(item => ({
+        product: item.product._id,
+        name: item.product.name,
+        nameAr: item.product.nameAr,
+        price: item.product.price,
+        quantity: item.quantity,
+        image: item.product.images[0]?.url
+    }));
+
+    if (promoCodeStr && promoCodeStr.trim()) {
+        const promo = await PromoCode.findOne({ code: promoCodeStr.toUpperCase().trim() })
+            .populate('products.product', 'name nameAr price');
+
+        if (promo) {
+            const validity = promo.canUserUse(req.user._id);
+            if (validity.valid) {
+                const discounts = [];
+                for (const item of cartProductItems) {
+                    const promoProduct = promo.products.find(
+                        p => p.product._id.toString() === item.product.toString()
+                    );
+                    if (promoProduct) {
+                        let discount = 0;
+                        if (promoProduct.discountType === 'percentage') {
+                            discount = (item.price * promoProduct.discountValue / 100) * item.quantity;
+                        } else {
+                            discount = promoProduct.discountValue * item.quantity;
+                        }
+                        const itemTotal = item.price * item.quantity;
+                        discount = Math.min(discount, itemTotal);
+
+                        discounts.push({
+                            product: item.product,
+                            productName: item.name,
+                            discountType: promoProduct.discountType,
+                            discountValue: promoProduct.discountValue,
+                            discountAmount: parseFloat(discount.toFixed(3))
+                        });
+                        totalDiscount += discount;
+                    }
+                }
+
+                totalDiscount = parseFloat(totalDiscount.toFixed(3));
+
+                if (totalDiscount > 0) {
+                    promoData = {
+                        code: promo.code,
+                        name: promo.name,
+                        promoCodeId: promo._id,
+                        totalDiscount,
+                        discounts
+                    };
+
+                    // Atomic usage increment
+                    const userUsageEntry = promo.usedBy.find(u => u.user.toString() === req.user._id.toString());
+                    if (userUsageEntry) {
+                        await PromoCode.updateOne(
+                            { _id: promo._id, 'usedBy.user': req.user._id },
+                            { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
+                        );
+                    } else {
+                        await PromoCode.updateOne(
+                            { _id: promo._id },
+                            { $inc: { usageCount: 1 }, $push: { usedBy: { user: req.user._id, count: 1 } } }
+                        );
+                    }
+                    console.log(`[PAYMENT] ✅ Promo "${promo.code}" applied — discount ${totalDiscount} KWD`);
+                }
+            } else {
+                console.log(`[PAYMENT] ⚠️ Promo "${promoCodeStr}" rejected: ${validity.reason}`);
+            }
+        }
+    }
+
+    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
+
+    console.log('Order totals - Subtotal:', subtotal, 'Shipping:', shippingCost, 'Discount:', totalDiscount, 'Total:', total);
 
     // Check for existing awaiting_payment order for this user to prevent duplicates
     let order = await Order.findOne({
@@ -160,38 +240,28 @@ const executePayment = asyncHandler(async (req, res) => {
     if (order) {
         // Reuse existing pending order — update it with current cart/shipping
         console.log(`[DEDUP] Reusing existing order ${order.orderNumber} instead of creating duplicate`);
-        order.items = cart.items.map(item => ({
-            product: item.product._id,
-            name: item.product.name,
-            nameAr: item.product.nameAr,
-            price: item.product.price,
-            quantity: item.quantity,
-            image: item.product.images[0]?.url
-        }));
+        order.items = cartProductItems;
         order.shippingAddress = shippingAddress;
         order.paymentMethod = getPaymentMethodName(paymentMethodId);
         order.subtotal = subtotal;
         order.shippingCost = shippingCost;
+        order.discount = totalDiscount;
+        order.promoCode = promoData;
         order.total = total;
         await order.save();
     } else {
         // Create new order
         order = await Order.create({
             user: req.user._id,
-            items: cart.items.map(item => ({
-                product: item.product._id,
-                name: item.product.name,
-                nameAr: item.product.nameAr,
-                price: item.product.price,
-                quantity: item.quantity,
-                image: item.product.images[0]?.url
-            })),
+            items: cartProductItems,
             shippingAddress,
             paymentMethod: getPaymentMethodName(paymentMethodId),
             paymentStatus: 'awaiting_payment',
             orderStatus: 'pending',
             subtotal,
             shippingCost,
+            discount: totalDiscount,
+            promoCode: promoData,
             total
         });
     }

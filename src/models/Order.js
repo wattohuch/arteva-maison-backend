@@ -107,6 +107,32 @@ const orderSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    // Promo code tracking for revenue analytics
+    promoCode: {
+        code: String,
+        name: String,
+        promoCodeId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'PromoCode'
+        },
+        totalDiscount: {
+            type: Number,
+            default: 0
+        },
+        discounts: [{
+            product: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'Product'
+            },
+            productName: String,
+            discountType: {
+                type: String,
+                enum: ['percentage', 'fixed']
+            },
+            discountValue: Number,
+            discountAmount: Number
+        }]
+    },
     total: {
         type: Number,
         required: true

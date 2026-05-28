@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
+const PromoCode = require('../models/PromoCode');
 const { asyncHandler } = require('../middleware/error');
 const { paginate } = require('../utils/helpers');
 const { emitNewOrder } = require('../socketHandler');
@@ -10,7 +11,7 @@ const { WhatsAppService } = require('../services/whatsappService');
 // @route   POST /api/orders
 // @access  Private
 const createOrder = asyncHandler(async (req, res) => {
-    const { shippingAddress, paymentMethod, notes } = req.body;
+    const { shippingAddress, paymentMethod, notes, promoCode: promoCodeStr } = req.body;
 
     // Normalize phone number to international format before saving
     if (shippingAddress && shippingAddress.phone) {
@@ -58,7 +59,80 @@ const createOrder = asyncHandler(async (req, res) => {
 
     // Calculate shipping - Fixed 2 KD for all orders
     const shippingCost = 2.0;
-    const total = subtotal + shippingCost;
+
+    // ── Promo Code Validation & Discount Calculation ──
+    let promoData = null;
+    let totalDiscount = 0;
+
+    if (promoCodeStr && promoCodeStr.trim()) {
+        const promo = await PromoCode.findOne({ code: promoCodeStr.toUpperCase().trim() })
+            .populate('products.product', 'name nameAr price');
+
+        if (promo) {
+            const validity = promo.canUserUse(req.user._id);
+            if (validity.valid) {
+                // Calculate per-product discounts
+                const discounts = [];
+                for (const orderItem of orderItems) {
+                    const promoProduct = promo.products.find(
+                        p => p.product._id.toString() === orderItem.product.toString()
+                    );
+                    if (promoProduct) {
+                        let discount = 0;
+                        if (promoProduct.discountType === 'percentage') {
+                            discount = (orderItem.price * promoProduct.discountValue / 100) * orderItem.quantity;
+                        } else {
+                            discount = promoProduct.discountValue * orderItem.quantity;
+                        }
+                        const itemTotal = orderItem.price * orderItem.quantity;
+                        discount = Math.min(discount, itemTotal);
+
+                        discounts.push({
+                            product: orderItem.product,
+                            productName: orderItem.name,
+                            discountType: promoProduct.discountType,
+                            discountValue: promoProduct.discountValue,
+                            discountAmount: parseFloat(discount.toFixed(3))
+                        });
+                        totalDiscount += discount;
+                    }
+                }
+
+                totalDiscount = parseFloat(totalDiscount.toFixed(3));
+
+                if (totalDiscount > 0) {
+                    promoData = {
+                        code: promo.code,
+                        name: promo.name,
+                        promoCodeId: promo._id,
+                        totalDiscount,
+                        discounts
+                    };
+
+                    // Atomic usage increment to prevent race conditions
+                    const userUsageEntry = promo.usedBy.find(u => u.user.toString() === req.user._id.toString());
+                    if (userUsageEntry) {
+                        await PromoCode.updateOne(
+                            { _id: promo._id, 'usedBy.user': req.user._id },
+                            { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
+                        );
+                    } else {
+                        await PromoCode.updateOne(
+                            { _id: promo._id },
+                            { $inc: { usageCount: 1 }, $push: { usedBy: { user: req.user._id, count: 1 } } }
+                        );
+                    }
+                    console.log(`[ORDER] ✅ Promo "${promo.code}" applied — discount ${totalDiscount} KWD`);
+                }
+            } else {
+                console.log(`[ORDER] ⚠️ Promo "${promoCodeStr}" rejected: ${validity.reason}`);
+            }
+        } else {
+            console.log(`[ORDER] ⚠️ Promo code "${promoCodeStr}" not found — ignoring`);
+        }
+    }
+
+    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
 
     const order = await Order.create({
         user: req.user._id,
@@ -67,6 +141,8 @@ const createOrder = asyncHandler(async (req, res) => {
         paymentMethod,
         subtotal,
         shippingCost,
+        discount: totalDiscount,
+        promoCode: promoData,
         total,
         notes
     });

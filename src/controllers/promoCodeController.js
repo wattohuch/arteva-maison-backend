@@ -1,12 +1,13 @@
 const PromoCode = require('../models/PromoCode');
 const Product = require('../models/Product');
+const Order = require('../models/Order');
 const { asyncHandler } = require('../middleware/error');
 
 // @desc    Create a new promo code
 // @route   POST /api/admin/promo-codes
 // @access  Private/Admin
 const createPromoCode = asyncHandler(async (req, res) => {
-    const { code, name, description, expiresAt, maxUsage, products } = req.body;
+    const { code, name, description, expiresAt, maxUsage, perUserLimit, products } = req.body;
 
     // Check for duplicate code
     const existing = await PromoCode.findOne({ code: code.toUpperCase().trim() });
@@ -21,6 +22,7 @@ const createPromoCode = asyncHandler(async (req, res) => {
         description,
         expiresAt,
         maxUsage: maxUsage || null,
+        perUserLimit: perUserLimit || null,
         products: products || [],
         createdBy: req.user._id
     });
@@ -67,6 +69,48 @@ const getPromoCodeById = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get promo code stats with usage analytics
+// @route   GET /api/admin/promo-codes/:id/stats
+// @access  Private/Admin
+const getPromoCodeStats = asyncHandler(async (req, res) => {
+    const promoCode = await PromoCode.findById(req.params.id)
+        .populate('products.product', 'name nameAr price images sku')
+        .populate('usedBy.user', 'name email')
+        .populate('createdBy', 'name email');
+
+    if (!promoCode) {
+        res.status(404);
+        throw new Error('Promo code not found');
+    }
+
+    // Find all orders that used this promo code
+    const orders = await Order.find({ 'promoCode.promoCodeId': promoCode._id })
+        .select('orderNumber total promoCode createdAt user paymentStatus')
+        .populate('user', 'name email')
+        .sort({ createdAt: -1 })
+        .limit(50);
+
+    const totalRevenue = orders
+        .filter(o => o.paymentStatus === 'paid')
+        .reduce((sum, o) => sum + (o.total || 0), 0);
+
+    const totalDiscountGiven = orders.reduce((sum, o) => sum + (o.promoCode?.totalDiscount || 0), 0);
+
+    res.json({
+        success: true,
+        data: {
+            promoCode,
+            stats: {
+                totalOrders: orders.length,
+                totalRevenue: parseFloat(totalRevenue.toFixed(3)),
+                totalDiscountGiven: parseFloat(totalDiscountGiven.toFixed(3)),
+                uniqueUsers: promoCode.usedBy.length
+            },
+            recentOrders: orders
+        }
+    });
+});
+
 // @desc    Update promo code
 // @route   PUT /api/admin/promo-codes/:id
 // @access  Private/Admin
@@ -78,7 +122,7 @@ const updatePromoCode = asyncHandler(async (req, res) => {
         throw new Error('Promo code not found');
     }
 
-    const { code, name, description, isActive, expiresAt, maxUsage } = req.body;
+    const { code, name, description, isActive, expiresAt, maxUsage, perUserLimit } = req.body;
 
     // If changing code, check for duplicates
     if (code && code.toUpperCase().trim() !== promoCode.code) {
@@ -95,6 +139,7 @@ const updatePromoCode = asyncHandler(async (req, res) => {
     if (isActive !== undefined) promoCode.isActive = isActive;
     if (expiresAt !== undefined) promoCode.expiresAt = expiresAt;
     if (maxUsage !== undefined) promoCode.maxUsage = maxUsage || null;
+    if (perUserLimit !== undefined) promoCode.perUserLimit = perUserLimit || null;
 
     await promoCode.save();
 
@@ -246,8 +291,9 @@ const validatePromoCode = asyncHandler(async (req, res) => {
         throw new Error('Invalid promo code');
     }
 
-    // Check validity
-    const validity = promoCode.isValid();
+    // Check validity including per-user limit
+    const userId = req.user ? req.user._id : null;
+    const validity = promoCode.canUserUse(userId);
     if (!validity.valid) {
         res.status(400);
         throw new Error(validity.reason);
@@ -296,6 +342,7 @@ const validatePromoCode = asyncHandler(async (req, res) => {
         data: {
             code: promoCode.code,
             name: promoCode.name,
+            promoCodeId: promoCode._id,
             valid: true,
             discounts,
             totalDiscount: parseFloat(totalDiscount.toFixed(3)),
@@ -309,6 +356,7 @@ module.exports = {
     createPromoCode,
     getAllPromoCodes,
     getPromoCodeById,
+    getPromoCodeStats,
     updatePromoCode,
     deletePromoCode,
     addProductsToPromo,

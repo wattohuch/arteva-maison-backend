@@ -56,12 +56,12 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
   const customerName = escapeHTML(customer.name || addr.fullName || 'Guest');
   const addressParts = [addr.street || addr.address || addr.addressLine1, addr.area, addr.block ? 'Block ' + addr.block : '', addr.city, addr.governorate || addr.state, addr.country].filter(Boolean).map(escapeHTML);
 
-  const statusBadge = ['confirmed','delivered'].includes(order.orderStatus)
+  const statusBadge = ['confirmed', 'delivered'].includes(order.orderStatus)
     ? 'background:#d1fae5;color:#065f46' : order.orderStatus === 'cancelled'
-    ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
+      ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
   const payBadge = order.paymentStatus === 'paid'
     ? 'background:#d1fae5;color:#065f46' : order.paymentStatus === 'failed'
-    ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
+      ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
 
   const itemsHTML = items.map(it => {
     const sku = escapeHTML(it.sku || '—');
