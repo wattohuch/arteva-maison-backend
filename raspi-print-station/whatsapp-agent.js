@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * ARTÉVA MAISON — WhatsApp Agent v4 (Production-Hardened, Security-Audited)
+ * ARTÉVA MAISON — WhatsApp Agent v5 (with Auto-Greeting)
  * 
  * Runs on Raspberry Pi alongside print-station.js.
  * Polls the backend's WhatsApp queue and sends messages via Baileys.
+ * NEW in v5: Auto-greets customers + forwards messages to admin.
  * 
  * v4 Fixes (over v3):
  *  Security:
@@ -42,6 +43,7 @@ const path = require('path');
 const os = require('os');
 const winston = require('winston');
 require('winston-daily-rotate-file');
+const chatbot = require('./chatbot');
 
 // ── Config ──────────────────────────────────────────────────
 const API_KEY = process.env.PRINT_KEY || 'arteva-print-2026';
@@ -92,6 +94,8 @@ function validatePhone(phone) {
 const startTime = Date.now();
 let sentCount = 0;
 let errorCount = 0;
+let greetingsSent = 0;
+let messagesForwarded = 0;
 let lastSendTime = null;
 let lastPollTime = null;
 let isConnected = false;
@@ -210,6 +214,65 @@ async function startAgent() {
         reconnectAttempts = 0;
         isStarting = false; // Done starting
         log('✅ WhatsApp successfully connected!');
+        
+        // ── Incoming Message Handler (Auto-Greeting) ──
+        sock.ev.on('messages.upsert', async ({ messages: incomingMsgs, type }) => {
+            if (type !== 'notify') return; // Only handle real-time messages
+            
+            for (const msg of incomingMsgs) {
+                try {
+                    // Skip: own messages, groups, status broadcasts
+                    if (msg.key.fromMe) continue;
+                    if (!msg.key.remoteJid) continue;
+                    if (msg.key.remoteJid.endsWith('@g.us')) continue;
+                    if (msg.key.remoteJid === 'status@broadcast') continue;
+                    
+                    // Extract text from various message types
+                    const text = msg.message?.conversation
+                              || msg.message?.extendedTextMessage?.text;
+                    if (!text) continue; // Skip images, stickers, etc.
+                    
+                    const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+                    
+                    // Skip admin phone numbers — they handle support directly
+                    if (chatbot.isAdminPhone(phone)) continue;
+                    
+                    log(`📩 Incoming from +${phone}: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+                    
+                    // Handle via chatbot
+                    const result = chatbot.handleMessage(phone, text);
+                    
+                    if (!result) {
+                        log(`  ⏸️ Already greeted +${phone} recently — staying silent`, 'debug');
+                        continue;
+                    }
+                    
+                    // Send greeting reply
+                    if (!activeSock || !isConnected) continue;
+                    await activeSock.sendMessage(msg.key.remoteJid, { text: result.reply });
+                    greetingsSent++;
+                    log(`  ✅ Auto-greeting sent to +${phone}`);
+                    
+                    // Forward to admin phones
+                    if (result.forward) {
+                        const forwardText = `📩 New customer message:\n\n📱 +${phone}\n💬 "${text}"\n\n↩️ Reply to them directly on WhatsApp.`;
+                        for (const admin of chatbot.ADMIN_PHONES) {
+                            if (!activeSock || !isConnected) break;
+                            try {
+                                await activeSock.sendMessage(`${admin}@s.whatsapp.net`, { text: forwardText });
+                                await new Promise(r => setTimeout(r, 1000)); // Brief delay between admin notifications
+                            } catch (fwdErr) {
+                                log(`  ⚠️ Failed to forward to admin ${admin}: ${fwdErr.message}`, 'warn');
+                            }
+                        }
+                        messagesForwarded++;
+                        log(`  📤 Forwarded to ${chatbot.ADMIN_PHONES.length} admin(s)`);
+                    }
+                } catch (msgErr) {
+                    log(`⚠️ Error handling incoming message: ${msgErr.message}`, 'warn');
+                }
+            }
+        });
         
         // Re-queue any recently failed transient messages
         requeueTransientFailures();
@@ -424,7 +487,7 @@ function startHealthServer() {
       const body = JSON.stringify({
         status: 'ok',
         service: 'whatsapp-agent',
-        version: '4.0.0',
+        version: '5.0.0',
         uptime: Math.floor((Date.now() - startTime) / 1000),
         connected: isConnected,
         socketAlive: !!activeSock,
@@ -432,6 +495,7 @@ function startHealthServer() {
         sending: isSending,
         sentThisSession: sentCount,
         errorsThisSession: errorCount,
+        autoGreetings: { sent: greetingsSent, forwarded: messagesForwarded, ...chatbot.getStats() },
         lastSend: lastSendTime,
         lastPoll: lastPollTime,
         reconnectAttempts,
@@ -499,8 +563,8 @@ process.on('unhandledRejection', (reason) => {
 // ── Start ───────────────────────────────────────────────────
 console.log('');
 console.log('  ╔══════════════════════════════════════════╗');
-console.log('  ║  ARTÉVA MAISON — WhatsApp Agent v4.0     ║');
-console.log('  ║  Security-Audited • Auto-Recovering      ║');
+console.log('  ║  ARTÉVA MAISON — WhatsApp Agent v5.0     ║');
+console.log('  ║  Auto-Greeting • Admin Forwarding         ║');
 console.log('  ╚══════════════════════════════════════════╝');
 console.log('');
 
