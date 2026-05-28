@@ -383,6 +383,11 @@ const cancelOrder = asyncHandler(async (req, res) => {
         const whatsapp = require('../services/whatsappService');
         // await whatsapp.notifyOwnerOrderCancellation(order, order.user, reason); // DISABLED: Owner only gets new order notifications
         await whatsapp.notifyCustomerOrderStatusChange(order, order.user, 'cancelled');
+
+        // Send refund/return notification if order was paid
+        if (order.paymentStatus === 'paid') {
+            await whatsapp.sendRefundReturnNotification(order, order.user);
+        }
     } catch (whatsappErr) {
         console.error('Failed to send WhatsApp notification:', whatsappErr);
     }
@@ -480,6 +485,65 @@ const trackOrderPublic = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get order for receipt rendering (PUBLIC — no auth required)
+// @route   GET /api/orders/receipt/:orderNumber
+// @access  Public
+// WHY PUBLIC: Receipt links are shared via WhatsApp and printed on paper.
+// They must work when opened on any device (e.g., iPhone from WhatsApp)
+// without requiring the user to be logged in.
+const getOrderForReceipt = asyncHandler(async (req, res) => {
+    const order = await Order.findOne({ orderNumber: req.params.orderNumber })
+        .populate('user', 'name email phone');
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    // Only show receipt for paid orders or COD orders
+    const isPaid = order.paymentStatus === 'paid';
+    const isCOD = order.paymentMethod === 'cod' && (order.paymentStatus === 'pending' || order.paymentStatus === 'paid');
+
+    if (!isPaid && !isCOD) {
+        res.status(403);
+        throw new Error('Receipt not available — payment not confirmed');
+    }
+
+    res.json({
+        success: true,
+        data: order
+    });
+});
+
+// @desc    Get fully rendered receipt HTML (PUBLIC — no auth required)
+// @route   GET /api/orders/receipt/:orderNumber/html
+// @access  Public
+// Returns the SAME receipt HTML as the Raspberry Pi print agent
+const getReceiptHTML = asyncHandler(async (req, res) => {
+    const order = await Order.findOne({ orderNumber: req.params.orderNumber })
+        .populate('user', 'name email phone');
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    // Only show receipt for paid orders or COD orders
+    const isPaid = order.paymentStatus === 'paid';
+    const isCOD = order.paymentMethod === 'cod' && (order.paymentStatus === 'pending' || order.paymentStatus === 'paid');
+
+    if (!isPaid && !isCOD) {
+        res.status(403);
+        throw new Error('Receipt not available — payment not confirmed');
+    }
+
+    const { generateReceiptHTML } = require('../utils/receiptTemplate');
+    const html = await generateReceiptHTML(order);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+});
+
 module.exports = {
     createOrder,
     getMyOrders,
@@ -489,5 +553,7 @@ module.exports = {
     updateOrderStatus,
     cancelOrder,
     checkCanCancel,
-    trackOrderPublic
+    trackOrderPublic,
+    getOrderForReceipt,
+    getReceiptHTML
 };

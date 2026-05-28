@@ -324,6 +324,11 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
         const whatsapp = require('../services/whatsappService');
         // await whatsapp.notifyOwnerOrderStatusChange(order, order.user, oldStatus, status); // DISABLED: Owner only gets new order notifications
         await whatsapp.notifyCustomerOrderStatusChange(order, order.user, status);
+
+        // Send refund/return notification if admin cancels a paid order
+        if (status === 'cancelled' && order.paymentStatus === 'paid') {
+            await whatsapp.sendRefundReturnNotification(order, order.user);
+        }
     } catch (whatsappErr) {
         console.error('Failed to send WhatsApp notification:', whatsappErr);
     }
@@ -996,7 +1001,7 @@ const generateReceipt = asyncHandler(async (req, res) => {
 
     // Use new pixel-perfect receipt template
     const { generateReceiptHTML } = require('../utils/receiptTemplate');
-    const receiptHtml = generateReceiptHTML(order);
+    const receiptHtml = await generateReceiptHTML(order);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(receiptHtml);

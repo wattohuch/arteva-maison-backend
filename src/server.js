@@ -172,6 +172,7 @@ app.use('/api/driver', apiLimiter, require('./routes/driver'));
 app.use('/api/images', apiLimiter, require('./routes/images'));
 app.use('/api/hero', apiLimiter, require('./routes/hero'));
 app.use('/api/push', apiLimiter, require('./routes/pushRoutes'));
+app.use('/api/promo-codes', apiLimiter, require('./routes/promoCodes'));
 
 // Health check (no rate limiting)
 app.get('/api/health', (req, res) => {
@@ -239,6 +240,25 @@ server.listen(PORT, async () => {
 
     // Start automatic backup scheduler
     startBackupScheduler();
+
+    // Promo code auto-expiry system — check every 5 minutes
+    setInterval(async () => {
+        try {
+            const PromoCode = require('./models/PromoCode');
+            const result = await PromoCode.updateMany(
+                {
+                    isActive: true,
+                    expiresAt: { $lt: new Date() }
+                },
+                { $set: { isActive: false } }
+            );
+            if (result.modifiedCount > 0) {
+                console.log(`[PROMO] 🕐 Auto-expired ${result.modifiedCount} promo code(s)`);
+            }
+        } catch (err) {
+            // Silent — promo expiry is not critical
+        }
+    }, 5 * 60 * 1000); // Every 5 minutes
 
     // Keep-alive self-ping every 14 minutes (Render free-tier)
     // Pauses between 4:00-4:59 AM Kuwait time (UTC+3) to save ~31 hrs/month

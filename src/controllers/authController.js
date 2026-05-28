@@ -22,6 +22,14 @@ const register = asyncHandler(async (req, res) => {
         // Send welcome email (async, don't wait)
         sendWelcomeEmail(user).catch(err => console.error('Welcome email error:', err));
 
+        // Send WhatsApp welcome message (async, don't wait)
+        try {
+            const whatsapp = require('../services/whatsappService');
+            whatsapp.sendWelcomeMessage(user).catch(err => console.error('Welcome WhatsApp error:', err));
+        } catch (e) {
+            console.error('WhatsApp service load error:', e.message);
+        }
+
         res.status(201).json({
             success: true,
             data: {

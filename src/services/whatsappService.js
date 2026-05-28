@@ -604,6 +604,83 @@ Thank you for shopping with ARTÉVA Maison! ✨
         console.log(`[WA-CUSTOMER] Delivery result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
+
+    // ═══════════════════════════════════════════════════
+    // AUTOMATED NOTIFICATIONS
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Send welcome message when a customer registers (BILINGUAL based on user language)
+     * Triggered immediately after successful registration
+     */
+    async sendWelcomeMessage(user) {
+        const rawPhone = user.phone;
+        console.log(`[WA-WELCOME] Sending welcome to ${user.name || 'new user'}, phone: ${rawPhone || '(none)'}`);
+
+        if (!rawPhone) {
+            console.warn(`[WA-WELCOME] ❌ No phone number for ${user.name || user.email}. Skipping welcome message.`);
+            return { success: false, error: 'No phone number' };
+        }
+
+        const isArabic = user.language === 'ar';
+
+        let message;
+        if (isArabic) {
+            message = `مرحبًا بك في أرتيفا ميزون ✨
+يسعدنا انضمامك إلينا.
+فريقنا جاهز دائمًا لخدمتك وضمان تجربة تسوق سلسة ومميزة.`;
+        } else {
+            message = `Welcome to Arteva Maison ✨
+We're delighted to have you with us.
+Our team is always here to assist you and ensure you have a seamless shopping experience.`;
+        }
+
+        const result = await this.sendMessage(rawPhone, message, 'welcome');
+        console.log(`[WA-WELCOME] Result for ${user.name || user.email}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
+        return result;
+    }
+
+    /**
+     * Send refund/return notification when a return or refund is initiated (BILINGUAL)
+     * Triggered when order is cancelled or payment status changes to refunded
+     */
+    async sendRefundReturnNotification(order, user) {
+        const rawPhone = user.phone || order.shippingAddress?.phone;
+        console.log(`[WA-REFUND] Sending refund/return notification for ${order.orderNumber}, phone: ${rawPhone || '(none)'}`);
+
+        if (!rawPhone) {
+            console.warn(`[WA-REFUND] ❌ No phone for refund notification on ${order.orderNumber}. Skipping.`);
+            return { success: false, error: 'No customer phone' };
+        }
+
+        const name = user.name || 'Valued Customer';
+        const isArabic = user.language === 'ar';
+
+        let message;
+        if (isArabic) {
+            message = `عزيزي/عزيزتي ${name}،
+
+لقد استلمنا طلبك بخصوص الإرجاع/الاسترداد للطلب رقم *${order.orderNumber}*.
+
+فريق الدعم لدينا سيتواصل معك خلال دقائق لمساعدتك.
+
+شكرًا لثقتك بنا 🤍
+أرتيفا ميزون`;
+        } else {
+            message = `Dear ${name},
+
+We have received your return/refund request for order *${order.orderNumber}*.
+
+Our support team will reach out to you within minutes to assist you.
+
+Thank you for your trust 🤍
+Arteva Maison`;
+        }
+
+        const result = await this.sendMessage(rawPhone, message, 'refund_return', order._id);
+        console.log(`[WA-REFUND] Result for ${order.orderNumber}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
+        return result;
+    }
 }
 
 // Export singleton instance

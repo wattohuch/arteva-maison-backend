@@ -22,7 +22,7 @@ mongoose.connect(process.env.MONGODB_URI)
       user = await User.findOne({ role: 'admin' });
     }
 
-    const orderNumber = `ART-${Math.floor(100000 + Math.random() * 900000)}`;
+    const orderNumber = 'ART-000037';
 
     const mockOrder = new Order({
       user: user._id,
