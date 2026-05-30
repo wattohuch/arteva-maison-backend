@@ -92,6 +92,17 @@ Reply directly to: ${email}
         throw new Error('Failed to send email. Please try again later.');
     }
 
+    // Send WhatsApp auto-reply if phone number provided (fire-and-forget)
+    if (phone) {
+        try {
+            const whatsappService = require('../services/whatsappService');
+            whatsappService.sendContactAutoReply(phone, true);
+        } catch (waErr) {
+            console.error('[CONTACT] WhatsApp auto-reply failed:', waErr.message);
+            // Don't fail the request — WhatsApp is optional
+        }
+    }
+
     res.json({
         success: true,
         message: 'Your message has been sent successfully. We will get back to you shortly.'

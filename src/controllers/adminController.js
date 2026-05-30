@@ -1490,6 +1490,78 @@ const updateSiteSettings = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Get site visit statistics (actual page visits, not product views)
+// @route   GET /api/admin/analytics/site-visits
+// @access  Private/Admin
+const getSiteVisitStats = asyncHandler(async (req, res) => {
+    try {
+        const SiteVisit = require('../models/SiteVisit');
+
+        const today = new Date().toISOString().split('T')[0];
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        const ninetyDaysAgoStr = ninetyDaysAgo.toISOString().split('T')[0];
+
+        // Get total unique visitors (all time)
+        const totalUniqueVisitors = await SiteVisit.distinct('ip').then(ips => ips.length);
+
+        // Get total visit records
+        const totalVisits = await SiteVisit.countDocuments();
+
+        // Get today's unique visitors
+        const todayVisitors = await SiteVisit.countDocuments({ date: today });
+
+        // Daily breakdown (last 90 days)
+        const dailyBreakdown = await SiteVisit.aggregate([
+            { $match: { date: { $gte: ninetyDaysAgoStr } } },
+            {
+                $group: {
+                    _id: '$date',
+                    uniqueVisitors: { $addToSet: '$ip' },
+                    totalVisits: { $sum: 1 }
+                }
+            },
+            { $sort: { _id: -1 } }
+        ]);
+
+        const daily = dailyBreakdown.map(d => ({
+            date: d._id,
+            uniqueVisitors: d.uniqueVisitors.length,
+            totalVisits: d.totalVisits
+        }));
+
+        // Last 30 days summary
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+        const last30 = daily.filter(d => d.date >= thirtyDaysAgoStr);
+        const last30UniqueTotal = last30.reduce((sum, d) => sum + d.uniqueVisitors, 0);
+
+        res.json({
+            success: true,
+            data: {
+                totalVisits,
+                totalUniqueVisitors,
+                todayVisitors,
+                last30DaysVisitors: last30UniqueTotal,
+                dailyBreakdown: daily
+            }
+        });
+    } catch (e) {
+        console.error('[ANALYTICS] Site visit stats error:', e.message);
+        res.json({
+            success: true,
+            data: {
+                totalVisits: 0,
+                totalUniqueVisitors: 0,
+                todayVisitors: 0,
+                last30DaysVisitors: 0,
+                dailyBreakdown: []
+            }
+        });
+    }
+});
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -1518,5 +1590,6 @@ module.exports = {
     getCustomerOrderHistory,
     updateOrderReceipt,
     getSiteSettings,
-    updateSiteSettings
+    updateSiteSettings,
+    getSiteVisitStats
 };

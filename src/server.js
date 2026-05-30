@@ -174,6 +174,34 @@ app.use('/api/hero', apiLimiter, require('./routes/hero'));
 app.use('/api/push', apiLimiter, require('./routes/pushRoutes'));
 app.use('/api/promo-codes', apiLimiter, require('./routes/promoCodes'));
 
+// Site Visit Tracking — lightweight public endpoint (no auth required)
+app.post('/api/site-visit', apiLimiter, async (req, res) => {
+    try {
+        const SiteVisit = require('./models/SiteVisit');
+        const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+            || req.headers['x-real-ip']
+            || req.connection?.remoteAddress
+            || req.ip
+            || 'unknown';
+        const userAgent = req.headers['user-agent'] || '';
+        const referrer = req.headers['referer'] || req.headers['referrer'] || '';
+        const page = req.body?.page || '/';
+        const today = new Date().toISOString().split('T')[0];
+
+        await SiteVisit.findOneAndUpdate(
+            { ip, date: today },
+            { $setOnInsert: { ip, date: today, userAgent, referrer, page } },
+            { upsert: true, new: false }
+        );
+
+        res.json({ success: true });
+    } catch (e) {
+        // Duplicate key = already tracked today, silently succeed
+        if (e.code === 11000) return res.json({ success: true });
+        res.json({ success: true }); // Never fail — tracking is non-critical
+    }
+});
+
 // Health check (no rate limiting)
 app.get('/api/health', (req, res) => {
     res.json({

@@ -259,7 +259,7 @@ ${order.shippingAddress.phone ? `📞 ${order.shippingAddress.phone}` : ''}
 
 ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}` : ''}
 
-🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: ${this.frontendUrl}/admin/orders
+🌐 ${isArabic ? 'عرض في الإدارة' : 'View in admin'}: https://www.artevamaisonkw.com/account.html
         `.trim();
 
         const ownerPhones = await this.getOwnerPhones();
@@ -440,7 +440,7 @@ ${statusTranslations[oldStatus]} → ${statusTranslations[newStatus]}
         const message = `✨ *ARTÉVA Maison* ✨
 
 Hello ${name},
-Thank you for your order! 🛍️
+Thank you for your order! ✨
 Your order *${order.orderNumber}* has been confirmed.
 
 Total: *${order.total} ${order.currency}*
@@ -452,7 +452,7 @@ We will notify you when your order ships.
 ━━━━━━━━━━━━━━━
 
 مرحباً ${name}،
-شكراً لطلبك! 🛍️
+شكراً لطلبك! ✨
 تم تأكيد طلبك رقم *${order.orderNumber}*.
 
 المجموع: *${order.total} ${order.currency}*
@@ -679,6 +679,48 @@ Arteva Maison`;
 
         const result = await this.sendMessage(rawPhone, message, 'refund_return', order._id);
         console.log(`[WA-REFUND] Result for ${order.orderNumber}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
+        return result;
+    }
+    /**
+     * Send contact form auto-reply via WhatsApp (BILINGUAL)
+     * Sends an acknowledgment to the customer when they submit the contact form
+     */
+    async sendContactAutoReply(phone, hasShopLink = true) {
+        console.log(`[WA-CONTACT] Sending contact auto-reply to ${phone || '(none)'}`);
+
+        if (!phone) {
+            console.warn(`[WA-CONTACT] ❌ No phone for contact auto-reply. Skipping.`);
+            return { success: false, error: 'No phone number' };
+        }
+
+        let message;
+        if (hasShopLink) {
+            message = `Thank you for reaching out to ARTÉVA Maison! ✨
+Our team has received your message and will get back to you shortly.
+We appreciate your patience.
+You can shop and place your order through the website 
+🛍️ www.ArtevaMaisonkw.com
+
+شكراً لتواصلك مع أرتيڤا ميزون! ✨
+فريقنا استلم رسالتك وراح يرد عليك بأقرب وقت.
+نقدّر صبرك.
+
+يمكنك التسوق و الطلب عبر الموقع الالكتروني 
+🛍️ www.artevamaisonkw.com`;
+        } else {
+            message = `Thank you for reaching out to ARTÉVA Maison! ✨
+Our team has received your message and will get back to you shortly.
+We appreciate your patience.
+
+شكراً لتواصلك مع أرتيڤا ميزون! ✨
+فريقنا استلم رسالتك وراح يرد عليك بأقرب وقت.
+نقدّر صبرك.
+
+🛍️ www.artevamaisonkw.com`;
+        }
+
+        const result = await this.sendMessage(phone, message, 'contact_auto_reply');
+        console.log(`[WA-CONTACT] Result: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
 }

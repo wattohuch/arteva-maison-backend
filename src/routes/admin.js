@@ -28,7 +28,8 @@ const {
     getCustomerOrderHistory,
     updateOrderReceipt,
     getSiteSettings,
-    updateSiteSettings
+    updateSiteSettings,
+    getSiteVisitStats
 } = require('../controllers/adminController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -63,6 +64,7 @@ router.post('/generate-print-token', protect, admin, generatePrintStationToken);
 // Analytics
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
 router.get('/analytics/visitor-log', protect, admin, getIPVisitorLog);
+router.get('/analytics/site-visits', protect, admin, getSiteVisitStats);
 
 // Revenue Analytics (superuser only - detailed per-product breakdown)
 router.get('/revenue-analytics', protect, admin, getRevenueAnalytics);
