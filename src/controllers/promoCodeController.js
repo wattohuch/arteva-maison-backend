@@ -7,7 +7,7 @@ const { asyncHandler } = require('../middleware/error');
 // @route   POST /api/admin/promo-codes
 // @access  Private/Admin
 const createPromoCode = asyncHandler(async (req, res) => {
-    const { code, name, description, expiresAt, maxUsage, perUserLimit, products } = req.body;
+    const { code, name, description, expiresAt, maxUsage, perUserLimit, maxQuantityPerOrder, products } = req.body;
 
     // Check for duplicate code
     const existing = await PromoCode.findOne({ code: code.toUpperCase().trim() });
@@ -23,6 +23,7 @@ const createPromoCode = asyncHandler(async (req, res) => {
         expiresAt,
         maxUsage: maxUsage || null,
         perUserLimit: perUserLimit || null,
+        maxQuantityPerOrder: maxQuantityPerOrder || null,
         products: products || [],
         createdBy: req.user._id
     });
@@ -122,7 +123,7 @@ const updatePromoCode = asyncHandler(async (req, res) => {
         throw new Error('Promo code not found');
     }
 
-    const { code, name, description, isActive, expiresAt, maxUsage, perUserLimit } = req.body;
+    const { code, name, description, isActive, expiresAt, maxUsage, perUserLimit, maxQuantityPerOrder } = req.body;
 
     // If changing code, check for duplicates
     if (code && code.toUpperCase().trim() !== promoCode.code) {
@@ -140,6 +141,7 @@ const updatePromoCode = asyncHandler(async (req, res) => {
     if (expiresAt !== undefined) promoCode.expiresAt = expiresAt;
     if (maxUsage !== undefined) promoCode.maxUsage = maxUsage || null;
     if (perUserLimit !== undefined) promoCode.perUserLimit = perUserLimit || null;
+    if (maxQuantityPerOrder !== undefined) promoCode.maxQuantityPerOrder = maxQuantityPerOrder || null;
 
     await promoCode.save();
 
@@ -188,7 +190,7 @@ const addProductsToPromo = asyncHandler(async (req, res) => {
     }
 
     const { products } = req.body;
-    // products: [{ product: ObjectId, discountType: 'percentage'|'fixed', discountValue: Number }]
+    // products: [{ product: ObjectId, discountType: 'percentage'|'fixed', discountValue: Number, maxDiscountedQuantity: Number }]
 
     if (!products || !Array.isArray(products) || products.length === 0) {
         res.status(400);
@@ -217,12 +219,14 @@ const addProductsToPromo = asyncHandler(async (req, res) => {
             // Update existing
             promoCode.products[existingIndex].discountType = newProduct.discountType;
             promoCode.products[existingIndex].discountValue = newProduct.discountValue;
+            promoCode.products[existingIndex].maxDiscountedQuantity = newProduct.maxDiscountedQuantity || null;
         } else {
             // Add new
             promoCode.products.push({
                 product: newProduct.product,
                 discountType: newProduct.discountType,
-                discountValue: newProduct.discountValue
+                discountValue: newProduct.discountValue,
+                maxDiscountedQuantity: newProduct.maxDiscountedQuantity || null
             });
         }
     }

@@ -16,6 +16,10 @@ const promoCodeProductSchema = new mongoose.Schema({
         type: Number,
         required: true,
         min: 0
+    },
+    maxDiscountedQuantity: {
+        type: Number,
+        default: null // null = unlimited
     }
 });
 
@@ -74,6 +78,10 @@ const promoCodeSchema = new mongoose.Schema({
     perUserLimit: {
         type: Number,
         default: null // null = unlimited per user
+    },
+    maxQuantityPerOrder: {
+        type: Number,
+        default: null // null = unlimited items discounted per order
     },
     usedBy: [promoUsageSchema],
     createdBy: {

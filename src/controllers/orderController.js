@@ -73,28 +73,46 @@ const createOrder = asyncHandler(async (req, res) => {
             if (validity.valid) {
                 // Calculate per-product discounts
                 const discounts = [];
+                let totalDiscountedItems = 0;
                 for (const orderItem of orderItems) {
                     const promoProduct = promo.products.find(
                         p => p.product._id.toString() === orderItem.product.toString()
                     );
                     if (promoProduct) {
-                        let discount = 0;
-                        if (promoProduct.discountType === 'percentage') {
-                            discount = (orderItem.price * promoProduct.discountValue / 100) * orderItem.quantity;
-                        } else {
-                            discount = promoProduct.discountValue * orderItem.quantity;
-                        }
-                        const itemTotal = orderItem.price * orderItem.quantity;
-                        discount = Math.min(discount, itemTotal);
+                        let allowedQuantity = orderItem.quantity;
 
-                        discounts.push({
-                            product: orderItem.product,
-                            productName: orderItem.name,
-                            discountType: promoProduct.discountType,
-                            discountValue: promoProduct.discountValue,
-                            discountAmount: parseFloat(discount.toFixed(3))
-                        });
-                        totalDiscount += discount;
+                        // Per-product quantity limit
+                        if (promoProduct.maxDiscountedQuantity !== null && promoProduct.maxDiscountedQuantity !== undefined) {
+                            allowedQuantity = Math.min(allowedQuantity, promoProduct.maxDiscountedQuantity);
+                        }
+
+                        // Global per-order quantity limit
+                        if (promo.maxQuantityPerOrder !== null && promo.maxQuantityPerOrder !== undefined) {
+                            const remainingGlobal = Math.max(0, promo.maxQuantityPerOrder - totalDiscountedItems);
+                            allowedQuantity = Math.min(allowedQuantity, remainingGlobal);
+                        }
+
+                        if (allowedQuantity > 0) {
+                            let discount = 0;
+                            if (promoProduct.discountType === 'percentage') {
+                                discount = (orderItem.price * promoProduct.discountValue / 100) * allowedQuantity;
+                            } else {
+                                discount = promoProduct.discountValue * allowedQuantity;
+                            }
+                            const itemTotal = orderItem.price * allowedQuantity;
+                            discount = Math.min(discount, itemTotal);
+
+                            discounts.push({
+                                product: orderItem.product,
+                                productName: orderItem.name,
+                                discountType: promoProduct.discountType,
+                                discountValue: promoProduct.discountValue,
+                                discountedQuantity: allowedQuantity,
+                                discountAmount: parseFloat(discount.toFixed(3))
+                            });
+                            totalDiscount += discount;
+                            totalDiscountedItems += allowedQuantity;
+                        }
                     }
                 }
 
