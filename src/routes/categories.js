@@ -7,7 +7,8 @@ const {
     createCategory,
     updateCategory,
     deleteCategory,
-    getCategoryStats
+    getCategoryStats,
+    reorderCategories
 } = require('../controllers/categoryController');
 const { protect, admin } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -18,6 +19,7 @@ router.get('/:id', getCategory);
 router.get('/:id/stats', protect, admin, getCategoryStats);
 
 // Admin routes with image upload support
+router.put('/reorder', protect, admin, reorderCategories);
 router.post('/', protect, admin, upload.single('image'), createCategory);
 router.put('/:id', protect, admin, upload.single('image'), updateCategory);
 router.delete('/:id', protect, admin, deleteCategory);

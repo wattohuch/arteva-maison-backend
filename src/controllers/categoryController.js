@@ -7,7 +7,7 @@ const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require
 // @route   GET /api/categories
 // @access  Public
 const getCategories = asyncHandler(async (req, res) => {
-    const categories = await Category.find({}).sort({ name: 1 });
+    const categories = await Category.find({}).sort({ sortOrder: 1, createdAt: -1 });
     res.json({ success: true, data: categories });
 });
 
@@ -208,6 +208,32 @@ const getCategoryStats = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Reorder categories
+// @route   PUT /api/categories/reorder
+// @access  Private/Admin
+const reorderCategories = asyncHandler(async (req, res) => {
+    const { categories } = req.body;
+    
+    if (!categories || !Array.isArray(categories)) {
+        res.status(400);
+        throw new Error('Please provide an array of categories with their new sort order');
+    }
+    
+    // Bulk update sort orders
+    const bulkOps = categories.map(cat => ({
+        updateOne: {
+            filter: { _id: cat.id },
+            update: { $set: { sortOrder: cat.sortOrder } }
+        }
+    }));
+    
+    if (bulkOps.length > 0) {
+        await Category.bulkWrite(bulkOps);
+    }
+    
+    res.json({ success: true, message: 'Categories reordered successfully' });
+});
+
 module.exports = {
     getCategories,
     getCategory,
@@ -215,5 +241,6 @@ module.exports = {
     createCategory,
     updateCategory,
     deleteCategory,
-    getCategoryStats
+    getCategoryStats,
+    reorderCategories
 };
