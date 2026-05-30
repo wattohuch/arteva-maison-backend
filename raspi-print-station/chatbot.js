@@ -37,6 +37,7 @@ function handleMessage(phone, text) {
             `Thank you for reaching out to   ARTÉVA Maison!  ✨
 Our team has received your message and will get back to you shortly.
 We appreciate your patience.
+
 You can shop and place your order through the website 
 🛍️ www.ArtevaMaison.com
 
