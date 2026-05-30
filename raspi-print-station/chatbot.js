@@ -34,14 +34,16 @@ function handleMessage(phone, text) {
 
     return {
         reply:
-`Thank you for reaching out to ARTÉVA Maison! 🌸
+            `Thank you for reaching out to   ARTÉVA Maison!  ✨
 Our team has received your message and will get back to you shortly.
 We appreciate your patience.
+You can shop and place your order through the website 
+🛍️ www.ArtevaMaison.com
 
-شكراً لتواصلك مع أرتيڤا ميزون! 🌸
-فريقنا استلم رسالتك وراح يرد عليك بأقرب وقت.
-نقدّر صبرك.
+شكراً لتواصلك مع أرتيڤا ميزون! ✨
+فريقنا استلم رسالتك و سيتم الرد عليك بأقرب وقت . 
 
+يمكنك التسوق و الطلب عبر الموقع الالكتروني 
 🛍️ www.artevamaisonkw.com`,
         forward: true
     };
