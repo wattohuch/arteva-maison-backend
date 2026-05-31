@@ -275,6 +275,28 @@ const getCollectionFeatured = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Reorder products (Admin)
+// @route   PUT /api/products/reorder
+// @access  Private/Admin
+const reorderProducts = asyncHandler(async (req, res) => {
+    const { products } = req.body;
+    if (!products || !Array.isArray(products)) {
+        res.status(400);
+        throw new Error('Please provide an array of products with id and sortOrder');
+    }
+
+    const updates = products.map(p => ({
+        updateOne: {
+            filter: { _id: p.id },
+            update: { $set: { sortOrder: p.sortOrder } }
+        }
+    }));
+
+    await Product.bulkWrite(updates);
+
+    res.json({ success: true, message: 'Products reordered successfully' });
+});
+
 module.exports = {
     getProducts,
     getProduct,
@@ -284,5 +306,6 @@ module.exports = {
     deleteProduct,
     getFeaturedProducts,
     incrementProductView,
-    getCollectionFeatured
+    getCollectionFeatured,
+    reorderProducts
 };

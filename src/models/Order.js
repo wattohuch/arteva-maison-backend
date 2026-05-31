@@ -163,8 +163,24 @@ const orderSchema = new mongoose.Schema({
 // Generate order number and tracking token before saving
 orderSchema.pre('save', async function () {
     if (!this.orderNumber) {
-        const count = await mongoose.model('Order').countDocuments();
-        this.orderNumber = `ART-${String(count + 1).padStart(6, '0')}`;
+        const generateId = () => {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let result = '';
+            for (let i = 0; i < 8; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
+        };
+
+        let isUnique = false;
+        while (!isUnique) {
+            const randomString = generateId();
+            const existing = await mongoose.model('Order').findOne({ orderNumber: randomString });
+            if (!existing) {
+                this.orderNumber = randomString;
+                isUnique = true;
+            }
+        }
     }
 
     // Generate secure tracking token for shareable tracking links

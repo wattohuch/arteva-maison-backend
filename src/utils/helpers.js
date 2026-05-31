@@ -31,7 +31,7 @@ const buildSortQuery = (sortBy) => {
         'oldest': { createdAt: 1 },
         'featured': { isFeatured: -1, createdAt: -1 }
     };
-    return sortOptions[sortBy] || { createdAt: -1 };
+    return sortOptions[sortBy] || { sortOrder: 1, createdAt: -1 };
 };
 
 module.exports = {

@@ -9,7 +9,8 @@ const {
     deleteProduct,
     getFeaturedProducts,
     incrementProductView,
-    getCollectionFeatured
+    getCollectionFeatured,
+    reorderProducts
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/auth');
 
@@ -25,6 +26,7 @@ router.post('/:id/view', incrementProductView);
 const reviewRouter = require('./reviews');
 router.use('/:productId/reviews', reviewRouter);
 
+router.put('/reorder', protect, admin, reorderProducts);
 router.post('/', protect, admin, createProduct);
 router.put('/:id', protect, admin, updateProduct);
 router.delete('/:id', protect, admin, deleteProduct);

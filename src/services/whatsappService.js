@@ -206,7 +206,7 @@ class WhatsAppService {
      * Build receipt URL
      */
     buildReceiptUrl(order) {
-        return `${this.frontendUrl}/receipt.html?order=${order.orderNumber}`;
+        return `${this.frontendUrl}/receipt.html?order=${order.orderNumber}&token=${order.trackingToken}`;
     }
 
     // ═══════════════════════════════════════════════════

@@ -594,6 +594,12 @@ const getOrderForReceipt = asyncHandler(async (req, res) => {
         throw new Error('Order not found');
     }
 
+    // Validate tracking token for security
+    if (!req.query.token || order.trackingToken !== req.query.token) {
+        res.status(403);
+        throw new Error('Invalid or missing receipt token');
+    }
+
     // Only show receipt for paid orders or COD orders
     const isPaid = order.paymentStatus === 'paid';
     const isCOD = order.paymentMethod === 'cod' && (order.paymentStatus === 'pending' || order.paymentStatus === 'paid');
@@ -620,6 +626,12 @@ const getReceiptHTML = asyncHandler(async (req, res) => {
     if (!order) {
         res.status(404);
         throw new Error('Order not found');
+    }
+
+    // Validate tracking token for security
+    if (!req.query.token || order.trackingToken !== req.query.token) {
+        res.status(403);
+        throw new Error('Invalid or missing receipt token');
     }
 
     // Only show receipt for paid orders or COD orders

@@ -81,6 +81,14 @@ const productSchema = new mongoose.Schema({
         type: String,
         trim: true
     }],
+    sizeText: {
+        type: String,
+        trim: true
+    },
+    sortOrder: {
+        type: Number,
+        default: 0
+    },
     dimensions: {
         height: Number,
         width: Number,
