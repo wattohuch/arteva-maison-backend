@@ -53,7 +53,7 @@ const getDashboardStats = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getAdminProducts = asyncHandler(async (req, res) => {
     const products = await Product.find({})
-        .sort({ createdAt: -1 })
+        .sort({ sortOrder: 1, createdAt: -1 })
         .populate('category', 'name');
     res.json({ success: true, data: products });
 });
@@ -62,7 +62,7 @@ const getAdminProducts = asyncHandler(async (req, res) => {
 // @route   POST /api/admin/products
 // @access  Private/Admin
 const createProduct = asyncHandler(async (req, res) => {
-    const { name, nameAr, description, descriptionAr, price, category, additionalCategories, stock, sku, isFeatured, isNewArrival, isComingSoon } = req.body;
+    const { name, nameAr, description, descriptionAr, price, category, additionalCategories, stock, sku, sizeText, isFeatured, isNewArrival, isComingSoon } = req.body;
 
     // Parse boolean values consistently
     const isFeaturedValue = parseBoolean(isFeatured);
@@ -116,6 +116,7 @@ const createProduct = asyncHandler(async (req, res) => {
         additionalCategories: parsedAdditionalCategories,
         stock,
         sku,
+        sizeText,
         isFeatured: isFeaturedValue || false,
         isNewArrival: isNewArrivalValue || false,
         isComingSoon: isComingSoonValue || false,
@@ -138,7 +139,7 @@ const updateProduct = asyncHandler(async (req, res) => {
         throw new Error('Product not found');
     }
 
-    const { name, nameAr, description, descriptionAr, price, category, additionalCategories, stock, sku, isFeatured, isNewArrival, isComingSoon, isCollectionFeatured, imagesToDelete, primaryImageUrl } = req.body;
+    const { name, nameAr, description, descriptionAr, price, category, additionalCategories, stock, sku, sizeText, isFeatured, isNewArrival, isComingSoon, isCollectionFeatured, imagesToDelete, primaryImageUrl } = req.body;
 
     // Parse boolean values consistently
     const isFeaturedValue = parseBoolean(isFeatured);
@@ -229,6 +230,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     if (parsedAdditionalCategories !== undefined) product.additionalCategories = parsedAdditionalCategories;
     if (stock !== undefined) product.stock = stock;
     if (sku !== undefined) product.sku = sku;
+    if (sizeText !== undefined) product.sizeText = sizeText;
 
     // Update boolean flags - CRITICAL: Only update if explicitly provided
     if (isFeaturedValue !== undefined) {
