@@ -152,7 +152,7 @@ const createOrder = asyncHandler(async (req, res) => {
 
     const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
 
-    const order = await Order.create({
+    const order = await Order.createWithRetry({
         user: req.user._id,
         items: orderItems,
         shippingAddress,

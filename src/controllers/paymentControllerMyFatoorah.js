@@ -7,6 +7,37 @@ const myfatoorah = require('../services/myfatoorahService');
 const { sendOrderConfirmation } = require('../services/emailService');
 const { WhatsAppService } = require('../services/whatsappService');
 
+// Helper: Increment promo code usage AFTER payment is confirmed
+// This ensures usage is only counted for orders that actually paid
+async function incrementPromoUsage(order) {
+    if (!order.promoCode || !order.promoCode.promoCodeId || !order.user) return;
+    try {
+        const userId = order.user._id || order.user;
+        const promoId = order.promoCode.promoCodeId;
+
+        // Check if user already has a usage entry
+        const promo = await PromoCode.findById(promoId);
+        if (!promo) return;
+
+        const userUsageEntry = promo.usedBy.find(u => u.user.toString() === userId.toString());
+        if (userUsageEntry) {
+            await PromoCode.updateOne(
+                { _id: promoId, 'usedBy.user': userId },
+                { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
+            );
+        } else {
+            await PromoCode.updateOne(
+                { _id: promoId },
+                { $inc: { usageCount: 1 }, $push: { usedBy: { user: userId, count: 1 } } }
+            );
+        }
+        console.log(`[PROMO] ✅ Usage counted for promo "${order.promoCode.code}" (order ${order.orderNumber})`);
+    } catch (err) {
+        // Promo usage tracking failure should never block order confirmation
+        console.error(`[PROMO] ⚠️ Failed to increment usage for order ${order.orderNumber}:`, err.message);
+    }
+}
+
 // @desc    Get available payment methods
 // @route   GET /api/payments/methods
 // @access  Public
@@ -49,7 +80,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
     const total = subtotal + shippingCost;
 
     // Create order first
-    const order = await Order.create({
+    const order = await Order.createWithRetry({
         user: req.user._id,
         items: cart.items.map(item => ({
             product: item.product._id,
@@ -170,28 +201,46 @@ const executePayment = asyncHandler(async (req, res) => {
             const validity = promo.canUserUse(req.user._id);
             if (validity.valid) {
                 const discounts = [];
+                let totalDiscountedItems = 0;
                 for (const item of cartProductItems) {
                     const promoProduct = promo.products.find(
                         p => p.product._id.toString() === item.product.toString()
                     );
                     if (promoProduct) {
-                        let discount = 0;
-                        if (promoProduct.discountType === 'percentage') {
-                            discount = (item.price * promoProduct.discountValue / 100) * item.quantity;
-                        } else {
-                            discount = promoProduct.discountValue * item.quantity;
-                        }
-                        const itemTotal = item.price * item.quantity;
-                        discount = Math.min(discount, itemTotal);
+                        let allowedQuantity = item.quantity;
 
-                        discounts.push({
-                            product: item.product,
-                            productName: item.name,
-                            discountType: promoProduct.discountType,
-                            discountValue: promoProduct.discountValue,
-                            discountAmount: parseFloat(discount.toFixed(3))
-                        });
-                        totalDiscount += discount;
+                        // Per-product quantity limit
+                        if (promoProduct.maxDiscountedQuantity !== null && promoProduct.maxDiscountedQuantity !== undefined) {
+                            allowedQuantity = Math.min(allowedQuantity, promoProduct.maxDiscountedQuantity);
+                        }
+
+                        // Global per-order quantity limit
+                        if (promo.maxQuantityPerOrder !== null && promo.maxQuantityPerOrder !== undefined) {
+                            const remainingGlobal = Math.max(0, promo.maxQuantityPerOrder - totalDiscountedItems);
+                            allowedQuantity = Math.min(allowedQuantity, remainingGlobal);
+                        }
+
+                        if (allowedQuantity > 0) {
+                            let discount = 0;
+                            if (promoProduct.discountType === 'percentage') {
+                                discount = (item.price * promoProduct.discountValue / 100) * allowedQuantity;
+                            } else {
+                                discount = promoProduct.discountValue * allowedQuantity;
+                            }
+                            const itemTotal = item.price * allowedQuantity;
+                            discount = Math.min(discount, itemTotal);
+
+                            discounts.push({
+                                product: item.product,
+                                productName: item.name,
+                                discountType: promoProduct.discountType,
+                                discountValue: promoProduct.discountValue,
+                                discountedQuantity: allowedQuantity,
+                                discountAmount: parseFloat(discount.toFixed(3))
+                            });
+                            totalDiscount += discount;
+                            totalDiscountedItems += allowedQuantity;
+                        }
                     }
                 }
 
@@ -206,20 +255,9 @@ const executePayment = asyncHandler(async (req, res) => {
                         discounts
                     };
 
-                    // Atomic usage increment
-                    const userUsageEntry = promo.usedBy.find(u => u.user.toString() === req.user._id.toString());
-                    if (userUsageEntry) {
-                        await PromoCode.updateOne(
-                            { _id: promo._id, 'usedBy.user': req.user._id },
-                            { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
-                        );
-                    } else {
-                        await PromoCode.updateOne(
-                            { _id: promo._id },
-                            { $inc: { usageCount: 1 }, $push: { usedBy: { user: req.user._id, count: 1 } } }
-                        );
-                    }
-                    console.log(`[PAYMENT] ✅ Promo "${promo.code}" applied — discount ${totalDiscount} KWD`);
+                    // NOTE: Usage is NOT counted here — it is counted AFTER payment
+                    // is confirmed in handlePaymentCallback / verifyPayment / webhook
+                    console.log(`[PAYMENT] ✅ Promo "${promo.code}" applied — discount ${totalDiscount} KWD (usage counted after payment)`);
                 }
             } else {
                 console.log(`[PAYMENT] ⚠️ Promo "${promoCodeStr}" rejected: ${validity.reason}`);
@@ -251,7 +289,7 @@ const executePayment = asyncHandler(async (req, res) => {
         await order.save();
     } else {
         // Create new order
-        order = await Order.create({
+        order = await Order.createWithRetry({
             user: req.user._id,
             items: cartProductItems,
             shippingAddress,
@@ -380,6 +418,9 @@ const verifyPayment = asyncHandler(async (req, res) => {
         // Clear the user's cart now that payment is confirmed
         await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
 
+        // Count promo code usage now that payment is confirmed
+        await incrementPromoUsage(order);
+
         // Send confirmation email
         try {
             await sendOrderConfirmation(order, order.user);
@@ -495,6 +536,9 @@ const handleWebhook = asyncHandler(async (req, res) => {
             // Clear cart after payment confirmed
             await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
 
+            // Count promo code usage now that payment is confirmed
+            await incrementPromoUsage(order);
+
             // Send email (don't fail on error)
             try {
                 await sendOrderConfirmation(order, order.user);
@@ -550,7 +594,7 @@ const processCOD = asyncHandler(async (req, res) => {
     const total = subtotal + shippingCost;
 
     // Create order
-    const order = await Order.create({
+    const order = await Order.createWithRetry({
         user: req.user._id,
         items: cart.items.map(item => ({
             product: item.product._id,
@@ -675,6 +719,9 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
 
             // Clear cart
             await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+
+            // Count promo code usage now that payment is confirmed
+            await incrementPromoUsage(order);
 
             // Send confirmation email
             try {

@@ -25,9 +25,12 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     const totalProducts = await Product.countDocuments();
     const totalOrders = await Order.countDocuments();
 
-    // Calculate total revenue
-    const orders = await Order.find({ paymentStatus: 'paid' });
-    const totalRevenue = orders.reduce((acc, order) => acc + order.total, 0);
+    // Calculate total revenue using aggregation (memory-efficient, runs on DB server)
+    const revenueResult = await Order.aggregate([
+        { $match: { paymentStatus: 'paid' } },
+        { $group: { _id: null, totalRevenue: { $sum: '$total' } } }
+    ]);
+    const totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
 
     // Recent orders
     const recentOrders = await Order.find()

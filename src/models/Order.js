@@ -160,30 +160,25 @@ const orderSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Generate order number and tracking token before saving
-orderSchema.pre('save', async function () {
-    if (!this.orderNumber) {
-        const generateId = () => {
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-            let result = '';
-            for (let i = 0; i < 8; i++) {
-                result += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            return result;
-        };
+// Generate a cryptographically secure order number (8 chars, A-Z0-9)
+function generateOrderNumber() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const bytes = crypto.randomBytes(8);
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+        result += chars[bytes[i] % chars.length];
+    }
+    return result;
+}
 
-        let isUnique = false;
-        while (!isUnique) {
-            const randomString = generateId();
-            const existing = await mongoose.model('Order').findOne({ orderNumber: randomString });
-            if (!existing) {
-                this.orderNumber = randomString;
-                isUnique = true;
-            }
-        }
+// Pre-save: assign order number + tracking token + initial status
+orderSchema.pre('save', async function () {
+    // Generate order number if not set (uses crypto for true randomness)
+    if (!this.orderNumber) {
+        this.orderNumber = generateOrderNumber();
     }
 
-    // Generate secure tracking token for shareable tracking links
+    // Generate secure tracking token for shareable tracking/receipt links
     if (!this.trackingToken) {
         this.trackingToken = crypto.randomBytes(16).toString('hex');
     }
@@ -197,6 +192,37 @@ orderSchema.pre('save', async function () {
         });
     }
 });
+
+/**
+ * Create an order with automatic retry on duplicate orderNumber collision.
+ * This is the ONLY safe way to create orders — it catches the E11000 duplicate
+ * key error on orderNumber and regenerates + retries up to MAX_RETRIES times.
+ * 
+ * Usage: const order = await Order.createWithRetry({ user, items, ... });
+ */
+orderSchema.statics.createWithRetry = async function (orderData, maxRetries = 5) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const order = await this.create(orderData);
+            return order;
+        } catch (err) {
+            // E11000 = duplicate key error on the unique orderNumber index
+            const isDuplicateOrderNumber = err.code === 11000 &&
+                err.message && err.message.includes('orderNumber');
+
+            if (isDuplicateOrderNumber && attempt < maxRetries) {
+                console.warn(`[ORDER] ⚠️ Order number collision on attempt ${attempt}, regenerating...`);
+                // The pre-save hook will generate a new orderNumber on next attempt
+                // Clear any stale orderNumber so pre-save generates a fresh one
+                delete orderData.orderNumber;
+                continue;
+            }
+
+            // Not a duplicate key error, or we've exhausted retries — throw
+            throw err;
+        }
+    }
+};
 
 // Method to update status with history tracking
 orderSchema.methods.updateStatus = function (newStatus, note = '', updatedBy = null) {
