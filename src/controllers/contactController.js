@@ -1,6 +1,17 @@
 const { asyncHandler } = require('../middleware/error');
 const { sendEmail } = require('../services/emailService');
 
+// Escape HTML to prevent XSS in email templates
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 // @desc    Send contact form message
 // @route   POST /api/contact
 // @access  Public
@@ -23,7 +34,13 @@ const sendContactMessage = asyncHandler(async (req, res) => {
     // Recipient email address
     const recipientEmail = 'princewalson68@gmail.com';
 
-    // Create email HTML content
+    // Create email HTML content (escape user input to prevent XSS)
+    const safeName = `${escapeHtml(firstName)} ${escapeHtml(lastName)}`;
+    const safeEmail = escapeHtml(email);
+    const safePhone = escapeHtml(phone);
+    const safeSubject = escapeHtml(subject) || 'General Inquiry';
+    const safeMessage = escapeHtml(message);
+
     const emailHtml = `
         <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
             <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
@@ -35,32 +52,32 @@ const sendContactMessage = asyncHandler(async (req, res) => {
                 <table style="width: 100%; border-collapse: collapse;">
                     <tr>
                         <td style="padding: 10px 0; font-weight: bold; color: #333; width: 150px;">Name:</td>
-                        <td style="padding: 10px 0; color: #666;">${firstName} ${lastName}</td>
+                        <td style="padding: 10px 0; color: #666;">${safeName}</td>
                     </tr>
                     <tr>
                         <td style="padding: 10px 0; font-weight: bold; color: #333;">Email:</td>
-                        <td style="padding: 10px 0; color: #666;">${email}</td>
+                        <td style="padding: 10px 0; color: #666;">${safeEmail}</td>
                     </tr>
-                    ${phone ? `
+                    ${safePhone ? `
                     <tr>
                         <td style="padding: 10px 0; font-weight: bold; color: #333;">Phone:</td>
-                        <td style="padding: 10px 0; color: #666;">${phone}</td>
+                        <td style="padding: 10px 0; color: #666;">${safePhone}</td>
                     </tr>
                     ` : ''}
                     <tr>
                         <td style="padding: 10px 0; font-weight: bold; color: #333;">Subject:</td>
-                        <td style="padding: 10px 0; color: #666;">${subject || 'General Inquiry'}</td>
+                        <td style="padding: 10px 0; color: #666;">${safeSubject}</td>
                     </tr>
                     <tr>
                         <td style="padding: 10px 0; font-weight: bold; color: #333; vertical-align: top;">Message:</td>
-                        <td style="padding: 10px 0; color: #666; white-space: pre-wrap;">${message}</td>
+                        <td style="padding: 10px 0; color: #666; white-space: pre-wrap;">${safeMessage}</td>
                     </tr>
                 </table>
             </div>
             
             <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; color: #999; font-size: 12px;">
                 <p>This message was sent from the ARTEVA Maison contact form.</p>
-                <p>Reply directly to: ${email}</p>
+                <p>Reply directly to: ${safeEmail}</p>
             </div>
         </div>
     `;

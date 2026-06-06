@@ -84,7 +84,13 @@ const listBackups = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const downloadBackup = asyncHandler(async (req, res) => {
     const { backupName } = req.params;
-    let backupPath = path.join(backupDir, backupName);
+
+    // Path traversal protection — ensure backup path stays within backups directory
+    const backupPath = path.resolve(backupDir, backupName);
+    if (!backupPath.startsWith(path.resolve(backupDir))) {
+        res.status(400);
+        throw new Error('Invalid backup name');
+    }
 
     // If not found locally, try downloading from GitHub
     if (!fs.existsSync(backupPath)) {
@@ -184,7 +190,13 @@ const createBackup = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const restoreBackup = asyncHandler(async (req, res) => {
     const { backupName } = req.params;
-    let backupPath = path.join(backupDir, backupName);
+
+    // Path traversal protection — ensure backup path stays within backups directory
+    let backupPath = path.resolve(backupDir, backupName);
+    if (!backupPath.startsWith(path.resolve(backupDir))) {
+        res.status(400);
+        throw new Error('Invalid backup name');
+    }
 
     // If not found locally, try downloading from GitHub
     if (!fs.existsSync(backupPath)) {

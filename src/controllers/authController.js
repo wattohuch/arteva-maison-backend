@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const User = require('../models/User');
 const { generateToken } = require('../utils/helpers');
 const { asyncHandler } = require('../middleware/error');
@@ -194,8 +195,8 @@ const forgotPassword = asyncHandler(async (req, res) => {
         });
     }
 
-    // Generate 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 6-digit OTP using crypto (secure randomness)
+    const otp = crypto.randomInt(100000, 999999).toString();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     user.resetPasswordOTP = otp;
