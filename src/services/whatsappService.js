@@ -153,16 +153,30 @@ class WhatsAppService {
             return { success: false, error: 'Invalid phone' };
         }
 
+        // Smart priority: customer-facing messages first, owner/admin messages later
+        const priorityMap = {
+            contact_auto_reply: 1,   // Immediate response to customer inquiry
+            customer_new_order: 2,   // Customer order confirmation
+            status_update: 2,        // Customer status update
+            delivery_proof: 2,       // Delivery notification to customer
+            welcome: 3,             // Welcome message
+            owner_new_order: 5,     // Owner notification (can wait)
+            refund_return: 3,       // Refund notifications
+            test: 10                // Lowest priority
+        };
+        const priority = priorityMap[type] || 5;
+
         try {
             const WhatsAppQueue = require('../models/WhatsAppQueue');
             const newMsg = new WhatsAppQueue({
                 phone,
                 message,
                 type,
-                order: orderId
+                order: orderId,
+                priority
             });
             await newMsg.save();
-            console.log(`[WA-QUEUE] Enqueued message to ${phone} (type: ${type}) for Raspberry Pi`);
+            console.log(`[WA-QUEUE] Enqueued message to ${phone} (type: ${type}, priority: ${priority}) for Raspberry Pi`);
             return { success: true, queued: true };
         } catch (err) {
             console.error(`❌ WhatsApp Enqueue error for ${phone}:`, err.message);

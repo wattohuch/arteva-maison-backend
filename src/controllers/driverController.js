@@ -192,8 +192,22 @@ exports.uploadDeliveryProof = [
             } catch (e) { /* socket not critical */ }
 
             // Email delivery proof photo to BOTH customer and driver
-            const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
-            const proofImageUrl = `${backendUrl}${proofUrl}`;
+            // Read file from disk and embed as base64 to avoid:
+            //  1. Render ephemeral filesystem (files lost on redeploy → 404)
+            //  2. Email clients blocking external images
+            let proofBase64DataUri = '';
+            try {
+                const proofFilePath = path.join(__dirname, '../../assets/images/delivery-proofs', req.file.filename);
+                const proofBuffer = fs.readFileSync(proofFilePath);
+                const mimeType = req.file.mimetype || 'image/jpeg';
+                proofBase64DataUri = `data:${mimeType};base64,${proofBuffer.toString('base64')}`;
+                console.log(`📸 Proof photo converted to base64 (${Math.round(proofBuffer.length / 1024)}KB)`);
+            } catch (readErr) {
+                console.error('Failed to read proof file for email embedding:', readErr.message);
+                // Fallback to external URL if file read fails
+                const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
+                proofBase64DataUri = `${backendUrl}${proofUrl}`;
+            }
 
             const proofEmailHtml = (recipientName, isDriver) => `
                 <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #faf8f5;">
@@ -211,7 +225,7 @@ exports.uploadDeliveryProof = [
                             }
                         </p>
                         <div style="text-align: center; margin: 24px 0;">
-                            <img src="${proofImageUrl}" alt="Delivery proof" style="max-width: 100%; border-radius: 12px; border: 1px solid #eee; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+                            <img src="${proofBase64DataUri}" alt="Delivery proof" style="max-width: 100%; border-radius: 12px; border: 1px solid #eee; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
                         </div>
                         <p style="color: #999; font-size: 13px; text-align: center;">
                             ${isDriver ? 'This photo has also been sent to the customer.' : 'Thank you for shopping with ARTÉVA Maison!'}
