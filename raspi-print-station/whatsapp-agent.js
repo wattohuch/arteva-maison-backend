@@ -170,13 +170,7 @@ async function startAgent() {
       printQRInTerminal: true,
       logger: baileysLogger,
       browser: Browsers.ubuntu('Chrome'),
-      syncFullHistory: false,
-      markOnlineOnConnect: true, // Ensure device is marked online for faster key sync
-      getMessage: async (key) => {
-        // Fallback message retrieval — reduces 'waiting for this message' clock icon
-        // Return empty object to signal no cached message available
-        return { conversation: '' };
-      }
+      syncFullHistory: false
     });
 
     sock.ev.on('connection.update', (update) => {
