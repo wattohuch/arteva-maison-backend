@@ -620,6 +620,72 @@ Thank you for shopping with ARTÉVA Maison! ✨
     }
 
     // ═══════════════════════════════════════════════════
+    // DRIVER NOTIFICATIONS
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Notify driver about a new assigned order (BILINGUAL)
+     */
+    async notifyDriverOrderAssigned(order, driver) {
+        const rawPhone = driver.phone;
+        console.log(`[WA-DRIVER] notifyDriverOrderAssigned for ${order.orderNumber}, driver phone: ${rawPhone || '(none)'}`);
+
+        if (!rawPhone) {
+            console.warn(`[WA-DRIVER] ❌ No phone for driver ${driver.name}. Skipping notification.`);
+            return { success: false, error: 'No driver phone' };
+        }
+
+        const phone = rawPhone;
+        const driverName = driver.name || 'Driver';
+        const customerName = order.user ? order.user.name : 'Customer';
+        
+        // Use order.shippingAddress.phone or fallback to user.phone
+        let customerPhone = order.shippingAddress?.phone;
+        if (!customerPhone && order.user?.phone) {
+            customerPhone = order.user.phone;
+        }
+        
+        const customerPhoneDisplay = customerPhone ? `wa.me/${this.formatPhone(customerPhone)}` : 'N/A';
+        const driverDashboardUrl = `${this.frontendUrl}/driver/deliveries.html`;
+
+        const address = order.shippingAddress ? 
+            `${order.shippingAddress.street}, ${order.shippingAddress.city}` : 'N/A';
+
+        const message = `🚚 *ARTÉVA Maison - New Delivery* 🚚
+
+Hello ${driverName},
+You have been assigned a new order for delivery!
+
+📦 *Order:* ${order.orderNumber}
+👤 *Customer:* ${customerName}
+📞 *Contact:* ${customerPhoneDisplay}
+📍 *Address:* ${address}
+💰 *Total:* ${order.total} ${order.currency}
+
+📱 View details in your dashboard:
+${driverDashboardUrl}
+
+━━━━━━━━━━━━━━━
+
+مرحباً ${driverName}،
+تم تعيين طلب جديد لك للتوصيل!
+
+📦 *الطلب:* ${order.orderNumber}
+👤 *العميل:* ${customerName}
+📞 *التواصل:* ${customerPhoneDisplay}
+📍 *العنوان:* ${address}
+💰 *المجموع:* ${order.total} ${order.currency}
+
+📱 عرض التفاصيل في لوحة التحكم:
+${driverDashboardUrl}`;
+
+        // Using priority 2 (same as customer updates)
+        const result = await this.sendMessage(phone, message, 'status_update', order._id);
+        console.log(`[WA-DRIVER] Result for ${order.orderNumber}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
+        return result;
+    }
+
+    // ═══════════════════════════════════════════════════
     // AUTOMATED NOTIFICATIONS
     // ═══════════════════════════════════════════════════
 

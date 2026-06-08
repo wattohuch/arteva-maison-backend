@@ -367,7 +367,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const assignDriver = asyncHandler(async (req, res) => {
     const { driverId } = req.body;
-    const order = await Order.findById(req.params.id);
+    const order = await Order.findById(req.params.id).populate('user', 'name phone');
 
     if (!order) {
         res.status(404);
@@ -399,6 +399,14 @@ const assignDriver = asyncHandler(async (req, res) => {
         console.log(`📱 Notified driver ${driver.name} about new order ${order.orderNumber}`);
     } catch (socketErr) {
         console.error('Socket notification to driver failed:', socketErr.message);
+    }
+
+    // Send WhatsApp notification to the driver
+    try {
+        const whatsapp = require('../services/whatsappService');
+        await whatsapp.notifyDriverOrderAssigned(order, driver);
+    } catch (whatsappErr) {
+        console.error('WhatsApp driver notification failed:', whatsappErr.message);
     }
 
     res.json({ success: true, data: order });
