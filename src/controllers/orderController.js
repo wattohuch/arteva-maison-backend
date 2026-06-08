@@ -177,10 +177,21 @@ const createOrder = asyncHandler(async (req, res) => {
             const userDoc = await User.findById(req.user._id);
             if (userDoc) {
                 const existingAddress = userDoc.addresses.find(a =>
+                    a.street && shippingAddress.street &&
                     a.street.toLowerCase() === shippingAddress.street.toLowerCase() &&
+                    a.city && shippingAddress.city &&
                     a.city.toLowerCase() === shippingAddress.city.toLowerCase()
                 );
-                if (!existingAddress) {
+                if (existingAddress) {
+                    // Update existing address with latest data
+                    existingAddress.phone = shippingAddress.phone || existingAddress.phone;
+                    existingAddress.zipCode = shippingAddress.zipCode || existingAddress.zipCode;
+                    existingAddress.state = shippingAddress.state || existingAddress.state;
+                    existingAddress.country = shippingAddress.country || existingAddress.country;
+                    if (shippingAddress.label) existingAddress.label = shippingAddress.label;
+                    if (shippingAddress.coordinates) existingAddress.coordinates = shippingAddress.coordinates;
+                    await userDoc.save();
+                } else {
                     userDoc.addresses.push({
                         street: shippingAddress.street,
                         city: shippingAddress.city,
@@ -188,7 +199,9 @@ const createOrder = asyncHandler(async (req, res) => {
                         country: shippingAddress.country || 'Kuwait',
                         zipCode: shippingAddress.zipCode || '',
                         phone: shippingAddress.phone || userDoc.phone || '',
-                        label: userDoc.addresses.length === 0 ? 'Home' : `Address ${userDoc.addresses.length + 1}`
+                        label: shippingAddress.label || (userDoc.addresses.length === 0 ? 'Home' : `Address ${userDoc.addresses.length + 1}`),
+                        coordinates: shippingAddress.coordinates || undefined,
+                        isDefault: userDoc.addresses.length === 0
                     });
                     await userDoc.save();
                 }

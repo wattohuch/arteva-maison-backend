@@ -130,14 +130,14 @@ async function apiRequest(endpoint, method = 'GET', body = null) {
 
   try {
     const res = await fetch(url, options);
-    
+
     // Check HTTP status before parsing
     if (!res.ok) {
       const text = await res.text().catch(() => 'no body');
       log(`[API] HTTP ${res.status} from ${endpoint}: ${text}`, 'error');
       return { success: false, httpStatus: res.status };
     }
-    
+
     const data = await res.json();
     return data;
   } catch (e) {
@@ -156,7 +156,7 @@ async function startAgent() {
   isStarting = true;
 
   log('🔄 Initializing WhatsApp Agent...');
-  
+
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
@@ -170,7 +170,13 @@ async function startAgent() {
       printQRInTerminal: true,
       logger: baileysLogger,
       browser: Browsers.ubuntu('Chrome'),
-      syncFullHistory: false
+      syncFullHistory: false,
+      markOnlineOnConnect: true, // Ensure device is marked online for faster key sync
+      getMessage: async (key) => {
+        // Fallback message retrieval — reduces 'waiting for this message' clock icon
+        // Return empty object to signal no cached message available
+        return { conversation: '' };
+      }
     });
 
     sock.ev.on('connection.update', (update) => {
@@ -184,11 +190,11 @@ async function startAgent() {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         log(`❌ Connection closed (code: ${statusCode}), reconnect: ${shouldReconnect}`, 'warn');
-        
+
         // ── CRITICAL: Clean up before reconnect ──
         isConnected = false;
         activeSock = null; // Invalidate global socket immediately
-        
+
         // Clear the old poll interval to prevent zombie polls with dead socket
         if (pollIntervalId) {
           clearInterval(pollIntervalId);
@@ -202,7 +208,7 @@ async function startAgent() {
         if (shouldReconnect) {
           reconnectAttempts++;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
-          log(`🔄 Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})...`);
+          log(`🔄 Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
           setTimeout(() => startAgent(), delay);
         } else {
           log('❌ LOGGED OUT. Delete "auth_info_baileys" folder and restart to scan QR again.', 'error');
@@ -214,69 +220,69 @@ async function startAgent() {
         reconnectAttempts = 0;
         isStarting = false; // Done starting
         log('✅ WhatsApp successfully connected!');
-        
+
         // ── Incoming Message Handler (Auto-Greeting) ──
         sock.ev.on('messages.upsert', async ({ messages: incomingMsgs, type }) => {
-            if (type !== 'notify') return; // Only handle real-time messages
-            
-            for (const msg of incomingMsgs) {
-                try {
-                    // Skip: own messages, groups, status broadcasts
-                    if (msg.key.fromMe) continue;
-                    if (!msg.key.remoteJid) continue;
-                    if (msg.key.remoteJid.endsWith('@g.us')) continue;
-                    if (msg.key.remoteJid === 'status@broadcast') continue;
-                    
-                    // Extract text from various message types
-                    const text = msg.message?.conversation
-                              || msg.message?.extendedTextMessage?.text;
-                    if (!text) continue; // Skip images, stickers, etc.
-                    
-                    const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '');
-                    
-                    // Skip admin phone numbers — they handle support directly
-                    if (chatbot.isAdminPhone(phone)) continue;
-                    
-                    log(`📩 Incoming from +${phone}: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
-                    
-                    // Handle via chatbot
-                    const result = chatbot.handleMessage(phone, text);
-                    
-                    if (!result) {
-                        log(`  ⏸️ Already greeted +${phone} recently — staying silent`, 'debug');
-                        continue;
-                    }
-                    
-                    // Send greeting reply
-                    if (!activeSock || !isConnected) continue;
-                    await activeSock.sendMessage(msg.key.remoteJid, { text: result.reply });
-                    greetingsSent++;
-                    log(`  ✅ Auto-greeting sent to +${phone}`);
-                    
-                    // Forward to admin phones
-                    if (result.forward) {
-                        const forwardText = `📩 New customer message:\n\n📱 +${phone}\n💬 "${text}"\n\n↩️ Reply to them directly on WhatsApp.`;
-                        for (const admin of chatbot.ADMIN_PHONES) {
-                            if (!activeSock || !isConnected) break;
-                            try {
-                                await activeSock.sendMessage(`${admin}@s.whatsapp.net`, { text: forwardText });
-                                await new Promise(r => setTimeout(r, 1000)); // Brief delay between admin notifications
-                            } catch (fwdErr) {
-                                log(`  ⚠️ Failed to forward to admin ${admin}: ${fwdErr.message}`, 'warn');
-                            }
-                        }
-                        messagesForwarded++;
-                        log(`  📤 Forwarded to ${chatbot.ADMIN_PHONES.length} admin(s)`);
-                    }
-                } catch (msgErr) {
-                    log(`⚠️ Error handling incoming message: ${msgErr.message}`, 'warn');
+          if (type !== 'notify') return; // Only handle real-time messages
+
+          for (const msg of incomingMsgs) {
+            try {
+              // Skip: own messages, groups, status broadcasts
+              if (msg.key.fromMe) continue;
+              if (!msg.key.remoteJid) continue;
+              if (msg.key.remoteJid.endsWith('@g.us')) continue;
+              if (msg.key.remoteJid === 'status@broadcast') continue;
+
+              // Extract text from various message types
+              const text = msg.message?.conversation
+                || msg.message?.extendedTextMessage?.text;
+              if (!text) continue; // Skip images, stickers, etc.
+
+              const phone = msg.key.remoteJid.replace('@s.whatsapp.net', '');
+
+              // Skip admin phone numbers — they handle support directly
+              if (chatbot.isAdminPhone(phone)) continue;
+
+              log(`📩 Incoming from +${phone}: "${text.substring(0, 80)}${text.length > 80 ? '...' : ''}"`);
+
+              // Handle via chatbot
+              const result = chatbot.handleMessage(phone, text);
+
+              if (!result) {
+                log(`  ⏸️ Already greeted +${phone} recently — staying silent`, 'debug');
+                continue;
+              }
+
+              // Send greeting reply
+              if (!activeSock || !isConnected) continue;
+              await activeSock.sendMessage(msg.key.remoteJid, { text: result.reply });
+              greetingsSent++;
+              log(`  ✅ Auto-greeting sent to +${phone}`);
+
+              // Forward to admin phones
+              if (result.forward) {
+                const forwardText = `📩 New customer message:\n\n📱 +${phone}\n💬 "${text}"\n\n↩️ Reply to them directly on WhatsApp.`;
+                for (const admin of chatbot.ADMIN_PHONES) {
+                  if (!activeSock || !isConnected) break;
+                  try {
+                    await activeSock.sendMessage(`${admin}@s.whatsapp.net`, { text: forwardText });
+                    await new Promise(r => setTimeout(r, 1000)); // Brief delay between admin notifications
+                  } catch (fwdErr) {
+                    log(`  ⚠️ Failed to forward to admin ${admin}: ${fwdErr.message}`, 'warn');
+                  }
                 }
+                messagesForwarded++;
+                log(`  📤 Forwarded to ${chatbot.ADMIN_PHONES.length} admin(s)`);
+              }
+            } catch (msgErr) {
+              log(`⚠️ Error handling incoming message: ${msgErr.message}`, 'warn');
             }
+          }
         });
-        
+
         // Re-queue any recently failed transient messages
         requeueTransientFailures();
-        
+
         startPolling();
       }
     });
@@ -287,7 +293,7 @@ async function startAgent() {
     isStarting = false; // Allow retry
     reconnectAttempts++;
     const delay = Math.min(5000 * reconnectAttempts, MAX_RECONNECT_DELAY);
-    log(`🔄 Retrying in ${delay/1000}s...`);
+    log(`🔄 Retrying in ${delay / 1000}s...`);
     setTimeout(() => startAgent(), delay);
   }
 }
@@ -310,7 +316,7 @@ async function startPolling() {
   if (isPolling) return;
   isPolling = true;
 
-  log(`🔄 Polling ${BASE_URL} every ${POLL_INTERVAL/1000}s for WhatsApp messages...`);
+  log(`🔄 Polling ${BASE_URL} every ${POLL_INTERVAL / 1000}s for WhatsApp messages...`);
 
   const poll = async () => {
     // Use global activeSock — NEVER a stale closure reference
@@ -318,13 +324,13 @@ async function startPolling() {
       log('⏸️ Poll skipped — not connected', 'debug');
       return;
     }
-    
+
     // Guard: don't start a new batch if previous is still sending
     if (isSending) {
       log('⏸️ Poll skipped — previous batch still sending', 'debug');
       return;
     }
-    
+
     try {
       const result = await apiRequest('/api/admin/whatsapp-queue/poll');
       lastPollTime = new Date().toISOString();
@@ -461,7 +467,7 @@ async function sendWithRetry(msg) {
         });
       } else {
         const delay = 5000 * attempt;
-        log(`⏳ Retrying in ${delay/1000}s...`);
+        log(`⏳ Retrying in ${delay / 1000}s...`);
         await new Promise(r => setTimeout(r, delay));
       }
     }
@@ -523,15 +529,15 @@ let isShuttingDown = false;
 async function shutdown(sig) {
   if (isShuttingDown) return; // Prevent double shutdown
   isShuttingDown = true;
-  
+
   log(`⏹ Received ${sig}, shutting down WhatsApp agent...`);
-  
+
   // Clear poll interval
   if (pollIntervalId) {
     clearInterval(pollIntervalId);
     pollIntervalId = null;
   }
-  
+
   // Close WhatsApp socket properly
   if (activeSock) {
     try {
@@ -542,7 +548,7 @@ async function shutdown(sig) {
     }
     activeSock = null;
   }
-  
+
   const uptime = Math.floor((Date.now() - startTime) / 60000);
   log(`Session: ${sentCount} sent, ${errorCount} errors, uptime ${uptime}m`);
   process.exit(0);
@@ -569,7 +575,7 @@ console.log('  ╚════════════════════�
 console.log('');
 
 log(`API:      ${BASE_URL}`);
-log(`Poll:     every ${POLL_INTERVAL/1000}s`);
+log(`Poll:     every ${POLL_INTERVAL / 1000}s`);
 log(`Retries:  ${MAX_SEND_RETRIES} max per message`);
 log(`MaxAttempts: ${MAX_MESSAGE_ATTEMPTS} total before permanent fail`);
 log(`Delay:    ${SEND_DELAY_MS}ms between sends`);

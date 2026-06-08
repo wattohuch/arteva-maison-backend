@@ -455,7 +455,17 @@ const verifyPayment = asyncHandler(async (req, res) => {
                     a.city && order.shippingAddress.city &&
                     a.city.toLowerCase() === order.shippingAddress.city.toLowerCase()
                 );
-                if (!existingAddress) {
+                if (existingAddress) {
+                    // Update existing address with latest data
+                    existingAddress.phone = order.shippingAddress.phone || existingAddress.phone;
+                    existingAddress.zipCode = order.shippingAddress.zipCode || existingAddress.zipCode;
+                    existingAddress.state = order.shippingAddress.state || existingAddress.state;
+                    existingAddress.country = order.shippingAddress.country || existingAddress.country;
+                    if (order.shippingAddress.label) existingAddress.label = order.shippingAddress.label;
+                    if (order.shippingAddress.coordinates) existingAddress.coordinates = order.shippingAddress.coordinates;
+                    await userDoc.save();
+                    console.log(`[ADDRESS] Updated existing address for user ${userDoc.email}`);
+                } else {
                     const newAddr = {
                         street: order.shippingAddress.street,
                         city: order.shippingAddress.city,
@@ -471,7 +481,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
                     }
                     userDoc.addresses.push(newAddr);
                     await userDoc.save();
-                    console.log(`[ADDRESS] Auto-saved address for user ${userDoc.email}`);
+                    console.log(`[ADDRESS] Auto-saved new address for user ${userDoc.email}`);
                 }
             }
         } catch (addrErr) {
@@ -774,7 +784,17 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                         a.city && order.shippingAddress.city &&
                         a.city.toLowerCase() === order.shippingAddress.city.toLowerCase()
                     );
-                    if (!existingAddress) {
+                    if (existingAddress) {
+                        // Update existing address with latest data
+                        existingAddress.phone = order.shippingAddress.phone || existingAddress.phone;
+                        existingAddress.zipCode = order.shippingAddress.zipCode || existingAddress.zipCode;
+                        existingAddress.state = order.shippingAddress.state || existingAddress.state;
+                        existingAddress.country = order.shippingAddress.country || existingAddress.country;
+                        if (order.shippingAddress.label) existingAddress.label = order.shippingAddress.label;
+                        if (order.shippingAddress.coordinates) existingAddress.coordinates = order.shippingAddress.coordinates;
+                        await userDoc.save();
+                        console.log(`[ADDRESS] Updated existing address for user ${userDoc.email}`);
+                    } else {
                         const newAddr = {
                             street: order.shippingAddress.street,
                             city: order.shippingAddress.city,
@@ -790,7 +810,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                         }
                         userDoc.addresses.push(newAddr);
                         await userDoc.save();
-                        console.log(`[ADDRESS] Auto-saved address for user ${userDoc.email}`);
+                        console.log(`[ADDRESS] Auto-saved new address for user ${userDoc.email}`);
                     }
                 }
             } catch (addrErr) {
