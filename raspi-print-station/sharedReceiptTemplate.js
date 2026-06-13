@@ -63,7 +63,7 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
     ? 'background:#d1fae5;color:#065f46' : order.paymentStatus === 'failed'
       ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
 
-  const promoDiscounts = order.promoCode?.discounts || [];
+  const promoDiscounts = (order.promoCode && order.promoCode.discounts) ? order.promoCode.discounts : [];
   const itemsHTML = items.map(it => {
     const sku = escapeHTML(it.sku || '—');
     const name = escapeHTML(it.name || 'Unknown');
@@ -72,8 +72,8 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
     const qty = parseInt(it.quantity) || 1;
     const originalTotal = (parseFloat(it.price) || 0) * qty;
     const itemDiscount = promoDiscounts.find(d => {
-      const dProd = (d.product?._id || d.product || '').toString();
-      const iProd = (it.product?._id || it.product || it._id || '').toString();
+      const dProd = (d.product && d.product._id ? d.product._id : (d.product || '')).toString();
+      const iProd = (it.product && it.product._id ? it.product._id : (it.product || it._id || '')).toString();
       return dProd && iProd && dProd === iProd;
     });
     let priceCell, totalCell;
