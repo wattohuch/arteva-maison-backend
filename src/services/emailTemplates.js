@@ -142,15 +142,29 @@ function getWelcomeEmailHtml(user) {
  * @param {Object} user 
  */
 function getOrderConfirmationHtml(order, user) {
-    const itemsHtml = order.items.map(item => `
+    const promoDiscounts = (order.promoCode && order.promoCode.discounts) ? order.promoCode.discounts : [];
+    const itemsHtml = order.items.map(item => {
+        const itemDiscount = promoDiscounts.find(d => {
+            const dProd = (d.product && d.product._id ? d.product._id : d.product || '').toString();
+            const iProd = (item.product && item.product._id ? item.product._id : item.product || item._id || '').toString();
+            return dProd && iProd && dProd === iProd;
+        });
+        let priceCell;
+        if (itemDiscount) {
+            const discountedPrice = (item.price * item.quantity - (itemDiscount.discountAmount || 0)) / item.quantity;
+            priceCell = `<span style="text-decoration: line-through; color: #999;">${item.price.toFixed(3)} KWD</span><br><span style="color: #059669; font-weight: bold;">${discountedPrice.toFixed(3)} KWD</span>`;
+        } else {
+            priceCell = `${item.price.toFixed(3)} KWD`;
+        }
+        return `
         <tr>
             <td width="60%">
                 <div style="font-weight: bold;">${item.name}</div>
             </td>
             <td width="15%" style="text-align: center;">${item.quantity}</td>
-            <td width="25%" style="text-align: right;">${item.price.toFixed(3)} KWD</td>
-        </tr>
-    `).join('');
+            <td width="25%" style="text-align: right;">${priceCell}</td>
+        </tr>`;
+    }).join('');
 
     const content = `
         <h1 style="text-align: center; font-size: 24px;">Order Confirmation</h1>
@@ -185,6 +199,11 @@ function getOrderConfirmationHtml(order, user) {
                     <td colspan="2" style="text-align: right; border-bottom: none;">Shipping:</td>
                     <td style="text-align: right; border-bottom: none;">${order.shippingCost.toFixed(3)} KWD</td>
                 </tr>
+                ${order.promoCode && order.promoCode.code ? `
+                <tr>
+                    <td colspan="2" style="text-align: right; border-bottom: none; color: #059669; font-style: italic;">Promo Code: ${order.promoCode.code}</td>
+                    <td style="text-align: right; border-bottom: none; color: #059669; font-weight: bold;">-${(order.promoCode.totalDiscount || order.discount || 0).toFixed(3)} KWD</td>
+                </tr>` : ''}
                 <tr class="total-row">
                     <td colspan="2" style="text-align: right;">Total:</td>
                     <td style="text-align: right;">${order.total.toFixed(3)} KWD</td>

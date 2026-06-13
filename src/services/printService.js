@@ -155,18 +155,47 @@ async function renderReceiptToJpeg(order, customer) {
     y += f(20);
 
     // Rows
+    const promoDiscounts = order.promoCode?.discounts || [];
     items.forEach(item=>{
-        const sku=item.sku||'—', total=(item.price*item.quantity).toFixed(3);
+        const sku=item.sku||'—';
+        const itemDiscount = promoDiscounts.find(d => {
+            const dProd = (d.product?._id || d.product || '').toString();
+            const iProd = (item.product?._id || item.product || item._id || '').toString();
+            return dProd && iProd && dProd === iProd;
+        });
+        const originalTotal = (item.price*item.quantity).toFixed(3);
         c.textAlign='left';
         c.fillStyle=MID; c.font=`${f(8.5)}px Courier New`; c.fillText(sku, cols[0].x, y);
         c.fillStyle=DARK; c.font=`500 ${f(9.5)}px Arial`; c.fillText(trunc(c,item.name||'Product',cols[1].w-f(4)), cols[1].x, y);
         if(item.nameAr){c.fillStyle=LIGHT;c.font=`${f(7.5)}px Arial`;c.fillText(item.nameAr,cols[1].x,y+f(11));}
         if(item.variant){c.fillStyle=LIGHT;c.font=`${f(7)}px Arial`;c.fillText(item.variant,cols[1].x,y+f(item.nameAr?19:11));}
-        c.fillStyle=DARK; c.font=`${f(9)}px Arial`;
-        c.textAlign='left'; c.fillText(item.price.toFixed(3)+' KWD', cols[2].x, y);
-        c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
-        c.textAlign='right'; c.fillText(total+' KWD', cols[4].x+cols[4].w, y);
-        y += item.nameAr?f(26):f(20);
+        c.font=`${f(9)}px Arial`;
+        if (itemDiscount) {
+            // Original price with strikethrough
+            c.fillStyle=LIGHT; c.textAlign='left';
+            const origPriceText = item.price.toFixed(3)+' KWD';
+            c.fillText(origPriceText, cols[2].x, y);
+            const origPriceW = c.measureText(origPriceText).width;
+            c.strokeStyle=LIGHT; c.lineWidth=f(0.5);
+            c.beginPath(); c.moveTo(cols[2].x, y+f(4)); c.lineTo(cols[2].x+origPriceW, y+f(4)); c.stroke();
+            // Discounted price below in gold
+            const discountedPrice = ((item.price*item.quantity - (itemDiscount.discountAmount||0))/item.quantity).toFixed(3);
+            c.fillStyle=GOLD; c.font=`600 ${f(8.5)}px Arial`;
+            c.fillText(discountedPrice+' KWD', cols[2].x, y+f(11));
+            // Quantity
+            c.fillStyle=DARK; c.font=`${f(9)}px Arial`;
+            c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
+            // Discounted total
+            const discountedTotal = (item.price*item.quantity - (itemDiscount.discountAmount||0)).toFixed(3);
+            c.fillStyle=GOLD; c.font=`600 ${f(9)}px Arial`;
+            c.textAlign='right'; c.fillText(discountedTotal+' KWD', cols[4].x+cols[4].w, y);
+        } else {
+            c.fillStyle=DARK;
+            c.textAlign='left'; c.fillText(item.price.toFixed(3)+' KWD', cols[2].x, y);
+            c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
+            c.textAlign='right'; c.fillText(originalTotal+' KWD', cols[4].x+cols[4].w, y);
+        }
+        y += item.nameAr?f(26):(itemDiscount?f(24):f(20));
         c.strokeStyle=BORDER; c.lineWidth=f(0.3); c.beginPath(); c.moveTo(LM,y); c.lineTo(RM,y); c.stroke();
         y += f(6);
     });
@@ -187,6 +216,14 @@ async function renderReceiptToJpeg(order, customer) {
     c.fillText('/ التوصيل', tx+f(48), y+f(1.5));
     c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
     c.textAlign='right'; c.fillText((order.shippingCost||0).toFixed(3)+' KWD', RM, y); y+=f(12);
+    // Promo Code (if applicable)
+    if (order.promoCode && order.promoCode.code) {
+        const promoAmount = order.promoCode.totalDiscount || order.discount || 0;
+        c.textAlign='left'; c.font=`${f(9.5)}px Arial`; c.fillStyle='#059669';
+        c.fillText('Promo: ' + order.promoCode.code, tx, y);
+        c.textAlign='right';
+        c.fillText('-' + parseFloat(promoAmount).toFixed(3) + ' KWD', RM, y); y+=f(12);
+    }
     // Divider
     c.strokeStyle=BORDER; c.lineWidth=f(1); c.beginPath(); c.moveTo(tx,y); c.lineTo(RM,y); c.stroke(); y+=f(14);
     // Total Paid

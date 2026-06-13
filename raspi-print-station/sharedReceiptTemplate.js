@@ -63,22 +63,38 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
     ? 'background:#d1fae5;color:#065f46' : order.paymentStatus === 'failed'
       ? 'background:#fee2e2;color:#991b1b' : 'background:#fef3c7;color:#92400e';
 
+  const promoDiscounts = order.promoCode?.discounts || [];
   const itemsHTML = items.map(it => {
     const sku = escapeHTML(it.sku || '—');
     const name = escapeHTML(it.name || 'Unknown');
     const nameAr = escapeHTML(it.nameAr || '');
     const price = safeFixed(it.price);
     const qty = parseInt(it.quantity) || 1;
-    const total = safeFixed((parseFloat(it.price) || 0) * qty);
+    const originalTotal = (parseFloat(it.price) || 0) * qty;
+    const itemDiscount = promoDiscounts.find(d => {
+      const dProd = (d.product?._id || d.product || '').toString();
+      const iProd = (it.product?._id || it.product || it._id || '').toString();
+      return dProd && iProd && dProd === iProd;
+    });
+    let priceCell, totalCell;
+    if (itemDiscount) {
+      const discountedUnitPrice = safeFixed((parseFloat(it.price) * qty - (parseFloat(itemDiscount.discountAmount) || 0)) / qty);
+      const discountedTotal = safeFixed(originalTotal - (parseFloat(itemDiscount.discountAmount) || 0));
+      priceCell = `<span style="text-decoration:line-through;color:#999">${price} KWD</span><br><span style="color:#059669;font-weight:600">${discountedUnitPrice} KWD</span>`;
+      totalCell = `<span style="color:#059669;font-weight:600">${discountedTotal} KWD</span>`;
+    } else {
+      priceCell = `${price} KWD`;
+      totalCell = `${safeFixed(originalTotal)} KWD`;
+    }
     return `<tr>
       <td class="sku-col">${sku}</td>
       <td>
         <div style="font-weight:500">${name}</div>
         ${nameAr ? '<div style="font-size:10px;color:#888;font-family:var(--font-arabic);direction:rtl">' + nameAr + '</div>' : ''}
       </td>
-      <td>${price} KWD</td>
+      <td>${priceCell}</td>
       <td style="text-align:center">${qty}</td>
-      <td style="text-align:right">${total} KWD</td>
+      <td style="text-align:right">${totalCell}</td>
     </tr>`;
   }).join('');
 
@@ -145,6 +161,7 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
   .total-section { width: 260px; margin-left: auto; }
   .total-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
   .total-row.final { border-top: 2px solid var(--color-border); margin-top: 6px; padding-top: 6px; font-weight: 700; font-size: 15px; }
+  .promo-row { color: #059669; font-style: italic; }
 
   .status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: capitalize; }
 
@@ -260,6 +277,7 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
 <div class="total-section">
   <div class="total-row"><span>Subtotal / المجموع الفرعي</span><span>${safeFixed(order.subtotal || order.total)} KWD</span></div>
   <div class="total-row"><span>Delivery / التوصيل</span><span>${safeFixed(order.shippingCost)} KWD</span></div>
+  ${order.promoCode && order.promoCode.code ? '<div class="total-row promo-row"><span>Promo Code: ' + escapeHTML(order.promoCode.code) + ' / رمز الخصم</span><span>-' + safeFixed(order.promoCode.totalDiscount || order.discount) + ' KWD</span></div>' : ''}
   <div class="total-row final"><span>Total Paid / المبلغ المدفوع</span><span>${safeFixed(order.total)} KWD</span></div>
 </div>
 

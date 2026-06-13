@@ -326,7 +326,7 @@ const executePayment = asyncHandler(async (req, res) => {
     console.log('Calling MyFatoorah executePayment...');
 
     try {
-        const payment = await myfatoorah.executePayment(paymentData);
+        const payment = await myfatoorah.executePayment(paymentData, totalDiscount);
 
         console.log('MyFatoorah response:', JSON.stringify(payment, null, 2));
 

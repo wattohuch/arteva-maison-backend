@@ -93,7 +93,7 @@ class MyFatoorahService {
     /**
      * Execute payment with specific method (KNET, Card, Apple Pay)
      */
-    async executePayment(paymentData) {
+    async executePayment(paymentData, discount = 0) {
         try {
             console.log('MyFatoorah executePayment - Base URL:', this.baseUrl);
             console.log('MyFatoorah executePayment - Payment Data:', JSON.stringify(paymentData, null, 2));
@@ -124,6 +124,53 @@ class MyFatoorahService {
                 cleanPhone = '00000000';
             }
 
+            // Build InvoiceItems — MyFatoorah requires sum of (UnitPrice * Quantity) == InvoiceValue
+            // When a promo discount is applied, we distribute the discount across items proportionally
+            const invoiceItems = paymentData.items.map(item => ({
+                ItemName: item.name,
+                Quantity: item.quantity,
+                UnitPrice: item.price
+            }));
+
+            // Add shipping as a separate item
+            invoiceItems.push({
+                ItemName: 'Shipping',
+                Quantity: 1,
+                UnitPrice: 2.0
+            });
+
+            // If there's a promo discount, distribute it across items proportionally
+            // MyFatoorah does NOT accept negative UnitPrice values
+            if (discount > 0) {
+                const itemsTotal = invoiceItems.reduce((sum, item) => sum + (item.UnitPrice * item.Quantity), 0);
+                let remainingDiscount = discount;
+
+                for (let i = 0; i < invoiceItems.length && remainingDiscount > 0; i++) {
+                    const item = invoiceItems[i];
+                    const itemTotal = item.UnitPrice * item.Quantity;
+                    // Distribute proportionally
+                    const itemDiscount = Math.min(
+                        parseFloat((discount * (itemTotal / itemsTotal)).toFixed(3)),
+                        remainingDiscount,
+                        itemTotal // Don't make price negative
+                    );
+                    if (itemDiscount > 0 && item.Quantity > 0) {
+                        item.UnitPrice = parseFloat(((itemTotal - itemDiscount) / item.Quantity).toFixed(3));
+                        remainingDiscount = parseFloat((remainingDiscount - itemDiscount).toFixed(3));
+                    }
+                }
+
+                // Handle any rounding remainder by adjusting the first item
+                if (remainingDiscount > 0.001 && invoiceItems.length > 0) {
+                    const first = invoiceItems[0];
+                    const maxDeduct = first.UnitPrice * first.Quantity;
+                    const deduct = Math.min(remainingDiscount, maxDeduct);
+                    first.UnitPrice = parseFloat(((first.UnitPrice * first.Quantity - deduct) / first.Quantity).toFixed(3));
+                }
+
+                console.log(`[MYFATOORAH] Discount ${discount} KWD distributed across ${invoiceItems.length} invoice items`);
+            }
+
             const payload = {
                 PaymentMethodId: paymentData.paymentMethodId, // 1=KNET, 2=VISA/Master, 20=Apple Pay
                 CustomerName: paymentData.customerName,
@@ -137,19 +184,7 @@ class MyFatoorahService {
                 Language: paymentData.language === 'ar' ? 'AR' : 'EN',
                 CustomerReference: paymentData.orderNumber,
                 UserDefinedField: paymentData.orderId,
-                InvoiceItems: [
-                    ...paymentData.items.map(item => ({
-                        ItemName: item.name,
-                        Quantity: item.quantity,
-                        UnitPrice: item.price
-                    })),
-                    // Add shipping as a separate item
-                    {
-                        ItemName: 'Shipping',
-                        Quantity: 1,
-                        UnitPrice: 2.0
-                    }
-                ]
+                InvoiceItems: invoiceItems
             };
 
             console.log('MyFatoorah payload:', JSON.stringify(payload, null, 2));
