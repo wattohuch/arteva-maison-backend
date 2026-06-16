@@ -142,10 +142,11 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 const executePayment = asyncHandler(async (req, res) => {
     const { paymentMethodId, shippingAddress, promoCode: promoCodeStr } = req.body;
 
-    // Validate paymentMethodId — must be a known numeric value
-    const validMethods = [1, 2, 6, 11, 20]; // KNET, VISA/MC, Mada, STC Pay, Apple Pay
+    // Validate paymentMethodId — must be a positive integer
+    // The frontend dynamically detects valid IDs from MyFatoorah's InitiatePayment API,
+    // so we accept any positive integer here rather than hardcoding a whitelist
     const methodId = parseInt(paymentMethodId);
-    if (!methodId || !validMethods.includes(methodId)) {
+    if (!methodId || methodId < 1) {
         res.status(400);
         throw new Error(`Invalid payment method: ${paymentMethodId}`);
     }
@@ -664,6 +665,7 @@ function getPaymentMethodName(methodId) {
     const methods = {
         1: 'knet',
         2: 'card',
+        11: 'deema',
         20: 'applepay'
     };
     return methods[methodId] || 'myfatoorah';
@@ -756,19 +758,24 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 console.error('Socket notification error:', socketErr.message);
             }
 
-            // Auto-print receipt
+            // Auto-print receipt (skip if already printed — prevents duplicate prints from callback/webhook race)
             try {
-                const { autoPrintReceipt } = require('../services/printService');
-                autoPrintReceipt(order, order.user).then(async (result) => {
-                    if (result && result.success) {
-                        try {
-                            await Order.findByIdAndUpdate(order._id, { printedAt: new Date() });
-                            console.log(`[PRINT] ✅ printedAt set for ${order.orderNumber}`);
-                        } catch (dbErr) {
-                            console.error(`[PRINT] Failed to set printedAt:`, dbErr.message);
+                const freshOrder = await Order.findById(order._id).select('printedAt').lean();
+                if (freshOrder && freshOrder.printedAt) {
+                    console.log(`[PRINT] ⏭️ Skipping auto-print for ${order.orderNumber} — already printed`);
+                } else {
+                    const { autoPrintReceipt } = require('../services/printService');
+                    autoPrintReceipt(order, order.user).then(async (result) => {
+                        if (result && result.success) {
+                            try {
+                                await Order.findByIdAndUpdate(order._id, { printedAt: new Date() });
+                                console.log(`[PRINT] ✅ printedAt set for ${order.orderNumber}`);
+                            } catch (dbErr) {
+                                console.error(`[PRINT] Failed to set printedAt:`, dbErr.message);
+                            }
                         }
-                    }
-                }).catch(e => console.error('Auto-print error:', e.message));
+                    }).catch(e => console.error('Auto-print error:', e.message));
+                }
             } catch (printErr) {
                 console.error('Print service error:', printErr.message);
             }

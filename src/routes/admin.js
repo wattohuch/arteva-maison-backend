@@ -165,6 +165,7 @@ router.get('/print-queue/poll', async (req, res) => {
         const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
         const orders = await Order.find({
             paymentStatus: 'paid',
+            orderStatus: { $nin: ['cancelled'] },
             printedAt: { $exists: false },
             createdAt: { $gte: sevenDaysAgo }
         })

@@ -113,7 +113,7 @@ async function renderReceiptToJpeg(order, customer) {
     c.strokeStyle=BORDER; c.lineWidth=f(0.5); rr(c,LM,y,CW,payH,gR); c.stroke();
     c.beginPath(); c.moveTo(LM+gW+f(5),y+gP); c.lineTo(LM+gW+f(5),y+payH-gP); c.stroke();
 
-    const payNames = {'cod':'Cash on Delivery','knet':'KNET','card':'Credit/Debit Card','applepay':'Apple Pay','myfatoorah':'Online Payment'};
+    const payNames = {'cod':'Cash on Delivery','knet':'KNET','card':'Credit/Debit Card','applepay':'Apple Pay','myfatoorah':'Online Payment','deema':'Deema (BNPL)'};
     c.fillStyle=MID; c.font=`${f(8)}px Arial`; c.fillText('Payment Method', LM+gP, y+gP);
     c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('طريقة الدفع', LM+gP+c.measureText('Payment Method ').width, y+gP+f(1));
     c.fillStyle=DARK; c.font=`500 ${f(10)}px Arial`; c.fillText((payNames[order.paymentMethod]||order.paymentMethod||'N/A').toUpperCase(), LM+gP, y+f(22));
