@@ -1,15 +1,26 @@
 /**
  * MyFatoorah Payment Gateway Integration
- * Supports: KNET, Credit Cards, Apple Pay
+ * Supports: KNET, Credit Cards, Apple Pay, Deema (BNPL)
  * Documentation: https://myfatoorah.readme.io/docs
+ *
+ * NOTE: Deema uses a SEPARATE MyFatoorah API key.
+ * Both instances share the same code but use different credentials.
  */
 
 const axios = require('axios');
 
 class MyFatoorahService {
-    constructor() {
-        this.apiKey = process.env.MYFATOORAH_API_KEY;
-        this.baseUrl = process.env.MYFATOORAH_MODE === 'live'
+    /**
+     * @param {Object} config - Optional overrides
+     * @param {string} config.apiKey - MyFatoorah API key (defaults to MYFATOORAH_API_KEY)
+     * @param {string} config.mode - 'test' or 'live' (defaults to MYFATOORAH_MODE)
+     * @param {string} config.label - Human-readable label for logs (e.g. 'Deema')
+     */
+    constructor(config = {}) {
+        this.label = config.label || 'Main';
+        this.apiKey = config.apiKey || process.env.MYFATOORAH_API_KEY;
+        const mode = config.mode || process.env.MYFATOORAH_MODE || 'test';
+        this.baseUrl = mode === 'live'
             ? 'https://api.myfatoorah.com'
             : 'https://apitest.myfatoorah.com';
 
@@ -20,6 +31,10 @@ class MyFatoorahService {
 
         // Request timeout (10 seconds)
         this.timeout = 10000;
+
+        if (this.apiKey && this.apiKey !== 'your_myfatoorah_api_key_here' && this.apiKey !== 'your_deema_test_api_key_here') {
+            console.log(`[MYFATOORAH] ${this.label} service initialized (${mode} mode)`);
+        }
     }
 
     /**
@@ -328,4 +343,38 @@ class MyFatoorahService {
     }
 }
 
-module.exports = new MyFatoorahService();
+// ═══════════════════════════════════════════════════
+// SERVICE INSTANCES
+// ═══════════════════════════════════════════════════
+
+// Main MyFatoorah service (KNET, Card, Apple Pay)
+const defaultService = new MyFatoorahService({ label: 'Main' });
+
+// Deema BNPL service (separate API key)
+const deemaService = new MyFatoorahService({
+    label: 'Deema',
+    apiKey: process.env.MYFATOORAH_DEEMA_API_KEY,
+    mode: process.env.MYFATOORAH_DEEMA_MODE || process.env.MYFATOORAH_MODE || 'test'
+});
+
+/**
+ * Pick the correct service instance based on payment method.
+ * @param {string} paymentMethod - 'deema', 'knet', 'card', 'applepay', etc.
+ * @returns {MyFatoorahService}
+ */
+function getServiceForMethod(paymentMethod) {
+    if (paymentMethod === 'deema') {
+        if (!process.env.MYFATOORAH_DEEMA_API_KEY || process.env.MYFATOORAH_DEEMA_API_KEY === 'your_deema_test_api_key_here') {
+            console.warn('[MYFATOORAH] ⚠️  Deema API key not configured, falling back to main service');
+            return defaultService;
+        }
+        return deemaService;
+    }
+    return defaultService;
+}
+
+// Export default service (backward-compatible) + helpers
+module.exports = defaultService;
+module.exports.deemaService = deemaService;
+module.exports.getServiceForMethod = getServiceForMethod;
+module.exports.MyFatoorahService = MyFatoorahService;
