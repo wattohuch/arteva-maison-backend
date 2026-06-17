@@ -1,11 +1,11 @@
 /**
  * Deema BNPL Payment Controller
- * Based on the OFFICIAL Deema WooCommerce Plugin flow:
+ * Uses Tap Payments API with source "src_deema"
  * 
- * 1. POST /api/merchant/v1/purchase → get redirect_link
- * 2. Customer approves on Deema page
- * 3. Deema redirects to success URL with ?reference=XXX
- * 4. We verify and confirm the order
+ * Flow:
+ *  1. POST /deema/checkout → create Tap charge with src_deema → redirect to Deema
+ *  2. GET  /deema/callback → Tap redirects here with ?tap_id=chg_XXX
+ *  3. POST /deema/webhook  → Tap fires webhook on status change
  */
 
 const { asyncHandler } = require('../middleware/error');
@@ -36,14 +36,52 @@ async function incrementPromoUsage(order) {
                 { $inc: { usageCount: 1 }, $push: { usedBy: { user: userId, count: 1 } } }
             );
         }
-        console.log(`[DEEMA][PROMO] ✅ Usage counted for promo "${order.promoCode.code}" (order ${order.orderNumber})`);
+        console.log(`[DEEMA] ✅ Promo usage counted for "${order.promoCode.code}" (order ${order.orderNumber})`);
     } catch (err) {
-        console.error(`[DEEMA][PROMO] ⚠️ Failed to increment usage:`, err.message);
+        console.error(`[DEEMA] ⚠️ Failed to increment promo usage:`, err.message);
     }
+}
+
+// Helper: Confirm paid order (stock, cart, notifications)
+async function confirmPaidOrder(order) {
+    if (order.paymentStatus === 'paid') return; // idempotent
+
+    order.paymentStatus = 'paid';
+    order.orderStatus = 'confirmed';
+    order.paidAt = new Date();
+
+    // Decrease stock
+    for (const item of order.items) {
+        await Product.findByIdAndUpdate(item.product, { $inc: { stock: -item.quantity } });
+    }
+
+    // Clear cart
+    const userId = order.user._id || order.user;
+    await Cart.findOneAndUpdate({ user: userId }, { items: [] });
+
+    // Promo usage
+    await incrementPromoUsage(order);
+
+    await order.save();
+
+    // Send notifications (background, non-blocking)
+    try { await sendOrderConfirmation(order, order.user); } catch (e) { /* silent */ }
+    try {
+        const { WhatsAppService } = require('../services/whatsappService');
+        const whatsapp = new WhatsAppService();
+        whatsapp.sendAllOrderNotifications(order, order.user);
+    } catch (e) { /* silent */ }
+    try {
+        const { emitNewOrder } = require('../socketHandler');
+        emitNewOrder(order);
+    } catch (e) { /* silent */ }
+
+    console.log(`[DEEMA] ✅ Order ${order.orderNumber} confirmed as paid`);
 }
 
 // ═══════════════════════════════════════════════════
 // CREATE DEEMA CHECKOUT
+// POST /api/payments/deema/checkout
 // ═══════════════════════════════════════════════════
 const createDeemaCheckout = asyncHandler(async (req, res) => {
     const { shippingAddress } = req.body;
@@ -134,23 +172,28 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
 
     console.log(`[DEEMA] Order created: ${order.orderNumber} (${total} KWD)`);
 
-    // Create Deema purchase
+    // Create Tap charge with src_deema
     try {
-        const purchase = await deemaService.createPurchase({
+        const charge = await deemaService.createCharge({
             amount: total,
-            orderNumber: order.orderNumber
+            orderId: order._id.toString(),
+            orderNumber: order.orderNumber,
+            customerName: shippingAddress.fullName || req.user.name,
+            customerEmail: req.user.email,
+            customerPhone: shippingAddress.phone || req.user.phone
         });
 
-        // Store Deema reference on order
-        order.deemaChargeId = purchase.orderReference; // Deema order reference
-        order.notes = `Deema Purchase ID: ${purchase.purchaseId}`;
+        // Store charge ID on order
+        order.deemaChargeId = charge.chargeId;
         await order.save();
+
+        console.log(`[DEEMA] Tap charge created: ${charge.chargeId}`);
 
         res.json({
             success: true,
             data: {
-                paymentUrl: purchase.redirectLink,
-                orderReference: purchase.orderReference,
+                paymentUrl: charge.paymentUrl,
+                chargeId: charge.chargeId,
                 orderNumber: order.orderNumber,
                 orderId: order._id
             }
@@ -159,7 +202,7 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
     } catch (payErr) {
         order.paymentStatus = 'failed';
         order.orderStatus = 'cancelled';
-        order.notes = `Deema purchase failed: ${payErr.message}`;
+        order.notes = `Deema charge failed: ${payErr.message}`;
         await order.save();
 
         res.status(502);
@@ -168,77 +211,63 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════
-// CALLBACK (Deema redirects here after approval)
-// Query params: ?reference=XXX (success) or ?status=failed (failure)
+// CALLBACK (Tap redirects here after payment)
+// Query: ?tap_id=chg_XXXXX
+// GET /api/payments/deema/callback
 // ═══════════════════════════════════════════════════
 const handleDeemaCallback = asyncHandler(async (req, res) => {
-    const { reference, status } = req.query;
+    const { tap_id, status } = req.query;
 
-    console.log('[DEEMA] Callback received:', req.query);
+    console.log('[DEEMA] Callback:', req.query);
 
     const frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
 
-    // Handle failure
-    if (status === 'failed' || !reference) {
-        console.log('[DEEMA] Payment failed or cancelled');
-        // Try to find and cancel the order
-        if (reference) {
-            const order = await Order.findOne({ deemaChargeId: reference });
-            if (order && order.paymentStatus !== 'paid') {
-                order.paymentStatus = 'failed';
-                order.orderStatus = 'cancelled';
-                order.notes = 'Deema payment failed/cancelled by customer';
-                await order.save();
-            }
-        }
+    // Handle explicit failure
+    if (status === 'failed' && !tap_id) {
         return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
     }
 
-    // Success — find order by Deema reference
+    if (!tap_id) {
+        return res.redirect(`${frontendUrl}/payment-error.html?error=missing_charge_id`);
+    }
+
     try {
-        const order = await Order.findOne({ deemaChargeId: reference }).populate('user', 'name email phone language');
+        // Get charge status from Tap
+        const chargeStatus = await deemaService.getChargeStatus(tap_id);
+        console.log('[DEEMA] Charge status:', chargeStatus.status);
+
+        // Find order by charge ID
+        let order = await Order.findOne({ deemaChargeId: tap_id }).populate('user', 'name email phone language');
+
+        // Fallback: find by metadata
+        if (!order && chargeStatus.orderId) {
+            order = await Order.findById(chargeStatus.orderId).populate('user', 'name email phone language');
+        }
 
         if (!order) {
-            console.error('[DEEMA] Order not found for reference:', reference);
+            console.error('[DEEMA] Order not found for charge:', tap_id);
             return res.redirect(`${frontendUrl}/payment-error.html?error=order_not_found`);
         }
 
-        // Idempotency: already paid
-        if (order.paymentStatus === 'paid') {
+        const tapStatus = (chargeStatus.status || '').toUpperCase();
+
+        if (tapStatus === 'CAPTURED') {
+            await confirmPaidOrder(order);
+            return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+        } else if (tapStatus === 'FAILED' || tapStatus === 'DECLINED' || tapStatus === 'CANCELLED' || tapStatus === 'ABANDONED') {
+            if (order.paymentStatus !== 'paid') {
+                order.paymentStatus = 'failed';
+                order.orderStatus = 'cancelled';
+                order.notes = `Deema/Tap status: ${tapStatus}`;
+                await order.save();
+            }
+            return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
+        } else if (tapStatus === 'INITIATED' || tapStatus === 'PENDING') {
+            return res.redirect(`${frontendUrl}/payment-pending.html?order=${order.orderNumber}`);
+        } else {
+            // Unknown status — show pending
             return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
         }
-
-        // ✅ Payment approved by Deema
-        order.paymentStatus = 'paid';
-        order.orderStatus = 'confirmed';
-        order.paidAt = new Date();
-
-        // Update stock
-        for (const item of order.items) {
-            await Product.findByIdAndUpdate(item.product, { $inc: { stock: -item.quantity } });
-        }
-
-        // Clear cart
-        await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
-
-        // Promo usage
-        await incrementPromoUsage(order);
-
-        await order.save();
-
-        // Send notifications (background, don't block redirect)
-        try { await sendOrderConfirmation(order, order.user); } catch (e) { /* silent */ }
-        try {
-            const whatsapp = require('../services/whatsappService');
-            whatsapp.sendAllOrderNotifications(order, order.user);
-        } catch (e) { /* silent */ }
-        try {
-            const { emitNewOrder } = require('../socketHandler');
-            emitNewOrder(order);
-        } catch (e) { /* silent */ }
-
-        console.log(`[DEEMA] ✅ Payment confirmed for order ${order.orderNumber}`);
-        return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
 
     } catch (err) {
         console.error('[DEEMA] Callback error:', err.message);
@@ -247,57 +276,43 @@ const handleDeemaCallback = asyncHandler(async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════
-// WEBHOOK (server-to-server from Deema)
+// WEBHOOK (Tap server-to-server notification)
+// POST /api/payments/deema/webhook
 // ═══════════════════════════════════════════════════
 const handleDeemaWebhook = asyncHandler(async (req, res) => {
     const data = req.body;
     console.log('[DEEMA] Webhook received:', JSON.stringify(data, null, 2));
 
-    // Deema sends webhook with order reference
-    const reference = data.reference || data.order_reference || data.merchant_order_id;
-    if (!reference) {
+    const chargeId = data.id;
+    if (!chargeId) {
         return res.status(200).json({ received: true });
     }
 
     try {
-        // Try to find by Deema reference or by order number
-        let order = await Order.findOne({ deemaChargeId: reference }).populate('user', 'name email phone language');
-        if (!order) {
-            order = await Order.findOne({ orderNumber: reference }).populate('user', 'name email phone language');
+        // Get full charge details from Tap
+        const chargeStatus = await deemaService.getChargeStatus(chargeId);
+
+        let order = await Order.findOne({ deemaChargeId: chargeId }).populate('user', 'name email phone language');
+        if (!order && chargeStatus.orderId) {
+            order = await Order.findById(chargeStatus.orderId).populate('user', 'name email phone language');
         }
 
         if (!order) {
-            console.warn('[DEEMA] Webhook: order not found for reference', reference);
+            console.warn('[DEEMA] Webhook: order not found for charge', chargeId);
             return res.status(200).json({ received: true });
         }
 
-        // Only process if not already paid
-        const webhookStatus = (data.status || '').toLowerCase();
-        if ((webhookStatus === 'approved' || webhookStatus === 'captured' || webhookStatus === 'completed') && order.paymentStatus !== 'paid') {
-            order.paymentStatus = 'paid';
-            order.orderStatus = 'confirmed';
-            order.paidAt = new Date();
+        const tapStatus = (chargeStatus.status || '').toUpperCase();
 
-            for (const item of order.items) {
-                await Product.findByIdAndUpdate(item.product, { $inc: { stock: -item.quantity } });
-            }
-
-            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
-            await incrementPromoUsage(order);
+        if (tapStatus === 'CAPTURED' && order.paymentStatus !== 'paid') {
+            await confirmPaidOrder(order);
+        } else if ((tapStatus === 'FAILED' || tapStatus === 'DECLINED' || tapStatus === 'CANCELLED') && order.paymentStatus !== 'paid') {
+            order.paymentStatus = 'failed';
+            order.orderStatus = 'cancelled';
+            order.notes = `Deema/Tap webhook: ${tapStatus}`;
             await order.save();
-
-            try { await sendOrderConfirmation(order, order.user); } catch (e) { /* silent */ }
-            try {
-                const whatsapp = require('../services/whatsappService');
-                whatsapp.sendAllOrderNotifications(order, order.user);
-            } catch (e) { /* silent */ }
-            try {
-                const { emitNewOrder } = require('../socketHandler');
-                emitNewOrder(order);
-            } catch (e) { /* silent */ }
-
-            console.log(`[DEEMA] ✅ Webhook: Payment confirmed for order ${order.orderNumber}`);
         }
+
     } catch (err) {
         console.error('[DEEMA] Webhook error:', err.message);
     }
@@ -306,27 +321,24 @@ const handleDeemaWebhook = asyncHandler(async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════
-// VERIFY DEEMA PAYMENT (manual check)
+// VERIFY (manual status check)
+// GET /api/payments/deema/verify/:chargeId
 // ═══════════════════════════════════════════════════
 const verifyDeemaPayment = asyncHandler(async (req, res) => {
     const { chargeId } = req.params;
 
-    // Find order by Deema reference
-    const order = await Order.findOne({ deemaChargeId: chargeId });
+    const chargeStatus = await deemaService.getChargeStatus(chargeId);
 
-    if (!order) {
-        res.status(404);
-        throw new Error('Order not found for this Deema reference');
-    }
+    const order = await Order.findOne({ deemaChargeId: chargeId });
 
     res.json({
         success: true,
         data: {
-            orderNumber: order.orderNumber,
-            deemaReference: order.deemaChargeId,
-            paymentStatus: order.paymentStatus,
-            orderStatus: order.orderStatus,
-            total: order.total
+            chargeId: chargeStatus.chargeId,
+            tapStatus: chargeStatus.status,
+            amount: chargeStatus.amount,
+            orderNumber: order ? order.orderNumber : chargeStatus.orderNumber,
+            paymentStatus: order ? order.paymentStatus : 'unknown'
         }
     });
 });
