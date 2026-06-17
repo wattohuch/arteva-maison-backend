@@ -145,6 +145,8 @@ const orderSchema = new mongoose.Schema({
     // MyFatoorah payment fields
     myfatoorahInvoiceId: String,
     myfatoorahTransactionId: String,
+    // Deema BNPL payment field (Tap Payments charge ID)
+    deemaChargeId: String,
     // Legacy Stripe field (deprecated)
     stripeSessionId: String,
     notes: String,

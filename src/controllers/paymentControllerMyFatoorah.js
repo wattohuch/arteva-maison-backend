@@ -4,7 +4,6 @@ const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
 const myfatoorah = require('../services/myfatoorahService');
-const { getServiceForMethod, deemaService } = require('../services/myfatoorahService');
 const { sendOrderConfirmation } = require('../services/emailService');
 const { WhatsAppService } = require('../services/whatsappService');
 
@@ -45,29 +44,10 @@ async function incrementPromoUsage(order) {
 const getPaymentMethods = asyncHandler(async (req, res) => {
     const amount = req.query.amount || 1;
     const methods = await myfatoorah.getPaymentMethods(amount);
-    let allMethods = methods.methods || [];
-
-    // Also fetch Deema methods (separate API key) and merge
-    try {
-        if (process.env.MYFATOORAH_DEEMA_API_KEY && process.env.MYFATOORAH_DEEMA_API_KEY !== 'your_deema_test_api_key_here') {
-            const deemaMethods = await deemaService.getPaymentMethods(amount);
-            if (deemaMethods.methods && deemaMethods.methods.length > 0) {
-                // Tag Deema methods so frontend can identify them
-                const taggedDeema = deemaMethods.methods.map(m => ({ ...m, isDeema: true }));
-                // Avoid duplicates (compare by name, not ID since IDs differ between accounts)
-                const existingNames = new Set(allMethods.map(m => (m.name || '').toLowerCase()));
-                const newMethods = taggedDeema.filter(m => !existingNames.has((m.name || '').toLowerCase()));
-                allMethods = [...allMethods, ...newMethods];
-                console.log(`[PAYMENTS] Merged ${newMethods.length} Deema method(s) into payment options`);
-            }
-        }
-    } catch (deemaErr) {
-        console.warn('[PAYMENTS] Could not fetch Deema methods:', deemaErr.message);
-    }
 
     res.json({
         success: true,
-        data: allMethods
+        data: methods.methods || []
     });
 });
 
@@ -344,12 +324,10 @@ const executePayment = asyncHandler(async (req, res) => {
         }))
     };
 
-    // Use the correct MyFatoorah service (Deema has its own API key)
-    const paymentService = getServiceForMethod(order.paymentMethod);
-    console.log(`Calling MyFatoorah executePayment via ${paymentService.label} service...`);
+    console.log('Calling MyFatoorah executePayment...');
 
     try {
-        const payment = await paymentService.executePayment(paymentData, totalDiscount);
+        const payment = await myfatoorah.executePayment(paymentData, totalDiscount);
 
         console.log('MyFatoorah response:', JSON.stringify(payment, null, 2));
 
@@ -396,14 +374,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
     const { paymentId } = req.params;
 
     // Get payment status from MyFatoorah
-    // Try main service first, fall back to Deema service
-    let paymentStatus;
-    try {
-        paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
-    } catch (mainErr) {
-        console.log('[VERIFY] Main service failed, trying Deema service...');
-        paymentStatus = await deemaService.getPaymentStatus(paymentId);
-    }
+    const paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
 
     // Find order
     const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email phone language');
@@ -555,14 +526,7 @@ const handleWebhook = asyncHandler(async (req, res) => {
 
     if (Event === 'TransactionStatusChanged') {
         const paymentId = Data.PaymentId;
-        // Try main service first, fall back to Deema service
-        let paymentStatus;
-        try {
-            paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
-        } catch (mainErr) {
-            console.log('[WEBHOOK] Main service failed, trying Deema service...');
-            paymentStatus = await deemaService.getPaymentStatus(paymentId);
-        }
+        const paymentStatus = await myfatoorah.getPaymentStatus(paymentId);
 
         const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email phone language');
 
@@ -723,14 +687,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
 
     try {
         // Get payment status from MyFatoorah
-        // Try main service first, fall back to Deema service
-        let paymentStatus;
-        try {
-            paymentStatus = await myfatoorah.getPaymentStatus(idToVerify);
-        } catch (mainErr) {
-            console.log('[CALLBACK] Main service failed, trying Deema service...');
-            paymentStatus = await deemaService.getPaymentStatus(idToVerify);
-        }
+        const paymentStatus = await myfatoorah.getPaymentStatus(idToVerify);
         console.log('Payment status from MyFatoorah:', paymentStatus);
 
         // Find order

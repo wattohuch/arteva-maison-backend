@@ -344,37 +344,13 @@ class MyFatoorahService {
 }
 
 // ═══════════════════════════════════════════════════
-// SERVICE INSTANCES
+// SERVICE INSTANCE
 // ═══════════════════════════════════════════════════
 
 // Main MyFatoorah service (KNET, Card, Apple Pay)
+// NOTE: Deema BNPL is now handled by a separate service (deemaService.js)
 const defaultService = new MyFatoorahService({ label: 'Main' });
 
-// Deema BNPL service (separate API key)
-const deemaService = new MyFatoorahService({
-    label: 'Deema',
-    apiKey: process.env.MYFATOORAH_DEEMA_API_KEY,
-    mode: process.env.MYFATOORAH_DEEMA_MODE || process.env.MYFATOORAH_MODE || 'test'
-});
-
-/**
- * Pick the correct service instance based on payment method.
- * @param {string} paymentMethod - 'deema', 'knet', 'card', 'applepay', etc.
- * @returns {MyFatoorahService}
- */
-function getServiceForMethod(paymentMethod) {
-    if (paymentMethod === 'deema') {
-        if (!process.env.MYFATOORAH_DEEMA_API_KEY || process.env.MYFATOORAH_DEEMA_API_KEY === 'your_deema_test_api_key_here') {
-            console.warn('[MYFATOORAH] ⚠️  Deema API key not configured, falling back to main service');
-            return defaultService;
-        }
-        return deemaService;
-    }
-    return defaultService;
-}
-
-// Export default service (backward-compatible) + helpers
 module.exports = defaultService;
-module.exports.deemaService = deemaService;
-module.exports.getServiceForMethod = getServiceForMethod;
 module.exports.MyFatoorahService = MyFatoorahService;
+

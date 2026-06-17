@@ -9,17 +9,27 @@ const {
     handleWebhook,
     processCOD
 } = require('../controllers/paymentControllerMyFatoorah');
+const {
+    createDeemaCheckout,
+    handleDeemaCallback,
+    handleDeemaWebhook,
+    verifyDeemaPayment
+} = require('../controllers/paymentControllerDeema');
 const { protect } = require('../middleware/auth');
 
-// Public routes
+// ── MyFatoorah routes ──
 router.get('/methods', getPaymentMethods);
-router.get('/callback', handlePaymentCallback); // MyFatoorah redirects here after payment
+router.get('/callback', handlePaymentCallback);
 router.get('/verify/:paymentId', verifyPayment);
 router.post('/webhook', handleWebhook);
-
-// Protected routes
 router.post('/create-session', protect, createPaymentSession);
 router.post('/execute', protect, executePayment);
 router.post('/cod', protect, processCOD);
+
+// ── Deema BNPL routes ──
+router.post('/deema/checkout', protect, createDeemaCheckout);
+router.get('/deema/callback', handleDeemaCallback);    // Deema redirects here after BNPL approval
+router.post('/deema/webhook', handleDeemaWebhook);     // Server-to-server notification
+router.get('/deema/verify/:chargeId', verifyDeemaPayment);
 
 module.exports = router;
