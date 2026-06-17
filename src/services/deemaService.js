@@ -1,37 +1,37 @@
 /**
  * Deema BNPL Payment Service
- * Deema uses the Tap Payments API with source.id = "src_deema"
+ * Based on the OFFICIAL Deema WooCommerce Plugin source code
  * 
- * API Docs: https://tap.company/developers
- * Sandbox: https://sandbox-api.deema.me
- * Production: https://api.tap.company
+ * API Docs: https://sandbox-merchant.deema.me (Deema Dashboard)
+ * Sandbox: https://sandbox-api.deema.me/
+ * Production: https://api.deema.me/
  * 
  * Flow:
- *  1. Backend creates a Charge via POST /v2/charges
- *  2. Customer is redirected to Deema's BNPL approval page
- *  3. After approval, customer redirected back to redirect.url
- *  4. Backend verifies charge status via GET /v2/charges/{charge_id}
- *  5. Webhook (post.url) also fires server-to-server
+ *  1. POST /api/merchant/v1/purchase → returns redirect_link
+ *  2. Customer is redirected to Deema BNPL approval page
+ *  3. After approval, Deema redirects to success URL with ?reference=XXX
+ *  4. Backend verifies and confirms the order
+ * 
+ * Auth: Basic <API_KEY>
  */
 
 const axios = require('axios');
 
 class DeemaService {
     constructor() {
-        this.apiKey = process.env.DEEMA_API_KEY; // sk_test_... or sk_live_...
+        this.apiKey = process.env.DEEMA_API_KEY;
         this.mode = process.env.DEEMA_MODE || 'test';
 
-        // Deema sandbox uses its own host; production uses Tap
         this.baseUrl = this.mode === 'live'
-            ? 'https://api.tap.company'
-            : 'https://sandbox-api.deema.me';
+            ? 'https://api.deema.me/'
+            : 'https://sandbox-api.deema.me/';
 
         this.headers = {
-            'Authorization': `Bearer ${this.apiKey}`,
+            'Authorization': `Basic ${this.apiKey}`,
             'Content-Type': 'application/json'
         };
 
-        this.timeout = 15000; // 15s
+        this.timeout = 30000; // 30s
 
         if (this.apiKey && !this.apiKey.includes('your_')) {
             console.log(`[DEEMA] Service initialized (${this.mode} mode) → ${this.baseUrl}`);
@@ -39,148 +39,82 @@ class DeemaService {
     }
 
     /**
-     * Create a Deema BNPL charge
-     * Returns a redirect URL where customer approves the BNPL plan
+     * Create a Deema BNPL purchase
+     * Endpoint: POST /api/merchant/v1/purchase
+     * Returns a redirect_link where customer approves the BNPL plan
      */
-    async createCharge(orderData) {
+    async createPurchase(orderData) {
         try {
-            // Clean phone
-            let phone = (orderData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
-            phone = phone.replace(/^00/, '');
-            let countryCode = '965';
-            const gccCodes = ['965', '966', '971', '974', '973', '968'];
-            const matched = gccCodes.find(c => phone.startsWith(c));
-            if (matched) { countryCode = matched; phone = phone.substring(matched.length); }
-            if (!phone || phone.length < 4) phone = '00000000';
-
             const backendUrl = process.env.BACKEND_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
-            const frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
 
             const payload = {
                 amount: orderData.amount,
-                currency: 'KWD',
-                customer_initiated: true,
-                threeDSecure: false,
-                description: `ARTÉVA Maison Order ${orderData.orderNumber}`,
-                metadata: {
-                    orderId: orderData.orderId,
-                    orderNumber: orderData.orderNumber
-                },
-                reference: {
-                    transaction: orderData.orderNumber,
-                    order: orderData.orderId
-                },
-                customer: {
-                    first_name: orderData.customerName || 'Customer',
-                    email: orderData.customerEmail || '',
-                    phone: {
-                        country_code: countryCode,
-                        number: phone
-                    }
-                },
-                source: {
-                    id: 'src_deema' // This tells Tap to use Deema BNPL
-                },
-                post: {
-                    url: `${backendUrl}/api/payments/deema/webhook`
-                },
-                redirect: {
-                    url: `${backendUrl}/api/payments/deema/callback`
+                currency_code: 'KWD',
+                merchant_order_id: orderData.orderNumber,
+                merchant_urls: {
+                    success: `${backendUrl}/api/payments/deema/callback`,
+                    failure: `${backendUrl}/api/payments/deema/callback?status=failed`
                 }
             };
 
-            console.log('[DEEMA] Creating charge:', JSON.stringify(payload, null, 2));
+            console.log('[DEEMA] Creating purchase:', JSON.stringify(payload, null, 2));
+            console.log('[DEEMA] API URL:', `${this.baseUrl}api/merchant/v1/purchase`);
 
             const response = await axios.post(
-                `${this.baseUrl}/v2/charges`,
+                `${this.baseUrl}api/merchant/v1/purchase`,
                 payload,
                 { headers: this.headers, timeout: this.timeout }
             );
 
             const data = response.data;
-            console.log('[DEEMA] Charge created:', data.id, '→ status:', data.status);
+            console.log('[DEEMA] Purchase response:', JSON.stringify(data, null, 2));
 
-            if (data.transaction && data.transaction.url) {
+            if (data.data && data.data.redirect_link) {
                 return {
                     success: true,
-                    chargeId: data.id,
-                    paymentUrl: data.transaction.url,
-                    status: data.status
+                    redirectLink: data.data.redirect_link,
+                    orderReference: data.data.order_reference,
+                    purchaseId: data.data.purchase_id
                 };
             }
 
-            // If no redirect URL, check if already captured
-            if (data.status === 'CAPTURED') {
-                return {
-                    success: true,
-                    chargeId: data.id,
-                    paymentUrl: null,
-                    status: 'CAPTURED'
-                };
-            }
-
-            throw new Error(data.message || 'Deema charge creation failed — no redirect URL returned');
+            throw new Error(data.message || 'Deema purchase creation failed — no redirect link returned');
 
         } catch (error) {
-            console.error('[DEEMA] Create charge error:', error.response?.data || error.message);
-            const errMsg = error.response?.data?.errors?.[0]?.description
-                || error.response?.data?.message
+            console.error('[DEEMA] Create purchase error:', error.response?.data || error.message);
+            const errMsg = error.response?.data?.message
+                || error.response?.data?.error
                 || error.message;
             throw new Error(errMsg);
         }
     }
 
     /**
-     * Get charge status (verify payment)
+     * Refund a Deema order
+     * Endpoint: POST /api/merchant/v1/order/{reference}/refund
      */
-    async getChargeStatus(chargeId) {
-        try {
-            const response = await axios.get(
-                `${this.baseUrl}/v2/charges/${chargeId}`,
-                { headers: this.headers, timeout: this.timeout }
-            );
-
-            const data = response.data;
-            return {
-                success: true,
-                chargeId: data.id,
-                status: data.status, // INITIATED, CAPTURED, FAILED, CANCELLED, etc.
-                amount: data.amount,
-                currency: data.currency,
-                orderId: data.metadata?.orderId || data.reference?.order,
-                orderNumber: data.metadata?.orderNumber || data.reference?.transaction,
-                receiptId: data.receipt?.id,
-                customerEmail: data.customer?.email
-            };
-        } catch (error) {
-            console.error('[DEEMA] Get charge status error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.message || error.message);
-        }
-    }
-
-    /**
-     * Refund a Deema charge
-     */
-    async refund(chargeId, amount, reason) {
+    async refund(orderReference, amount, reason) {
         try {
             const response = await axios.post(
-                `${this.baseUrl}/v2/refunds`,
+                `${this.baseUrl}api/merchant/v1/order/${encodeURIComponent(orderReference)}/refund`,
                 {
-                    charge_id: chargeId,
-                    amount: amount,
+                    amount: parseFloat(amount),
                     currency: 'KWD',
-                    description: reason || 'Order refund',
-                    reason: 'requested_by_customer'
+                    comment: reason || 'Order refund'
                 },
                 { headers: this.headers, timeout: this.timeout }
             );
 
-            console.log(`[DEEMA] Refund created: ${response.data.id}`);
-            return {
-                success: true,
-                refundId: response.data.id,
-                status: response.data.status
-            };
+            console.log(`[DEEMA] Refund response:`, response.data);
+
+            if (response.data.message === 'Refund released') {
+                return {
+                    success: true,
+                    message: response.data.message
+                };
+            }
+
+            throw new Error(response.data.message || 'Refund failed');
         } catch (error) {
             console.error('[DEEMA] Refund error:', error.response?.data || error.message);
             throw new Error(error.response?.data?.message || error.message);
