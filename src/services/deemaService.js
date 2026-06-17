@@ -1,18 +1,11 @@
 /**
  * Deema BNPL Payment Service
  * 
- * The sk_test_ / sk_live_ keys are TAP PAYMENTS keys.
- * Deema is available as a payment source through Tap Payments.
+ * Deema keys (sk_test_...) may work on either:
+ *  A) Deema's own API: sandbox-api.deema.me/api/merchant/v1/purchase (Basic auth)
+ *  B) Tap Payments API: api.tap.company/v2/charges (Bearer auth, source: src_deema)
  * 
- * URL: https://api.tap.company/v2/charges (same for test & live)
- * Auth: Bearer <sk_test_ or sk_live_ key>
- * Source: { id: "src_deema" }
- * 
- * Flow:
- *  1. POST /v2/charges with source.id = "src_deema"
- *  2. Customer redirected to Deema BNPL approval page (transaction.url)
- *  3. After approval, customer redirected to redirect.url
- *  4. Webhook fires to post.url
+ * This service tries BOTH approaches automatically.
  */
 
 const axios = require('axios');
@@ -21,85 +14,104 @@ class DeemaService {
     constructor() {
         this.apiKey = process.env.DEEMA_API_KEY;
         this.mode = process.env.DEEMA_MODE || 'test';
-
-        // Tap Payments uses the SAME URL for test and live
-        // The API key (sk_test_ vs sk_live_) determines the mode
-        this.baseUrl = 'https://api.tap.company';
-
-        this.headers = {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-        };
-
         this.timeout = 30000;
 
+        // We'll try multiple API endpoints + auth combinations
+        this.strategies = [
+            {
+                name: 'Deema Merchant API (Bearer)',
+                url: this.mode === 'live'
+                    ? 'https://api.deema.me/api/merchant/v1/purchase'
+                    : 'https://sandbox-api.deema.me/api/merchant/v1/purchase',
+                auth: `Bearer ${this.apiKey}`,
+                format: 'deema'
+            },
+            {
+                name: 'Deema Merchant API (Basic)',
+                url: this.mode === 'live'
+                    ? 'https://api.deema.me/api/merchant/v1/purchase'
+                    : 'https://sandbox-api.deema.me/api/merchant/v1/purchase',
+                auth: `Basic ${this.apiKey}`,
+                format: 'deema'
+            },
+            {
+                name: 'Tap Payments (Bearer + src_deema)',
+                url: 'https://api.tap.company/v2/charges',
+                auth: `Bearer ${this.apiKey}`,
+                format: 'tap'
+            }
+        ];
+
+        // Remember which strategy worked
+        this.workingStrategy = null;
+
         if (this.apiKey && !this.apiKey.includes('your_')) {
-            console.log(`[DEEMA] Service initialized (${this.mode} mode) via Tap Payments → ${this.baseUrl}`);
+            console.log(`[DEEMA] Service initialized (${this.mode} mode). Will auto-detect API endpoint.`);
         }
     }
 
     /**
-     * Create a Deema BNPL charge via Tap Payments
-     * POST /v2/charges with source.id = "src_deema"
+     * Build payload for Deema's own merchant API
      */
-    async createCharge(orderData) {
-        try {
-            // Parse phone
-            let phone = (orderData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
-            phone = phone.replace(/^00/, '');
-            let countryCode = '965';
-            const gccCodes = ['965', '966', '971', '974', '973', '968'];
-            const matched = gccCodes.find(c => phone.startsWith(c));
-            if (matched) { countryCode = matched; phone = phone.substring(matched.length); }
-            if (!phone || phone.length < 4) phone = '00000000';
+    _buildDeemaPayload(orderData, backendUrl) {
+        return {
+            amount: orderData.amount,
+            currency_code: 'KWD',
+            merchant_order_id: orderData.orderNumber,
+            merchant_urls: {
+                success: `${backendUrl}/api/payments/deema/callback?merchant_order_id=${orderData.orderNumber}`,
+                failure: `${backendUrl}/api/payments/deema/callback?status=failed&merchant_order_id=${orderData.orderNumber}`
+            }
+        };
+    }
 
-            const backendUrl = process.env.BACKEND_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
+    /**
+     * Build payload for Tap Payments API
+     */
+    _buildTapPayload(orderData, backendUrl) {
+        let phone = (orderData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
+        phone = phone.replace(/^00/, '');
+        let countryCode = '965';
+        const gccCodes = ['965', '966', '971', '974', '973', '968'];
+        const matched = gccCodes.find(c => phone.startsWith(c));
+        if (matched) { countryCode = matched; phone = phone.substring(matched.length); }
+        if (!phone || phone.length < 4) phone = '00000000';
 
-            const payload = {
-                amount: orderData.amount,
-                currency: 'KWD',
-                customer_initiated: true,
-                threeDSecure: false,
-                description: `ARTÉVA Maison Order ${orderData.orderNumber}`,
-                metadata: {
-                    orderId: orderData.orderId,
-                    orderNumber: orderData.orderNumber
-                },
-                reference: {
-                    transaction: orderData.orderNumber,
-                    order: orderData.orderId
-                },
-                customer: {
-                    first_name: orderData.customerName || 'Customer',
-                    email: orderData.customerEmail || '',
-                    phone: {
-                        country_code: countryCode,
-                        number: phone
-                    }
-                },
-                source: {
-                    id: 'src_deema'
-                },
-                post: {
-                    url: `${backendUrl}/api/payments/deema/webhook`
-                },
-                redirect: {
-                    url: `${backendUrl}/api/payments/deema/callback`
-                }
-            };
+        return {
+            amount: orderData.amount,
+            currency: 'KWD',
+            customer_initiated: true,
+            threeDSecure: false,
+            description: `ARTÉVA Maison Order ${orderData.orderNumber}`,
+            metadata: { orderId: orderData.orderId, orderNumber: orderData.orderNumber },
+            reference: { transaction: orderData.orderNumber, order: orderData.orderId },
+            customer: {
+                first_name: orderData.customerName || 'Customer',
+                email: orderData.customerEmail || '',
+                phone: { country_code: countryCode, number: phone }
+            },
+            source: { id: 'src_deema' },
+            post: { url: `${backendUrl}/api/payments/deema/webhook` },
+            redirect: { url: `${backendUrl}/api/payments/deema/callback` }
+        };
+    }
 
-            console.log('[DEEMA] Creating Tap charge with src_deema:', JSON.stringify(payload, null, 2));
-
-            const response = await axios.post(
-                `${this.baseUrl}/v2/charges`,
-                payload,
-                { headers: this.headers, timeout: this.timeout }
-            );
-
-            const data = response.data;
-            console.log('[DEEMA] Tap charge created:', data.id, '→ status:', data.status);
-
-            // Tap returns transaction.url for redirect-based payments
+    /**
+     * Parse response from either API
+     */
+    _parseResponse(data, format) {
+        if (format === 'deema') {
+            // Deema merchant API returns: { data: { redirect_link, order_reference, purchase_id } }
+            if (data.data && data.data.redirect_link) {
+                return {
+                    success: true,
+                    chargeId: data.data.order_reference || data.data.purchase_id,
+                    paymentUrl: data.data.redirect_link,
+                    status: 'INITIATED'
+                };
+            }
+        } else if (format === 'tap') {
+            // Tap returns: { id, transaction: { url }, status }
             if (data.transaction && data.transaction.url) {
                 return {
                     success: true,
@@ -108,84 +120,125 @@ class DeemaService {
                     status: data.status
                 };
             }
-
-            // If already captured (unlikely for BNPL)
             if (data.status === 'CAPTURED') {
-                return {
-                    success: true,
-                    chargeId: data.id,
-                    paymentUrl: null,
-                    status: 'CAPTURED'
-                };
+                return { success: true, chargeId: data.id, paymentUrl: null, status: 'CAPTURED' };
             }
-
-            throw new Error(data.message || 'No redirect URL returned from Tap/Deema');
-
-        } catch (error) {
-            console.error('[DEEMA] Create charge error:', error.response?.data || error.message);
-            const errMsg = error.response?.data?.errors?.[0]?.description
-                || error.response?.data?.message
-                || error.message;
-            throw new Error(errMsg);
         }
+        return null;
     }
 
     /**
-     * Get charge status from Tap
-     * GET /v2/charges/{charge_id}
+     * Create a Deema BNPL charge
+     * Auto-detects which API endpoint + auth format works
+     */
+    async createCharge(orderData) {
+        const backendUrl = process.env.BACKEND_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
+
+        // If we already know which strategy works, use it directly
+        const strategies = this.workingStrategy ? [this.workingStrategy] : this.strategies;
+        const errors = [];
+
+        for (const strategy of strategies) {
+            try {
+                const payload = strategy.format === 'deema'
+                    ? this._buildDeemaPayload(orderData, backendUrl)
+                    : this._buildTapPayload(orderData, backendUrl);
+
+                console.log(`[DEEMA] Trying: ${strategy.name}`);
+                console.log(`[DEEMA] URL: ${strategy.url}`);
+                console.log(`[DEEMA] Payload:`, JSON.stringify(payload, null, 2));
+
+                const response = await axios.post(strategy.url, payload, {
+                    headers: {
+                        'Authorization': strategy.auth,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: this.timeout
+                });
+
+                const result = this._parseResponse(response.data, strategy.format);
+
+                if (result) {
+                    console.log(`[DEEMA] ✅ ${strategy.name} WORKED! Charge: ${result.chargeId}`);
+                    this.workingStrategy = strategy; // Remember for next time
+                    return result;
+                }
+
+                console.log(`[DEEMA] ${strategy.name}: Response OK but no payment URL`, response.data);
+
+            } catch (error) {
+                const status = error.response?.status;
+                const errMsg = error.response?.data?.errors?.[0]?.description
+                    || error.response?.data?.message
+                    || error.response?.data?.error
+                    || error.message;
+                console.log(`[DEEMA] ❌ ${strategy.name} failed (HTTP ${status}): ${errMsg}`);
+                errors.push(`${strategy.name}: ${errMsg}`);
+            }
+        }
+
+        // All strategies failed
+        throw new Error(`All Deema API strategies failed:\n${errors.join('\n')}`);
+    }
+
+    /**
+     * Get charge/order status
+     * Works for both Tap charges (chg_xxx) and Deema references
      */
     async getChargeStatus(chargeId) {
+        // Try Tap first
         try {
             const response = await axios.get(
-                `${this.baseUrl}/v2/charges/${chargeId}`,
-                { headers: this.headers, timeout: this.timeout }
+                `https://api.tap.company/v2/charges/${chargeId}`,
+                { headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' }, timeout: this.timeout }
             );
-
             const data = response.data;
             return {
-                success: true,
-                chargeId: data.id,
-                status: data.status,
-                amount: data.amount,
-                currency: data.currency,
+                success: true, chargeId: data.id, status: data.status,
+                amount: data.amount, currency: data.currency,
                 orderId: data.metadata?.orderId || data.reference?.order,
-                orderNumber: data.metadata?.orderNumber || data.reference?.transaction,
-                customerEmail: data.customer?.email
+                orderNumber: data.metadata?.orderNumber || data.reference?.transaction
             };
-        } catch (error) {
-            console.error('[DEEMA] Get charge status error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.message || error.message);
+        } catch (e) {
+            console.log(`[DEEMA] Tap charge status failed for ${chargeId}: ${e.message}`);
         }
+
+        // Return basic info from our DB
+        return { success: false, chargeId, status: 'UNKNOWN' };
     }
 
     /**
-     * Refund a Tap/Deema charge
-     * POST /v2/refunds
+     * Refund
      */
     async refund(chargeId, amount, reason) {
+        // Try Tap refund
         try {
             const response = await axios.post(
-                `${this.baseUrl}/v2/refunds`,
-                {
-                    charge_id: chargeId,
-                    amount: amount,
-                    currency: 'KWD',
-                    description: reason || 'Order refund',
-                    reason: 'requested_by_customer'
-                },
-                { headers: this.headers, timeout: this.timeout }
+                'https://api.tap.company/v2/refunds',
+                { charge_id: chargeId, amount, currency: 'KWD', description: reason || 'Refund', reason: 'requested_by_customer' },
+                { headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' }, timeout: this.timeout }
             );
-
-            console.log(`[DEEMA] Refund created: ${response.data.id}`);
-            return {
-                success: true,
-                refundId: response.data.id,
-                status: response.data.status
-            };
-        } catch (error) {
-            console.error('[DEEMA] Refund error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.message || error.message);
+            return { success: true, refundId: response.data.id, status: response.data.status };
+        } catch (e) {
+            console.error('[DEEMA] Refund error:', e.response?.data || e.message);
         }
+
+        // Try Deema merchant refund
+        try {
+            const deemaUrl = this.mode === 'live' ? 'https://api.deema.me' : 'https://sandbox-api.deema.me';
+            const response = await axios.post(
+                `${deemaUrl}/api/merchant/v1/order/${encodeURIComponent(chargeId)}/refund`,
+                { amount: parseFloat(amount), currency: 'KWD', comment: reason || 'Refund' },
+                { headers: { 'Authorization': `Basic ${this.apiKey}`, 'Content-Type': 'application/json' }, timeout: this.timeout }
+            );
+            if (response.data.message === 'Refund released') {
+                return { success: true, message: response.data.message };
+            }
+        } catch (e) {
+            console.error('[DEEMA] Deema merchant refund error:', e.response?.data || e.message);
+        }
+
+        throw new Error('Refund failed on all endpoints');
     }
 }
 

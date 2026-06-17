@@ -211,68 +211,102 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════
-// CALLBACK (Tap redirects here after payment)
-// Query: ?tap_id=chg_XXXXX
+// CALLBACK (Deema/Tap redirects here after payment)
+// Possible query params:
+//   Tap:   ?tap_id=chg_XXXXX
+//   Deema: ?reference=XXX&merchant_order_id=ORD-XXXX
 // GET /api/payments/deema/callback
 // ═══════════════════════════════════════════════════
 const handleDeemaCallback = asyncHandler(async (req, res) => {
-    const { tap_id, status } = req.query;
+    const { tap_id, reference, merchant_order_id, status } = req.query;
 
-    console.log('[DEEMA] Callback:', req.query);
+    console.log('[DEEMA] Callback received:', req.query);
 
     const frontendUrl = process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com';
 
     // Handle explicit failure
-    if (status === 'failed' && !tap_id) {
+    if (status === 'failed') {
+        // Try to find and cancel the order
+        if (merchant_order_id) {
+            const order = await Order.findOne({ orderNumber: merchant_order_id });
+            if (order && order.paymentStatus !== 'paid') {
+                order.paymentStatus = 'failed';
+                order.orderStatus = 'cancelled';
+                await order.save();
+            }
+        }
         return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
     }
 
-    if (!tap_id) {
-        return res.redirect(`${frontendUrl}/payment-error.html?error=missing_charge_id`);
-    }
+    // Determine what ID we have
+    const chargeId = tap_id || reference || null;
 
-    try {
-        // Get charge status from Tap
-        const chargeStatus = await deemaService.getChargeStatus(tap_id);
-        console.log('[DEEMA] Charge status:', chargeStatus.status);
-
-        // Find order by charge ID
-        let order = await Order.findOne({ deemaChargeId: tap_id }).populate('user', 'name email phone language');
-
-        // Fallback: find by metadata
-        if (!order && chargeStatus.orderId) {
-            order = await Order.findById(chargeStatus.orderId).populate('user', 'name email phone language');
-        }
-
-        if (!order) {
-            console.error('[DEEMA] Order not found for charge:', tap_id);
-            return res.redirect(`${frontendUrl}/payment-error.html?error=order_not_found`);
-        }
-
-        const tapStatus = (chargeStatus.status || '').toUpperCase();
-
-        if (tapStatus === 'CAPTURED') {
-            await confirmPaidOrder(order);
-            return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
-        } else if (tapStatus === 'FAILED' || tapStatus === 'DECLINED' || tapStatus === 'CANCELLED' || tapStatus === 'ABANDONED') {
-            if (order.paymentStatus !== 'paid') {
-                order.paymentStatus = 'failed';
-                order.orderStatus = 'cancelled';
-                order.notes = `Deema/Tap status: ${tapStatus}`;
-                await order.save();
+    // CASE 1: Tap redirect with tap_id
+    if (tap_id) {
+        try {
+            const chargeStatus = await deemaService.getChargeStatus(tap_id);
+            let order = await Order.findOne({ deemaChargeId: tap_id }).populate('user', 'name email phone language');
+            if (!order && chargeStatus.orderId) {
+                order = await Order.findById(chargeStatus.orderId).populate('user', 'name email phone language');
             }
-            return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
-        } else if (tapStatus === 'INITIATED' || tapStatus === 'PENDING') {
-            return res.redirect(`${frontendUrl}/payment-pending.html?order=${order.orderNumber}`);
-        } else {
-            // Unknown status — show pending
-            return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
-        }
+            if (!order) {
+                return res.redirect(`${frontendUrl}/payment-error.html?error=order_not_found`);
+            }
 
-    } catch (err) {
-        console.error('[DEEMA] Callback error:', err.message);
-        return res.redirect(`${frontendUrl}/payment-error.html?error=verification_failed`);
+            const tapStatus = (chargeStatus.status || '').toUpperCase();
+            if (tapStatus === 'CAPTURED') {
+                await confirmPaidOrder(order);
+                return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+            } else if (['FAILED', 'DECLINED', 'CANCELLED', 'ABANDONED'].includes(tapStatus)) {
+                if (order.paymentStatus !== 'paid') {
+                    order.paymentStatus = 'failed';
+                    order.orderStatus = 'cancelled';
+                    order.notes = `Tap status: ${tapStatus}`;
+                    await order.save();
+                }
+                return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
+            } else {
+                return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+            }
+        } catch (err) {
+            console.error('[DEEMA] Tap callback error:', err.message);
+            return res.redirect(`${frontendUrl}/payment-error.html?error=verification_failed`);
+        }
     }
+
+    // CASE 2: Deema merchant API redirect with ?reference=XXX
+    if (reference || merchant_order_id) {
+        try {
+            let order = null;
+
+            // Find by Deema reference (stored in deemaChargeId)
+            if (reference) {
+                order = await Order.findOne({ deemaChargeId: reference }).populate('user', 'name email phone language');
+            }
+
+            // Fallback: find by order number
+            if (!order && merchant_order_id) {
+                order = await Order.findOne({ orderNumber: merchant_order_id }).populate('user', 'name email phone language');
+            }
+
+            if (!order) {
+                return res.redirect(`${frontendUrl}/payment-error.html?error=order_not_found`);
+            }
+
+            // Deema success callback means payment approved
+            if (order.paymentStatus !== 'paid') {
+                await confirmPaidOrder(order);
+            }
+            return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+
+        } catch (err) {
+            console.error('[DEEMA] Merchant callback error:', err.message);
+            return res.redirect(`${frontendUrl}/payment-error.html?error=verification_failed`);
+        }
+    }
+
+    // No recognizable ID
+    return res.redirect(`${frontendUrl}/payment-error.html?error=missing_charge_id`);
 });
 
 // ═══════════════════════════════════════════════════
