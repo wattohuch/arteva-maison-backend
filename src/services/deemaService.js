@@ -27,11 +27,27 @@ class DeemaService {
                 format: 'deema'
             },
             {
-                name: 'Deema Merchant API (Basic)',
+                name: 'Deema Merchant API (Basic raw)',
                 url: this.mode === 'live'
                     ? 'https://api.deema.me/api/merchant/v1/purchase'
                     : 'https://sandbox-api.deema.me/api/merchant/v1/purchase',
                 auth: `Basic ${this.apiKey}`,
+                format: 'deema'
+            },
+            {
+                name: 'Deema Merchant API (Basic base64 key:)',
+                url: this.mode === 'live'
+                    ? 'https://api.deema.me/api/merchant/v1/purchase'
+                    : 'https://sandbox-api.deema.me/api/merchant/v1/purchase',
+                auth: `Basic ${Buffer.from(this.apiKey + ':').toString('base64')}`,
+                format: 'deema'
+            },
+            {
+                name: 'Deema Merchant API (Basic base64 :key)',
+                url: this.mode === 'live'
+                    ? 'https://api.deema.me/api/merchant/v1/purchase'
+                    : 'https://sandbox-api.deema.me/api/merchant/v1/purchase',
+                auth: `Basic ${Buffer.from(':' + this.apiKey).toString('base64')}`,
                 format: 'deema'
             },
             {
