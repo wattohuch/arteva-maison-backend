@@ -51,12 +51,12 @@ class MyFatoorahService {
             if (!rawPhone || rawPhone.length < 4) {
                 rawPhone = '96500000000';
             }
-            let mobileCountryCode = '965';
+            let mobileCountryCode = '+965';
             let cleanPhone = rawPhone;
             const gccCodes = ['965', '966', '971', '974', '973', '968'];
             const matchedCode = gccCodes.find(code => rawPhone.startsWith(code));
             if (matchedCode) {
-                mobileCountryCode = matchedCode;
+                mobileCountryCode = '+' + matchedCode;
                 cleanPhone = rawPhone.substring(matchedCode.length);
             }
             if (!cleanPhone || cleanPhone.length < 4) {
@@ -123,14 +123,14 @@ class MyFatoorahService {
                 rawPhone = '96500000000';
             }
 
-            let mobileCountryCode = '965'; // Default Kuwait
+            let mobileCountryCode = '+965'; // Default Kuwait
             let cleanPhone = rawPhone;
 
             // Known GCC country codes (3-digit)
             const gccCodes = ['965', '966', '971', '974', '973', '968'];
             const matchedCode = gccCodes.find(code => rawPhone.startsWith(code));
             if (matchedCode) {
-                mobileCountryCode = matchedCode;
+                mobileCountryCode = '+' + matchedCode;
                 cleanPhone = rawPhone.substring(matchedCode.length);
             }
 
