@@ -155,35 +155,18 @@ class MyFatoorahService {
             });
 
             // If there's a promo discount, distribute it across items proportionally
-            // MyFatoorah does NOT accept negative UnitPrice values
+            // If there's a promo discount, calculating exact unit prices per item
+            // causes floating-point validation errors in MyFatoorah since
+            // Sum(UnitPrice * Quantity) must equal InvoiceValue EXACTLY.
+            // Therefore, we collapse the invoice into a single line item for discounted orders.
             if (discount > 0) {
-                const itemsTotal = invoiceItems.reduce((sum, item) => sum + (item.UnitPrice * item.Quantity), 0);
-                let remainingDiscount = discount;
-
-                for (let i = 0; i < invoiceItems.length && remainingDiscount > 0; i++) {
-                    const item = invoiceItems[i];
-                    const itemTotal = item.UnitPrice * item.Quantity;
-                    // Distribute proportionally
-                    const itemDiscount = Math.min(
-                        parseFloat((discount * (itemTotal / itemsTotal)).toFixed(3)),
-                        remainingDiscount,
-                        itemTotal // Don't make price negative
-                    );
-                    if (itemDiscount > 0 && item.Quantity > 0) {
-                        item.UnitPrice = parseFloat(((itemTotal - itemDiscount) / item.Quantity).toFixed(3));
-                        remainingDiscount = parseFloat((remainingDiscount - itemDiscount).toFixed(3));
-                    }
-                }
-
-                // Handle any rounding remainder by adjusting the first item
-                if (remainingDiscount > 0.001 && invoiceItems.length > 0) {
-                    const first = invoiceItems[0];
-                    const maxDeduct = first.UnitPrice * first.Quantity;
-                    const deduct = Math.min(remainingDiscount, maxDeduct);
-                    first.UnitPrice = parseFloat(((first.UnitPrice * first.Quantity - deduct) / first.Quantity).toFixed(3));
-                }
-
-                console.log(`[MYFATOORAH] Discount ${discount} KWD distributed across ${invoiceItems.length} invoice items`);
+                invoiceItems.length = 0;
+                invoiceItems.push({
+                    ItemName: 'Order Total (Discount Applied)',
+                    Quantity: 1,
+                    UnitPrice: paymentData.amount
+                });
+                console.log(`[MYFATOORAH] Discount ${discount} KWD applied. Collapsed invoice items to a single line item.`);
             }
 
             const payload = {
