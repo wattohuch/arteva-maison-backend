@@ -18,6 +18,8 @@ sudo apt update -qq
 sudo apt install -y cups || true
 sudo apt install -y chromium 2>/dev/null || sudo apt install -y chromium-browser 2>/dev/null || echo "⚠ Chromium not found — install manually"
 sudo apt install -y printer-driver-hpcups 2>/dev/null || sudo apt install -y hplip 2>/dev/null || echo "⚠ HP drivers not found"
+sudo apt install -y fonts-noto-core fonts-noto 2>/dev/null || echo "⚠ Noto fonts not found — Arabic may not render correctly"
+echo "  ✅ Arabic fonts (Noto Sans Arabic) installed for receipt rendering"
 
 # 2. Add user to lpadmin group
 echo "👤 Adding $USER to printer group..."

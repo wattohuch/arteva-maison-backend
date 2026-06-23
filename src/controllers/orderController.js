@@ -608,7 +608,18 @@ const getOrderForReceipt = asyncHandler(async (req, res) => {
     }
 
     // Validate tracking token for security
-    if (!req.query.token || order.trackingToken !== req.query.token) {
+    let tokenValidated = false;
+    if (req.query.token && order.trackingToken === req.query.token) {
+        tokenValidated = true;
+    } else if (req.user) {
+        const isOwner = order.user && order.user._id.toString() === req.user._id.toString();
+        const isAdmin = ['admin', 'owner', 'superuser'].includes(req.user.role);
+        if (isOwner || isAdmin) {
+            tokenValidated = true;
+        }
+    }
+
+    if (!tokenValidated) {
         res.status(403);
         throw new Error('Invalid or missing receipt token');
     }
@@ -642,7 +653,18 @@ const getReceiptHTML = asyncHandler(async (req, res) => {
     }
 
     // Validate tracking token for security
-    if (!req.query.token || order.trackingToken !== req.query.token) {
+    let tokenValidated = false;
+    if (req.query.token && order.trackingToken === req.query.token) {
+        tokenValidated = true;
+    } else if (req.user) {
+        const isOwner = order.user && order.user._id.toString() === req.user._id.toString();
+        const isAdmin = ['admin', 'owner', 'superuser'].includes(req.user.role);
+        if (isOwner || isAdmin) {
+            tokenValidated = true;
+        }
+    }
+
+    if (!tokenValidated) {
         res.status(403);
         throw new Error('Invalid or missing receipt token');
     }

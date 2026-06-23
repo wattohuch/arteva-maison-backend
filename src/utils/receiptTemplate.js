@@ -21,7 +21,8 @@ async function generateQR(text) {
  */
 async function generateReceiptHTML(order) {
   const receiptQR = await generateQR(
-    'https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || '')
+    'https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || '') +
+    '&token=' + encodeURIComponent(order.trackingToken || '')
   );
   const whatsappQR = await generateQR('https://wa.me/96550683207');
 

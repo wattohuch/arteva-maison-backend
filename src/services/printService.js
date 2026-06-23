@@ -166,9 +166,10 @@ async function renderReceiptToJpeg(order, customer) {
         const originalTotal = (item.price*item.quantity).toFixed(3);
         c.textAlign='left';
         c.fillStyle=MID; c.font=`${f(8.5)}px Courier New`; c.fillText(sku, cols[0].x, y);
+        const showNameAr = item.nameAr && item.nameAr.trim().toLowerCase() !== (item.name || '').trim().toLowerCase();
         c.fillStyle=DARK; c.font=`500 ${f(9.5)}px Arial`; c.fillText(trunc(c,item.name||'Product',cols[1].w-f(4)), cols[1].x, y);
-        if(item.nameAr){c.fillStyle=LIGHT;c.font=`${f(7.5)}px Arial`;c.fillText(item.nameAr,cols[1].x,y+f(11));}
-        if(item.variant){c.fillStyle=LIGHT;c.font=`${f(7)}px Arial`;c.fillText(item.variant,cols[1].x,y+f(item.nameAr?19:11));}
+        if(showNameAr){c.fillStyle=LIGHT;c.font=`${f(7.5)}px Arial`;c.fillText(item.nameAr,cols[1].x,y+f(11));}
+        if(item.variant){c.fillStyle=LIGHT;c.font=`${f(7)}px Arial`;c.fillText(item.variant,cols[1].x,y+f(showNameAr?19:11));}
         c.font=`${f(9)}px Arial`;
         if (itemDiscount) {
             // Original price with strikethrough
@@ -195,7 +196,7 @@ async function renderReceiptToJpeg(order, customer) {
             c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
             c.textAlign='right'; c.fillText(originalTotal+' KWD', cols[4].x+cols[4].w, y);
         }
-        y += item.nameAr?f(26):(itemDiscount?f(24):f(20));
+        y += showNameAr?f(26):(itemDiscount?f(24):f(20));
         c.strokeStyle=BORDER; c.lineWidth=f(0.3); c.beginPath(); c.moveTo(LM,y); c.lineTo(RM,y); c.stroke();
         y += f(6);
     });
@@ -239,7 +240,7 @@ async function renderReceiptToJpeg(order, customer) {
     c.fillStyle=BG; rr(c,LM,y,CW,qrH,f(5)); c.fill();
     c.strokeStyle=BORDER; c.lineWidth=f(0.5); rr(c,LM,y,CW,qrH,f(5)); c.stroke();
     try{
-        const qrUrl='https://www.artevamaisonkw.com/receipt.html?order='+(order.orderNumber||'');
+        const qrUrl='https://www.artevamaisonkw.com/receipt.html?order='+(order.orderNumber||'')+'&token='+(order.trackingToken||'');
         const qrC=await generateQR(qrUrl,qrSz);
         const qrX=LM+f(10), qrY=y+(qrH-qrSz)/2;
         c.drawImage(qrC,qrX,qrY,qrSz,qrSz);

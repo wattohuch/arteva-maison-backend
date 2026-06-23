@@ -67,7 +67,8 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
   const itemsHTML = items.map(it => {
     const sku = escapeHTML(it.sku || '—');
     const name = escapeHTML(it.name || 'Unknown');
-    const nameAr = escapeHTML(it.nameAr || '');
+    const showNameAr = it.nameAr && it.nameAr.trim().toLowerCase() !== (it.name || '').trim().toLowerCase();
+    const nameAr = showNameAr ? escapeHTML(it.nameAr) : '';
     const price = safeFixed(it.price);
     const qty = parseInt(it.quantity) || 1;
     const originalTotal = (parseFloat(it.price) || 0) * qty;
@@ -106,6 +107,9 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&family=Noto+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --color-text: #2c241b;

@@ -173,6 +173,7 @@ app.use('/api/images', apiLimiter, require('./routes/images'));
 app.use('/api/hero', apiLimiter, require('./routes/hero'));
 app.use('/api/push', apiLimiter, require('./routes/pushRoutes'));
 app.use('/api/promo-codes', apiLimiter, require('./routes/promoCodes'));
+app.use('/api/whatsapp', apiLimiter, require('./routes/whatsapp'));
 
 // Site Visit Tracking — lightweight public endpoint (no auth required)
 app.post('/api/site-visit', apiLimiter, async (req, res) => {

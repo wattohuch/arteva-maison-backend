@@ -13,12 +13,12 @@ const {
     getOrderForReceipt,
     getReceiptHTML
 } = require('../controllers/orderController');
-const { protect, admin } = require('../middleware/auth');
+const { protect, admin, optionalAuth } = require('../middleware/auth');
 
 // PUBLIC routes — no auth needed
 router.get('/track/:orderNumber/:token', trackOrderPublic);
-router.get('/receipt/:orderNumber', getOrderForReceipt);
-router.get('/receipt/:orderNumber/html', getReceiptHTML);
+router.get('/receipt/:orderNumber', optionalAuth, getOrderForReceipt);
+router.get('/receipt/:orderNumber/html', optionalAuth, getReceiptHTML);
 
 // All remaining order routes require authentication
 router.use(protect);

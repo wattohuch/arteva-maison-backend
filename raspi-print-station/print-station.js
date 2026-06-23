@@ -570,9 +570,9 @@ async function htmlToPrint(html, filename, printerName) {
     page = await browser.newPage();
     // Standard viewport (deviceScaleFactor: 1 prevents OOM crashes on Raspberry Pi)
     await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
-    // Use domcontentloaded — fonts are system/embedded, no network needed
-    await page.goto(`file://${htmlPath}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await new Promise(r => setTimeout(r, 1500)); // Brief render settle
+    // Use networkidle0 — wait for Google Fonts (Noto Sans Arabic) to load
+    await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await new Promise(r => setTimeout(r, 2000)); // Render settle (font loading)
     await page.pdf({
       path: pdfPath, format: PAPER, printBackground: true,
       margin: { top: '8mm', right: '10mm', bottom: '8mm', left: '10mm' },

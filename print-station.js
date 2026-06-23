@@ -272,7 +272,7 @@ async function printReceipt(order) {
     
     // QR Code for order tracking
     printer.alignCenter();
-    const qrData = `https://www.artevamaisonkw.com/receipt.html?order=${order.orderNumber}`;
+    const qrData = `https://www.artevamaisonkw.com/receipt.html?order=${order.orderNumber}&token=${order.trackingToken || ''}`;
     const qrImage = await QRCode.toBuffer(qrData, { width: 200 });
     await printer.printImage(qrImage);
     printer.println('Scan for receipt');

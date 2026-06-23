@@ -1,29 +1,30 @@
 /**
- * WhatsApp Notification Service (Green API)
+ * WhatsApp Notification Service (Meta Cloud API / Green API Fallback)
  * 
- * Uses Green API (https://green-api.com) — Free tier available.
- * No Baileys, no pairing codes, no session issues.
- * Just HTTP requests. Works 24/7.
- * 
- * Setup:
- *   1. Go to https://green-api.com and sign up (free)
- *   2. Create an instance
- *   3. Scan QR code ONCE on their dashboard
- *   4. Copy your Instance ID and API Token
- *   5. Set env vars: GREEN_API_INSTANCE_ID and GREEN_API_TOKEN
+ * Supports:
+ * 1. Meta's Official WhatsApp Business Cloud API (Primary/Preferred)
+ * 2. Green API / Baileys Print Station Queue (Fallback)
  */
 
+const axios = require('axios');
 const SiteSettings = require('../models/SiteSettings');
 
 class WhatsAppService {
     constructor() {
+        // --- Official WhatsApp Business API ---
+        this.whatsappAccessToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
+        this.whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+        this.whatsappApiUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com';
+        this.whatsappApiVersion = process.env.WHATSAPP_API_VERSION || 'v18.0';
+        this.isOfficialEnabled = !!(this.whatsappAccessToken && this.whatsappPhoneNumberId);
+
+        // --- Green API (Legacy / Fallback) ---
         this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
         this.apiToken = process.env.GREEN_API_TOKEN || '';
         
         const envPhones = process.env.WHATSAPP_OWNER_PHONE ? process.env.WHATSAPP_OWNER_PHONE.split(',').map(p => p.trim()) : [];
         this.ownerPhones = envPhones.length > 0 ? envPhones : ['96565611566', '96551008567'];
         
-        // Green API uses instance-specific URLs (e.g., https://7107.api.green-api.com)
         const apiHost = process.env.GREEN_API_URL || 'https://api.green-api.com';
         this.baseUrl = `${apiHost}/waInstance${this.instanceId}`;
         
@@ -33,57 +34,32 @@ class WhatsAppService {
         }
         this.frontendUrl = frontendUrl;
 
-        // ── FIFO Message Queue ──────────────────────────────────
-        // Green API free tier: VERY strict rate limits (~1 msg per 10s).
-        // All sendMessage calls go through a serial queue with retry.
+        // ── FIFO Message Queue ──
         this._messageQueue = [];
         this._isProcessingQueue = false;
-        this._sendDelayMs = 10000; // 10s gap — Green API free tier needs this
-        this._maxRetries = 3;      // Retry failed sends up to 3 times
-        this._retryDelayMs = 15000; // 15s wait before retry
+        this._sendDelayMs = 10000;
+        this._maxRetries = 3;
+        this._retryDelayMs = 15000;
 
         // Check connection on startup
-        this.isConnected = !!(this.instanceId && this.apiToken);
+        this.isConnected = this.isOfficialEnabled;
 
-        if (this.isConnected) {
-            console.log('✅ WhatsApp Service (Green API) initialized');
-            console.log(`   Instance: ${this.instanceId}`);
-            console.log(`   API URL: ${apiHost}`);
+        if (this.isOfficialEnabled) {
+            console.log('✅ WhatsApp Service (Official Cloud API) initialized');
+            console.log(`   Phone Number ID: ${this.whatsappPhoneNumberId}`);
+            console.log(`   API Version: ${this.whatsappApiVersion}`);
             console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
-            console.log(`   Queue: ${this._sendDelayMs}ms delay, ${this._maxRetries} retries`);
-            this.checkStatus();
         } else {
             console.error('╔══════════════════════════════════════════════════════╗');
             console.error('║  ❌ WHATSAPP NOTIFICATIONS ARE DISABLED!             ║');
             console.error('║                                                      ║');
             console.error('║  Missing env vars:                                   ║');
-            if (!this.instanceId) console.error('║    → GREEN_API_INSTANCE_ID                           ║');
-            if (!this.apiToken)   console.error('║    → GREEN_API_TOKEN                                 ║');
-            console.error('║                                                      ║');
-            console.error('║  Setup: https://green-api.com (free tier)            ║');
-            console.error('║  1. Create instance → 2. Scan QR → 3. Set env vars  ║');
+            console.error('║    → WHATSAPP_ACCESS_TOKEN & WHATSAPP_PHONE_NUMBER_ID║');
             console.error('╚══════════════════════════════════════════════════════╝');
         }
     }
 
-    /**
-     * Check Green API instance status
-     */
-    async checkStatus() {
-        try {
-            const res = await fetch(`${this.baseUrl}/getStateInstance/${this.apiToken}`);
-            const data = await res.json();
-            this.isConnected = data.stateInstance === 'authorized';
-            console.log(`📱 WhatsApp status: ${data.stateInstance} (${this.isConnected ? 'ready ✅' : 'not authorized ❌'})`);
-            if (!this.isConnected) {
-                console.log('   → Go to https://console.green-api.com and scan QR code');
-            }
-            return this.isConnected;
-        } catch (e) {
-            console.error('WhatsApp status check failed:', e.message);
-            return false;
-        }
-    }
+
 
     /**
      * Format phone number for Green API
@@ -144,7 +120,38 @@ class WhatsAppService {
     }
 
     /**
-     * Enqueue WhatsApp message into the database for the Raspberry Pi to pick up
+     * Send message using the official Meta WhatsApp Business Cloud API
+     */
+    async sendOfficialMessage(to, message) {
+        const cleanPhone = this.formatPhone(to);
+        if (!cleanPhone) {
+            throw new Error('Invalid phone number format');
+        }
+
+        const url = `${this.whatsappApiUrl}/${this.whatsappApiVersion}/${this.whatsappPhoneNumberId}/messages`;
+        
+        const response = await axios.post(url, {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: cleanPhone,
+            type: 'text',
+            text: {
+                preview_url: false,
+                body: message
+            }
+        }, {
+            headers: {
+                'Authorization': `Bearer ${this.whatsappAccessToken}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 10000
+        });
+
+        return response.data;
+    }
+
+    /**
+     * Send WhatsApp message (tries Meta official API, falls back to print-station queue)
      */
     async sendMessage(to, message, type = 'test', orderId = null) {
         const phone = this.formatPhone(to);
@@ -166,22 +173,40 @@ class WhatsAppService {
         };
         const priority = priorityMap[type] || 5;
 
-        try {
-            const WhatsAppQueue = require('../models/WhatsAppQueue');
-            const newMsg = new WhatsAppQueue({
-                phone,
-                message,
-                type,
-                order: orderId,
-                priority
-            });
-            await newMsg.save();
-            console.log(`[WA-QUEUE] Enqueued message to ${phone} (type: ${type}, priority: ${priority}) for Raspberry Pi`);
-            return { success: true, queued: true };
-        } catch (err) {
-            console.error(`❌ WhatsApp Enqueue error for ${phone}:`, err.message);
-            return { success: false, error: err.message };
+        // Try Official Meta API
+        if (this.isOfficialEnabled) {
+            try {
+                console.log(`[WA-OFFICIAL] Sending message to ${phone} (type: ${type})`);
+                const responseData = await this.sendOfficialMessage(phone, message);
+                console.log(`[WA-OFFICIAL] ✅ Message sent successfully. Meta Msg ID: ${responseData.messages?.[0]?.id}`);
+                
+                // Save to database queue as 'sent' for log tracking
+                try {
+                    const WhatsAppQueue = require('../models/WhatsAppQueue');
+                    const newMsg = new WhatsAppQueue({
+                        phone,
+                        message,
+                        type,
+                        order: orderId,
+                        priority,
+                        status: 'sent',
+                        attempts: 1
+                    });
+                    await newMsg.save();
+                } catch (dbErr) {
+                    console.error('[WA-OFFICIAL] Failed to save log to DB queue:', dbErr.message);
+                }
+                
+                return { success: true, official: true, messageId: responseData.messages?.[0]?.id };
+            } catch (err) {
+                const errMsg = err.response?.data?.error?.message || err.message;
+                console.error(`[WA-OFFICIAL] ❌ Meta Cloud API failed: ${errMsg}`);
+                return { success: false, error: `Official failed: ${errMsg}` };
+            }
         }
+
+        console.warn(`[WA-OFFICIAL] ❌ WhatsApp Cloud API is not configured.`);
+        return { success: false, error: 'WhatsApp API not configured' };
     }
 
     /**

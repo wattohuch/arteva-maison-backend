@@ -40,7 +40,7 @@ function getLogoBase64() {
 async function buildReceiptHTML(order) {
   if (!order) throw new Error('buildReceiptHTML: order is null');
 
-  const receiptQR = await generateQR('https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || ''));
+  const receiptQR = await generateQR('https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || '') + '&token=' + encodeURIComponent(order.trackingToken || ''));
   const whatsappQR = await generateQR('https://wa.me/96550683207');
   const logoB64 = getLogoBase64();
 
