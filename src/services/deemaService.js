@@ -108,7 +108,7 @@ class DeemaService {
             },
             source: { id: 'src_deema' },
             post: { url: `${backendUrl}/api/payments/deema/webhook` },
-            redirect: { url: `${backendUrl}/api/payments/deema/callback` }
+            redirect: { url: `${backendUrl}/api/payments/deema/callback?merchant_order_id=${orderData.orderNumber}&orderId=${orderData.orderId}` }
         };
     }
 
