@@ -489,6 +489,28 @@ const verifyPayment = asyncHandler(async (req, res) => {
             console.error('Auto-save address error:', addrErr.message);
         }
 
+        // Auto-print receipt (skip if already printed — prevents duplicate prints from callback/webhook race)
+        try {
+            const freshOrder = await Order.findById(order._id).select('printedAt').lean();
+            if (freshOrder && freshOrder.printedAt) {
+                console.log(`[PRINT] ⏭️ Skipping auto-print for ${order.orderNumber} — already printed`);
+            } else {
+                const { autoPrintReceipt } = require('../services/printService');
+                autoPrintReceipt(order, order.user).then(async (result) => {
+                    if (result && result.success) {
+                        try {
+                            await Order.findByIdAndUpdate(order._id, { printedAt: new Date() });
+                            console.log(`[PRINT] ✅ printedAt set for ${order.orderNumber}`);
+                        } catch (dbErr) {
+                            console.error(`[PRINT] Failed to set printedAt:`, dbErr.message);
+                        }
+                    }
+                }).catch(e => console.error('Auto-print error:', e.message));
+            }
+        } catch (printErr) {
+            console.error('Print service error:', printErr.message);
+        }
+
         await order.save();
 
         res.json({
@@ -568,6 +590,71 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 const { emitNewOrder } = require('../socketHandler');
                 emitNewOrder(order);
             } catch (socketErr) { /* silent */ }
+
+            // Auto-print receipt (skip if already printed — prevents duplicate prints from callback/webhook race)
+            try {
+                const freshOrder = await Order.findById(order._id).select('printedAt').lean();
+                if (freshOrder && freshOrder.printedAt) {
+                    console.log(`[PRINT] ⏭️ Skipping auto-print for ${order.orderNumber} — already printed`);
+                } else {
+                    const { autoPrintReceipt } = require('../services/printService');
+                    autoPrintReceipt(order, order.user).then(async (result) => {
+                        if (result && result.success) {
+                            try {
+                                await Order.findByIdAndUpdate(order._id, { printedAt: new Date() });
+                                console.log(`[PRINT] ✅ printedAt set for ${order.orderNumber}`);
+                            } catch (dbErr) {
+                                console.error(`[PRINT] Failed to set printedAt:`, dbErr.message);
+                            }
+                        }
+                    }).catch(e => console.error('Auto-print error:', e.message));
+                }
+            } catch (printErr) {
+                console.error('Print service error:', printErr.message);
+            }
+
+            // Auto-save shipping address with coordinates
+            try {
+                const User = require('../models/User');
+                const userDoc = await User.findById(order.user._id || order.user);
+                if (userDoc && order.shippingAddress) {
+                    const existingAddress = userDoc.addresses.find(a =>
+                        a.street && order.shippingAddress.street &&
+                        a.street.toLowerCase() === order.shippingAddress.street.toLowerCase() &&
+                        a.city && order.shippingAddress.city &&
+                        a.city.toLowerCase() === order.shippingAddress.city.toLowerCase()
+                    );
+                    if (existingAddress) {
+                        existingAddress.phone = order.shippingAddress.phone || existingAddress.phone;
+                        existingAddress.zipCode = order.shippingAddress.zipCode || existingAddress.zipCode;
+                        existingAddress.state = order.shippingAddress.state || existingAddress.state;
+                        existingAddress.country = order.shippingAddress.country || existingAddress.country;
+                        if (order.shippingAddress.label) existingAddress.label = order.shippingAddress.label;
+                        if (order.shippingAddress.coordinates) existingAddress.coordinates = order.shippingAddress.coordinates;
+                        await userDoc.save();
+                        console.log(`[ADDRESS] Updated existing address for user ${userDoc.email}`);
+                    } else {
+                        const newAddr = {
+                            street: order.shippingAddress.street,
+                            city: order.shippingAddress.city,
+                            state: order.shippingAddress.state || '',
+                            country: order.shippingAddress.country || 'Kuwait',
+                            zipCode: order.shippingAddress.zipCode || '',
+                            phone: order.shippingAddress.phone || '',
+                            label: order.shippingAddress.label || (userDoc.addresses.length === 0 ? 'Home' : `Address ${userDoc.addresses.length + 1}`),
+                            isDefault: userDoc.addresses.length === 0
+                        };
+                        if (order.shippingAddress.coordinates) {
+                            newAddr.coordinates = order.shippingAddress.coordinates;
+                        }
+                        userDoc.addresses.push(newAddr);
+                        await userDoc.save();
+                        console.log(`[ADDRESS] Auto-saved new address for user ${userDoc.email}`);
+                    }
+                }
+            } catch (addrErr) {
+                console.error('Auto-save address error:', addrErr.message);
+            }
 
             await order.save();
         }
