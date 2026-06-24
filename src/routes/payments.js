@@ -13,9 +13,10 @@ const {
     createDeemaCheckout,
     handleDeemaCallback,
     handleDeemaWebhook,
-    verifyDeemaPayment
+    verifyDeemaPayment,
+    reconcileDeemaPayments
 } = require('../controllers/paymentControllerDeema');
-const { protect } = require('../middleware/auth');
+const { protect, admin } = require('../middleware/auth');
 
 // ── MyFatoorah routes ──
 router.get('/methods', getPaymentMethods);
@@ -31,5 +32,7 @@ router.post('/deema/checkout', protect, createDeemaCheckout);
 router.get('/deema/callback', handleDeemaCallback);    // Deema redirects here after BNPL approval
 router.post('/deema/webhook', handleDeemaWebhook);     // Server-to-server notification
 router.get('/deema/verify/:chargeId', verifyDeemaPayment);
+router.post('/deema/reconcile', protect, admin, reconcileDeemaPayments); // Admin: fix orphaned payments
 
 module.exports = router;
+

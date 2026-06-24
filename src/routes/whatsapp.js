@@ -45,7 +45,7 @@ router.post('/webhook', async (req, res) => {
         const text = msg.text?.body;
         const type = msg.type;
 
-        // We only handle text messages for auto-reply chat features
+        // We only handle text messages for AI chat
         if (type !== 'text' || !text) return;
 
         console.log(`[WA-WEBHOOK] Received message from +${from}: "${text}"`);
@@ -56,51 +56,78 @@ router.post('/webhook', async (req, res) => {
 
         // If the sender is one of the owner/admin numbers, ignore it
         if (ownerPhones.includes(cleanFrom)) {
-            console.log(`[WA-WEBHOOK] Sender +${cleanFrom} is an owner. Skipping auto-greeting/forwarding to prevent loops.`);
+            console.log(`[WA-WEBHOOK] Sender +${cleanFrom} is an owner. Skipping AI reply.`);
             return;
         }
 
-        // Session lookup to check 2-hour cooldown
-        let session = await WhatsAppChatSession.findOne({ phone: cleanFrom });
+        // --- AI CHATBOT LOGIC ---
+        const WhatsAppConversation = require('../models/WhatsAppConversation');
+        const aiChatService = require('../services/aiChatService');
+
+        // Load conversation
+        let conversation = await WhatsAppConversation.findOne({ phone: cleanFrom });
+        if (!conversation) {
+            conversation = new WhatsAppConversation({ phone: cleanFrom, messages: [] });
+        }
+
+        // If human has taken over in the last 2 hours, do not interfere
         const now = new Date();
+        if (conversation.isHumanEscalated) {
+            // Check if 2 hours have passed since human takeover
+            if ((now - conversation.lastMessageAt) < COOLDOWN_MS) {
+                console.log(`[WA-WEBHOOK] +${cleanFrom} is handled by human. Skipping AI.`);
+                conversation.lastMessageAt = now;
+                await conversation.save();
+                return;
+            } else {
+                // Session expired, reset escalation
+                conversation.isHumanEscalated = false;
+                conversation.messages = [];
+            }
+        }
 
-        if (session && (now - session.lastGreetedAt) < COOLDOWN_MS) {
-            console.log(`[WA-WEBHOOK] +${cleanFrom} was greeted recently. Cooldown active. Skipping auto-reply.`);
+        // Process with AI
+        console.log(`[WA-WEBHOOK] Processing message with AI for +${cleanFrom}`);
+        const aiResponse = await aiChatService.processMessage(cleanFrom, text, conversation.messages);
+
+        if (!aiResponse) {
+            console.warn(`[WA-WEBHOOK] AI service did not return a response. Skipping.`);
             return;
         }
 
-        // Send bilingual auto-greeting response to customer
-        const greeting = `Thank you for reaching out to ARTÉVA Maison! ✨
-Our team has received your message and will get back to you shortly.
-We appreciate your patience.
+        // Send response to customer
+        console.log(`[WA-WEBHOOK] Sending AI reply to +${cleanFrom}: ${aiResponse.text}`);
+        await whatsappService.sendMessage(cleanFrom, aiResponse.text, 'contact_auto_reply');
 
-You can shop and place your order through the website 
-🛍️ www.ArtevaMaison.com
-
-شكراً لتواصلك مع أرتيڤا ميزون! ✨
-فريقنا استلم رسالتك و سيتم الرد عليك بأقرب وقت . 
-
-يمكنك التسوق و الطلب عبر الموقع الالكتروني 
-🛍️ www.artevamaisonkw.com`;
-
-        console.log(`[WA-WEBHOOK] Sending greeting reply to +${cleanFrom}`);
-        await whatsappService.sendMessage(cleanFrom, greeting, 'contact_auto_reply');
-
-        // Forward message to all owner/admin phones
-        const forwardMsg = `📩 New customer message:\n\n📱 +${cleanFrom}\n💬 "${text}"\n\n↩️ Reply to them directly on WhatsApp.`;
-        for (const ownerPhone of ownerPhones) {
-            console.log(`[WA-WEBHOOK] Forwarding customer message to owner +${ownerPhone}`);
-            await whatsappService.sendMessage(ownerPhone, forwardMsg, 'status_update');
+        // Save conversation history
+        conversation.messages.push({ role: 'user', content: text, timestamp: now });
+        conversation.messages.push({ role: 'assistant', content: aiResponse.text, timestamp: new Date() });
+        conversation.lastMessageAt = new Date();
+        
+        // Handle escalation
+        if (aiResponse.shouldEscalate) {
+            console.log(`[WA-WEBHOOK] AI requested human escalation for +${cleanFrom}.`);
+            conversation.isHumanEscalated = true;
+            
+            // Try to extract an order number to give owners context
+            const orderMatch = text.match(/ORD-\w+/i);
+            let contextStr = '';
+            if (orderMatch) {
+                const Order = require('../models/Order');
+                const order = await Order.findOne({ orderNumber: orderMatch[0].toUpperCase() }).populate('deliveryPilot');
+                if (order && order.deliveryPilot) {
+                    contextStr = `\n📦 Related Order: ${order.orderNumber}\n🚚 Driver: ${order.deliveryPilot.name} (${order.deliveryPilot.phone})`;
+                }
+            }
+            
+            // Forward to owners
+            const forwardMsg = `🚨 *AI Escalation*\n\nCustomer +${cleanFrom} needs human assistance.\n\n💬 Last msg: "${text}"\n🤖 AI replied: "${aiResponse.text}"${contextStr}\n\n↩️ Please reply to them directly.`;
+            for (const ownerPhone of ownerPhones) {
+                await whatsappService.sendMessage(ownerPhone, forwardMsg, 'status_update');
+            }
         }
 
-        // Upsert chat session to update cooldown timestamp
-        await WhatsAppChatSession.findOneAndUpdate(
-            { phone: cleanFrom },
-            { lastGreetedAt: now },
-            { upsert: true, new: true }
-        );
-
-        console.log(`[WA-WEBHOOK] Greeted +${cleanFrom} and forwarded successfully.`);
+        await conversation.save();
 
     } catch (err) {
         console.error('[WA-WEBHOOK] Error processing webhook message:', err.message, err.stack);
