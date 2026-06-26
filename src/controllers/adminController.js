@@ -1385,9 +1385,15 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
     // Update items if provided
     if (items && Array.isArray(items)) {
         order.items = items.map((item, idx) => {
-            const existing = order.items[idx] || {};
+            let existing = {};
+            if (item._id && typeof order.items.id === 'function') {
+                existing = order.items.id(item._id) || {};
+            } else {
+                existing = order.items[idx] || {};
+            }
             // Preserve refund fields if they exist
             return {
+                _id: item._id || existing._id || new mongoose.Types.ObjectId(),
                 product: item.product || existing.product || null,
                 name: item.name || existing.name,
                 nameAr: item.nameAr || existing.nameAr,
@@ -1401,6 +1407,7 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
                 refundedBy: existing.refundedBy
             };
         });
+        order.markModified('items');
     }
 
     // Update shipping cost
