@@ -1427,7 +1427,7 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
 
     // Recalculate subtotal and total
     order.subtotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    order.total = order.subtotal + (order.shippingCost || 0) - (order.discount || 0);
+    order.total = order.subtotal + (order.shippingCost || 0) - (order.discount || 0) - (order.refundAmount || 0);
     if (order.total < 0) order.total = 0;
 
     await order.save();

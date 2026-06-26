@@ -171,7 +171,37 @@ async function renderReceiptToJpeg(order, customer) {
         if(showNameAr){c.fillStyle=LIGHT;c.font=`${f(7.5)}px Arial`;c.fillText(item.nameAr,cols[1].x,y+f(11));}
         if(item.variant){c.fillStyle=LIGHT;c.font=`${f(7)}px Arial`;c.fillText(item.variant,cols[1].x,y+f(showNameAr?19:11));}
         c.font=`${f(9)}px Arial`;
-        if (itemDiscount) {
+        const baseColor = item.isRefunded ? LIGHT : DARK;
+        if (item.isRefunded) {
+            // Refunded item logic (strikethrough on price and total, and [REFUNDED] badge on name)
+            c.fillStyle=LIGHT; c.textAlign='left';
+            const prText = item.price.toFixed(3)+' KWD';
+            c.fillText(prText, cols[2].x, y);
+            const prW = c.measureText(prText).width;
+            c.strokeStyle='#ef4444'; c.lineWidth=f(0.5);
+            c.beginPath(); c.moveTo(cols[2].x, y+f(4)); c.lineTo(cols[2].x+prW, y+f(4)); c.stroke();
+            
+            c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
+            
+            c.textAlign='right'; 
+            const totText = originalTotal+' KWD';
+            c.fillText(totText, cols[4].x+cols[4].w, y);
+            const totW = c.measureText(totText).width;
+            c.beginPath(); c.moveTo(cols[4].x+cols[4].w-totW, y+f(4)); c.lineTo(cols[4].x+cols[4].w, y+f(4)); c.stroke();
+
+            // Draw [REFUNDED] badge next to name
+            const nameW = c.measureText(trunc(c,item.name||'Product',cols[1].w-f(40))).width;
+            const badgeX = cols[1].x + nameW + f(4);
+            c.fillStyle = '#fee2e2';
+            const badgeText = 'REFUNDED';
+            c.font = `700 ${f(6)}px Arial`;
+            const btW = c.measureText(badgeText).width;
+            rr(c, badgeX, y-f(1), btW+f(4), f(9), f(2)); c.fill();
+            c.strokeStyle = '#ef4444'; c.lineWidth = f(0.3);
+            rr(c, badgeX, y-f(1), btW+f(4), f(9), f(2)); c.stroke();
+            c.fillStyle = '#ef4444'; c.fillText(badgeText, badgeX+f(2), y+f(1));
+
+        } else if (itemDiscount) {
             // Original price with strikethrough
             c.fillStyle=LIGHT; c.textAlign='left';
             const origPriceText = item.price.toFixed(3)+' KWD';
@@ -191,7 +221,7 @@ async function renderReceiptToJpeg(order, customer) {
             c.fillStyle=GOLD; c.font=`600 ${f(9)}px Arial`;
             c.textAlign='right'; c.fillText(discountedTotal+' KWD', cols[4].x+cols[4].w, y);
         } else {
-            c.fillStyle=DARK;
+            c.fillStyle=baseColor;
             c.textAlign='left'; c.fillText(item.price.toFixed(3)+' KWD', cols[2].x, y);
             c.textAlign='center'; c.fillText(String(item.quantity), cols[3].x+cols[3].w/2, y);
             c.textAlign='right'; c.fillText(originalTotal+' KWD', cols[4].x+cols[4].w, y);
@@ -224,15 +254,31 @@ async function renderReceiptToJpeg(order, customer) {
         c.fillText('Promo: ' + order.promoCode.code, tx, y);
         c.textAlign='right';
         c.fillText('-' + parseFloat(promoAmount).toFixed(3) + ' KWD', RM, y); y+=f(12);
+    } else if (order.discount && order.discount > 0) {
+        c.textAlign='left'; c.font=`${f(9.5)}px Arial`; c.fillStyle='#059669';
+        c.fillText('Discount', tx, y);
+        c.textAlign='right';
+        c.fillText('-' + parseFloat(order.discount).toFixed(3) + ' KWD', RM, y); y+=f(12);
+    }
+    // Refunded
+    if (order.refundAmount && order.refundAmount > 0) {
+        c.textAlign='left'; c.font=`600 ${f(9.5)}px Arial`; c.fillStyle='#ef4444';
+        c.fillText('Refunded', tx, y);
+        c.fillStyle=LIGHT; c.font=`${f(7.5)}px Arial`;
+        c.fillText('/ مسترجع', tx+f(55), y+f(1.5));
+        c.fillStyle='#ef4444'; c.font=`600 ${f(9.5)}px Arial`;
+        c.textAlign='right'; c.fillText('-' + parseFloat(order.refundAmount).toFixed(3) + ' KWD', RM, y); y+=f(12);
     }
     // Divider
     c.strokeStyle=BORDER; c.lineWidth=f(1); c.beginPath(); c.moveTo(tx,y); c.lineTo(RM,y); c.stroke(); y+=f(14);
     // Total Paid
-    c.textAlign='left'; c.font=`bold ${f(13)}px Arial`; c.fillStyle=DARK;
-    c.fillText('Total Paid', tx, y);
+    const totalLabel = order.refundStatus === 'Full' ? 'TOTAL REFUNDED' : 'Total Paid';
+    const totalLabelAr = order.refundStatus === 'Full' ? '/ المبلغ المسترجع' : '/ المبلغ المدفوع';
+    c.textAlign='left'; c.font=`bold ${f(13)}px Arial`; c.fillStyle= order.refundStatus === 'Full' ? '#ef4444' : DARK;
+    c.fillText(totalLabel, tx, y);
     c.fillStyle=LIGHT; c.font=`bold ${f(9)}px Arial`;
-    c.fillText('/ المبلغ المدفوع', tx+f(78), y+f(3));
-    c.fillStyle=DARK; c.font=`bold ${f(13)}px Arial`;
+    c.fillText(totalLabelAr, tx+f(78), y+f(3));
+    c.fillStyle= order.refundStatus === 'Full' ? '#ef4444' : DARK; c.font=`bold ${f(13)}px Arial`;
     c.textAlign='right'; c.fillText((order.total||0).toFixed(3)+' KWD', RM, y); y+=f(24);
 
     // ═══ QR CODE ═══
