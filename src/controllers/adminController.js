@@ -1337,7 +1337,7 @@ const getCustomerOrderHistory = asyncHandler(async (req, res) => {
 });
 
 
-// @desc    Update order receipt data (items, prices, shipping, discount, notes)
+// @desc    Update order receipt data (items, prices, shipping, discount, notes, statuses, customer details)
 // @route   PUT /api/admin/orders/:id/receipt
 // @access  Private (admin/superuser)
 const updateOrderReceipt = asyncHandler(async (req, res) => {
@@ -1348,20 +1348,57 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         throw new Error('Order not found');
     }
 
-    const { items, shippingCost, discount, notes } = req.body;
+    const { items, shippingCost, discount, notes, orderStatus, paymentStatus, paymentMethod, user, shippingAddress, orderNumber, createdAt } = req.body;
+
+    // Update basic statuses
+    if (orderStatus !== undefined) order.orderStatus = orderStatus;
+    if (paymentStatus !== undefined) order.paymentStatus = paymentStatus;
+    if (paymentMethod !== undefined) order.paymentMethod = paymentMethod;
+    if (orderNumber !== undefined && orderNumber.trim() !== '') order.orderNumber = orderNumber.trim();
+    if (createdAt !== undefined) order.createdAt = new Date(createdAt);
+
+    // Update shipping address
+    if (shippingAddress) {
+        if (!order.shippingAddress) order.shippingAddress = {};
+        if (shippingAddress.street !== undefined) order.shippingAddress.street = shippingAddress.street;
+        if (shippingAddress.city !== undefined) order.shippingAddress.city = shippingAddress.city;
+        if (shippingAddress.country !== undefined) order.shippingAddress.country = shippingAddress.country;
+        if (user && user.name) order.shippingAddress.fullName = user.name;
+        if (user && user.phone) order.shippingAddress.phone = user.phone;
+    }
+
+    // Update User if possible, otherwise we rely on shippingAddress for receipt display
+    if (user && order.user) {
+        try {
+            const userDoc = await User.findById(order.user);
+            if (userDoc) {
+                if (user.name) userDoc.name = user.name;
+                if (user.email) userDoc.email = user.email;
+                if (user.phone) userDoc.phone = user.phone;
+                await userDoc.save();
+            }
+        } catch (e) {
+            console.error('Failed to update user doc from receipt generator:', e);
+        }
+    }
 
     // Update items if provided
     if (items && Array.isArray(items)) {
         order.items = items.map((item, idx) => {
             const existing = order.items[idx] || {};
+            // Preserve refund fields if they exist
             return {
-                product: item.product || existing.product,
+                product: item.product || existing.product || null,
                 name: item.name || existing.name,
                 nameAr: item.nameAr || existing.nameAr,
                 sku: item.sku || existing.sku,
                 image: item.image || existing.image,
                 price: item.price !== undefined ? Number(item.price) : existing.price,
-                quantity: item.quantity !== undefined ? Number(item.quantity) : existing.quantity
+                quantity: item.quantity !== undefined ? Number(item.quantity) : existing.quantity,
+                isRefunded: existing.isRefunded || false,
+                refundAmount: existing.refundAmount || 0,
+                refundedAt: existing.refundedAt,
+                refundedBy: existing.refundedBy
             };
         });
     }
@@ -1389,6 +1426,153 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
     await order.save();
 
     // Return updated order with user populated
+    const updated = await Order.findById(order._id)
+        .populate('user', 'name email phone language')
+        .lean();
+
+    res.json({
+        success: true,
+        data: updated
+    });
+});
+
+// @desc    Create a new manual order/receipt
+// @route   POST /api/admin/orders
+// @access  Private (admin/superuser)
+const createOrder = asyncHandler(async (req, res) => {
+    const { orderNumber, createdAt, orderStatus, paymentStatus, paymentMethod, user, shippingAddress, items, shippingCost, discount, notes } = req.body;
+
+    let orderUser = req.user._id;
+
+    // Try to find or create user
+    if (user && user.email) {
+        let foundUser = await User.findOne({ email: user.email.toLowerCase() });
+        if (!foundUser) {
+            foundUser = await User.create({
+                name: user.name || 'Guest',
+                email: user.email.toLowerCase(),
+                phone: user.phone || '',
+                password: require('crypto').randomBytes(10).toString('hex')
+            });
+        }
+        orderUser = foundUser._id;
+    }
+
+    const newOrderData = {
+        user: orderUser,
+        orderNumber: orderNumber || undefined, // undefined will let pre-save hook generate one
+        createdAt: createdAt ? new Date(createdAt) : new Date(),
+        orderStatus: orderStatus || 'confirmed',
+        paymentStatus: paymentStatus || 'paid',
+        paymentMethod: paymentMethod || 'knet',
+        shippingAddress: {
+            street: shippingAddress?.street || 'N/A',
+            city: shippingAddress?.city || 'N/A',
+            country: shippingAddress?.country || 'Kuwait',
+            phone: user?.phone || '',
+            fullName: user?.name || 'Guest'
+        },
+        items: (items || []).map(item => ({
+            product: item.product || null,
+            name: item.name || 'Product',
+            nameAr: item.nameAr || '',
+            sku: item.sku || '',
+            price: Number(item.price) || 0,
+            quantity: Number(item.quantity) || 1
+        })),
+        shippingCost: Number(shippingCost) || 0,
+        discount: Number(discount) || 0,
+        notes: notes || ''
+    };
+
+    newOrderData.subtotal = newOrderData.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    newOrderData.total = newOrderData.subtotal + newOrderData.shippingCost - newOrderData.discount;
+    if (newOrderData.total < 0) newOrderData.total = 0;
+
+    const order = await Order.createWithRetry(newOrderData);
+
+    const populatedOrder = await Order.findById(order._id)
+        .populate('user', 'name email phone language')
+        .lean();
+
+    res.status(201).json({
+        success: true,
+        data: populatedOrder
+    });
+});
+
+// @desc    Process refund (item or full)
+// @route   POST /api/admin/orders/:id/refund
+// @access  Private (admin/superuser)
+const processRefund = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    const { type, itemId } = req.body;
+    let totalRefundedNow = 0;
+
+    if (type === 'full') {
+        if (order.refundStatus === 'Full') {
+            res.status(400);
+            throw new Error('Order is already fully refunded');
+        }
+
+        order.items.forEach(item => {
+            if (!item.isRefunded) {
+                item.isRefunded = true;
+                item.refundAmount = item.price * item.quantity;
+                item.refundedAt = new Date();
+                item.refundedBy = req.user._id;
+                totalRefundedNow += item.refundAmount;
+            }
+        });
+
+        order.refundStatus = 'Full';
+        // When fully refunded, also update payment and order status
+        order.paymentStatus = 'refunded';
+        order.updateStatus('cancelled', 'Fully refunded', req.user._id);
+
+    } else if (type === 'item') {
+        const item = order.items.id(itemId);
+        if (!item) {
+            res.status(404);
+            throw new Error('Item not found in order');
+        }
+        if (item.isRefunded) {
+            res.status(400);
+            throw new Error('Item is already refunded');
+        }
+
+        item.isRefunded = true;
+        item.refundAmount = item.price * item.quantity;
+        item.refundedAt = new Date();
+        item.refundedBy = req.user._id;
+        totalRefundedNow = item.refundAmount;
+
+        // Check if all items are now refunded
+        const allRefunded = order.items.every(i => i.isRefunded);
+        order.refundStatus = allRefunded ? 'Full' : 'Partial';
+
+        if (allRefunded) {
+            order.paymentStatus = 'refunded';
+            order.updateStatus('cancelled', 'Fully refunded via item refunds', req.user._id);
+        }
+    } else {
+        res.status(400);
+        throw new Error('Invalid refund type');
+    }
+
+    order.refundAmount = (order.refundAmount || 0) + totalRefundedNow;
+    order.refundReason = req.body.reason || 'Requested by admin';
+    order.refundedAt = new Date();
+    order.refundedBy = req.user._id;
+
+    await order.save();
+
     const updated = await Order.findById(order._id)
         .populate('user', 'name email phone language')
         .lean();
@@ -1602,6 +1786,8 @@ module.exports = {
     updateProductDiscount,
     getCustomerOrderHistory,
     updateOrderReceipt,
+    createOrder,
+    processRefund,
     getSiteSettings,
     updateSiteSettings,
     getSiteVisitStats

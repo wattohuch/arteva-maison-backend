@@ -87,10 +87,18 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
       priceCell = `${price} KWD`;
       totalCell = `${safeFixed(originalTotal)} KWD`;
     }
+
+    if (it.isRefunded) {
+      priceCell = `<span style="text-decoration:line-through;color:#ef4444;opacity:0.7">${priceCell}</span>`;
+      totalCell = `<span style="text-decoration:line-through;color:#ef4444;opacity:0.7">${totalCell}</span>`;
+    }
+
+    const refundedBadge = it.isRefunded ? ' <span style="color:#ef4444;font-size:9px;font-weight:700;border:1px solid #ef4444;padding:1px 3px;border-radius:3px;margin-left:4px;">REFUNDED</span>' : '';
+
     return `<tr>
       <td class="sku-col">${sku}</td>
       <td>
-        <div style="font-weight:500">${name}</div>
+        <div style="font-weight:500; display:flex; align-items:center; flex-wrap:wrap;">${name}${refundedBadge}</div>
         ${nameAr ? '<div style="font-size:10px;color:#888;font-family:var(--font-arabic);direction:rtl">' + nameAr + '</div>' : ''}
       </td>
       <td>${priceCell}</td>
@@ -282,6 +290,7 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
   <div class="total-row"><span>Subtotal / المجموع الفرعي</span><span>${safeFixed(order.subtotal || order.total)} KWD</span></div>
   <div class="total-row"><span>Delivery / التوصيل</span><span>${safeFixed(order.shippingCost)} KWD</span></div>
   ${order.promoCode && order.promoCode.code ? '<div class="total-row promo-row"><span>Promo Code: ' + escapeHTML(order.promoCode.code) + ' / رمز الخصم</span><span>-' + safeFixed(order.promoCode.totalDiscount || order.discount) + ' KWD</span></div>' : ''}
+  ${order.refundAmount > 0 ? '<div class="total-row" style="color:#ef4444;font-weight:600;"><span>Refunded / مسترجع</span><span>-' + safeFixed(order.refundAmount) + ' KWD</span></div>' : ''}
   <div class="total-row final"><span>Total Paid / المبلغ المدفوع</span><span>${safeFixed(order.total)} KWD</span></div>
 </div>
 

@@ -27,6 +27,8 @@ const {
     updateProductDiscount,
     getCustomerOrderHistory,
     updateOrderReceipt,
+    createOrder,
+    processRefund,
     getSiteSettings,
     updateSiteSettings,
     getSiteVisitStats
@@ -293,9 +295,11 @@ router.route('/products/:id')
 
 // Orders
 router.get('/orders', protect, admin, getAdminOrders);
+router.post('/orders', protect, admin, createOrder);
 router.put('/orders/:id/status', protect, admin, updateOrderStatus);
 router.put('/orders/:id/assign', protect, admin, assignDriver);
 router.put('/orders/:id/receipt', protect, admin, updateOrderReceipt);
+router.post('/orders/:id/refund', protect, admin, processRefund);
 
 // Users
 router.route('/users')

@@ -12,7 +12,11 @@ const orderItemSchema = new mongoose.Schema({
     sku: { type: String }, // Product SKU / number
     image: String,
     price: { type: Number, required: true },
-    quantity: { type: Number, required: true, min: 1 }
+    quantity: { type: Number, required: true, min: 1 },
+    isRefunded: { type: Boolean, default: false },
+    refundAmount: { type: Number, default: 0 },
+    refundedAt: Date,
+    refundedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 
 // Status history entry schema for tracking status changes
@@ -66,6 +70,21 @@ const orderSchema = new mongoose.Schema({
         type: String,
         enum: ['pending', 'awaiting_payment', 'paid', 'failed', 'cancelled', 'refunded', 'payment_expired'],
         default: 'pending'
+    },
+    refundStatus: {
+        type: String,
+        enum: ['None', 'Partial', 'Full'],
+        default: 'None'
+    },
+    refundAmount: {
+        type: Number,
+        default: 0
+    },
+    refundReason: String,
+    refundedAt: Date,
+    refundedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     },
     // Updated order statuses to match delivery workflow
     orderStatus: {
