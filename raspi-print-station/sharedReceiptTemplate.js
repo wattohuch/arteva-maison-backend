@@ -294,6 +294,16 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
   <div class="total-row final"><span>Total Paid / المبلغ المدفوع</span><span>${safeFixed(order.total)} KWD</span></div>
 </div>
 
+${order.notes && order.notes.trim() ? `
+<div style="margin-top:14px; padding: 12px; background: #fafaf8; border: 1px solid var(--color-border); border-radius: 6px;">
+  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+    <span style="font-size:10px; font-weight:600; text-transform:uppercase; color:var(--color-text-light);">Notes</span>
+    <span style="font-family:var(--font-arabic); font-size:10px; color:var(--color-text-light); direction:rtl;">ملاحظات</span>
+  </div>
+  <div style="font-size:12px; white-space:pre-wrap; line-height:1.4;">${escapeHTML(order.notes)}</div>
+</div>
+` : ''}
+
 <div class="qr-section">
   <div class="qr-box">
     <div class="qr-code-wrapper">
