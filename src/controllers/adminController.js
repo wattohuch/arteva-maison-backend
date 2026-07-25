@@ -1698,6 +1698,22 @@ const createOrder = asyncHandler(async (req, res) => {
         `(${normalisedItems.length} line(s), ${order.total.toFixed(3)} KWD)`
     );
 
+    // Notify admin dashboard in real-time
+    try {
+        const { emitNewOrder } = require('../socketHandler');
+        emitNewOrder(populatedOrder);
+    } catch (socketErr) {
+        console.error('[RECEIPT] Socket notification error:', socketErr.message);
+    }
+
+    // Send WhatsApp notifications to owner and customer for manual receipt
+    try {
+        const whatsapp = require('../services/whatsappService');
+        whatsapp.sendAllOrderNotifications(populatedOrder, populatedOrder.user);
+    } catch (whatsappErr) {
+        console.error('[RECEIPT] WhatsApp notification error:', whatsappErr.message);
+    }
+
     res.status(201).json({
         success: true,
         data: populatedOrder
