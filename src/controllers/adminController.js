@@ -1491,6 +1491,7 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
                 existing = order.items[idx] || {};
             }
             // Preserve refund fields if they exist
+            const sameProduct = existing.product && String(item.product || '') === String(existing.product._id || existing.product);
             return {
                 _id: item._id || existing._id || new mongoose.Types.ObjectId(),
                 product: item.product || existing.product || null,
@@ -1504,9 +1505,13 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
                 refundAmount: existing.refundAmount || 0,
                 refundedAt: existing.refundedAt,
                 refundedBy: existing.refundedBy,
-                // Carried over so the reconcile can compute a delta rather than
-                // re-deducting the whole line.
-                stockHeld: existing.stockHeld || 0
+                isExchanged: item.isExchanged !== undefined ? !!item.isExchanged : (existing.isExchanged || false),
+                oldName: item.oldName !== undefined ? item.oldName : existing.oldName,
+                oldPrice: item.oldPrice !== undefined ? Number(item.oldPrice) : existing.oldPrice,
+                exchangeDiff: item.exchangeDiff !== undefined ? Number(item.exchangeDiff) : existing.exchangeDiff,
+                // Reset stockHeld to 0 if the product changed (exchange) so reconcile
+                // restores old product stock and deducts new product stock.
+                stockHeld: sameProduct ? (existing.stockHeld || 0) : 0
             };
         });
         order.markModified('items');
