@@ -7,6 +7,7 @@ const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
 const myfatoorah = require('../services/myfatoorahService');
+const promoService = require('../services/promoService');
 const { sendOrderConfirmation } = require('../services/emailService');
 const { WhatsAppService } = require('../services/whatsappService');
 
@@ -57,31 +58,23 @@ function assertValidAddress(address) {
     }
 }
 
-// Helper: Increment promo code usage AFTER payment is confirmed
-// This ensures usage is only counted for orders that actually paid
+/**
+ * Count a promo use once payment is confirmed.
+ *
+ * Confirmation can arrive three ways for the same order — the browser
+ * redirect callback, the /verify poll, and MyFatoorah's server webhook — and
+ * all three land here. The previous implementation had no guard, so a code
+ * could be counted up to three times for a single sale, inflating `usageCount`
+ * and burning through `maxUsage` early.
+ *
+ * `countUsageOnce` claims the right to count with a conditional update on the
+ * order, so exactly one caller wins regardless of ordering or concurrency. It
+ * also marks the originating promo visit as converted.
+ */
 async function incrementPromoUsage(order) {
     if (!order.promoCode || !order.promoCode.promoCodeId || !order.user) return;
     try {
-        const userId = order.user._id || order.user;
-        const promoId = order.promoCode.promoCodeId;
-
-        // Check if user already has a usage entry
-        const promo = await PromoCode.findById(promoId);
-        if (!promo) return;
-
-        const userUsageEntry = promo.usedBy.find(u => u.user.toString() === userId.toString());
-        if (userUsageEntry) {
-            await PromoCode.updateOne(
-                { _id: promoId, 'usedBy.user': userId },
-                { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
-            );
-        } else {
-            await PromoCode.updateOne(
-                { _id: promoId },
-                { $inc: { usageCount: 1 }, $push: { usedBy: { user: userId, count: 1 } } }
-            );
-        }
-        console.log(`[PROMO] ✅ Usage counted for promo "${order.promoCode.code}" (order ${order.orderNumber})`);
+        await promoService.countUsageOnce(order);
     } catch (err) {
         // Promo usage tracking failure should never block order confirmation
         console.error(`[PROMO] ⚠️ Failed to increment usage for order ${order.orderNumber}:`, err.message);
@@ -140,10 +133,73 @@ const getPaymentMethods = asyncHandler(async (req, res) => {
         gateways.myfatoorah = { available: false, reason: 'PAYMENT_GATEWAY_UNAVAILABLE' };
     }
 
+    // Resolve Apple Pay from the same response rather than assuming an id.
+    // Method ids are per-merchant, so hardcoding one is how Apple Pay quietly
+    // breaks on a new account. Derived here so checkout needs one round trip.
+    const applePayMethod = methods.find(m =>
+        /apple\s*pay/i.test(m.name || '') || (m.code || '').toLowerCase() === 'ap'
+    );
+
     res.json({
         success: true,
         data: methods,
         gateways,
+        applePay: {
+            available: !!applePayMethod && gateways.myfatoorah.available,
+            methodId: applePayMethod ? applePayMethod.id : null,
+            // The client still gates on ApplePaySession support; this only says
+            // whether the gateway would accept it.
+            merchantCountry: 'KW',
+            currency: 'KWD',
+        },
+    });
+});
+
+// @desc    Open an Apple Pay / embedded payment session
+// @route   POST /api/payments/applepay/session
+// @access  Private
+//
+// The browser cannot raise an Apple Pay sheet on its own — Apple requires the
+// merchant to be validated for the domain, which MyFatoorah does on our behalf
+// when we open a session with our secret key. That key never reaches the
+// client, which is the whole reason this endpoint exists.
+const initApplePaySession = asyncHandler(async (req, res) => {
+    const mfStatus = getMyFatoorahStatus();
+    if (!mfStatus.configured) {
+        console.error(`[PAYMENTS] [${req.id || '-'}] Apple Pay session refused — ${mfStatus.reason}`);
+        throw ApiError.unavailable(
+            'PAYMENT_GATEWAY_UNAVAILABLE',
+            'Online payments are temporarily unavailable. Please try again shortly.'
+        );
+    }
+
+    const parsed = Number(req.body?.amount);
+    const amount = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+
+    const applePay = await myfatoorah.getApplePayMethod(amount);
+    if (!applePay.available) {
+        throw ApiError.badRequest(
+            'APPLE_PAY_UNAVAILABLE',
+            'Apple Pay is not available for this order.'
+        );
+    }
+
+    const session = await myfatoorah.initiateSession(String(req.user._id));
+
+    console.log(
+        `[PAYMENTS] [${req.id || '-'}] Apple Pay session opened for ${req.user.email} ` +
+        `(method ${applePay.methodId})`
+    );
+
+    res.json({
+        success: true,
+        data: {
+            sessionId: session.sessionId,
+            countryCode: session.countryCode,
+            methodId: applePay.methodId,
+            amount,
+            currency: 'KWD',
+        },
     });
 });
 
@@ -250,7 +306,14 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 // @route   POST /api/payments/execute
 // @access  Private
 const executePayment = asyncHandler(async (req, res) => {
-    const { paymentMethodId, shippingAddress, promoCode: promoCodeStr } = req.body;
+    const {
+        paymentMethodId,
+        shippingAddress,
+        promoCode: promoCodeStr,
+        // Set by the client when the shopper arrived through a promo link, so
+        // the resulting order can be attributed back to that visit.
+        promoVisitId,
+    } = req.body;
 
     // ── Fail fast when the gateway cannot be used at all ──
     // Previously this reached MyFatoorah with a placeholder key, got a 401, and
@@ -335,74 +398,24 @@ const executePayment = asyncHandler(async (req, res) => {
     }));
 
     if (promoCodeStr && promoCodeStr.trim()) {
-        const promo = await PromoCode.findOne({ code: promoCodeStr.toUpperCase().trim() })
-            .populate('products.product', 'name nameAr price');
+        // Priced by the shared calculator, which is also what quoted the
+        // shopper their saving at checkout — so the two cannot disagree.
+        const result = await promoService.buildOrderPromo(promoCodeStr, cartProductItems, {
+            userId: req.user._id,
+            // A visit id means the shopper arrived on a promo link; without one
+            // they typed the code in themselves.
+            source: promoVisitId ? 'link' : 'manual_entry',
+            visitId: promoVisitId,
+        });
 
-        if (promo) {
-            const validity = promo.canUserUse(req.user._id);
-            if (validity.valid) {
-                const discounts = [];
-                let totalDiscountedItems = 0;
-                for (const item of cartProductItems) {
-                    const promoProduct = promo.products.find(
-                        p => p.product._id.toString() === item.product.toString()
-                    );
-                    if (promoProduct) {
-                        let allowedQuantity = item.quantity;
-
-                        // Per-product quantity limit
-                        if (promoProduct.maxDiscountedQuantity !== null && promoProduct.maxDiscountedQuantity !== undefined) {
-                            allowedQuantity = Math.min(allowedQuantity, promoProduct.maxDiscountedQuantity);
-                        }
-
-                        // Global per-order quantity limit
-                        if (promo.maxQuantityPerOrder !== null && promo.maxQuantityPerOrder !== undefined) {
-                            const remainingGlobal = Math.max(0, promo.maxQuantityPerOrder - totalDiscountedItems);
-                            allowedQuantity = Math.min(allowedQuantity, remainingGlobal);
-                        }
-
-                        if (allowedQuantity > 0) {
-                            let discount = 0;
-                            if (promoProduct.discountType === 'percentage') {
-                                discount = (item.price * promoProduct.discountValue / 100) * allowedQuantity;
-                            } else {
-                                discount = promoProduct.discountValue * allowedQuantity;
-                            }
-                            const itemTotal = item.price * allowedQuantity;
-                            discount = Math.min(discount, itemTotal);
-
-                            discounts.push({
-                                product: item.product,
-                                productName: item.name,
-                                discountType: promoProduct.discountType,
-                                discountValue: promoProduct.discountValue,
-                                discountedQuantity: allowedQuantity,
-                                discountAmount: parseFloat(discount.toFixed(3))
-                            });
-                            totalDiscount += discount;
-                            totalDiscountedItems += allowedQuantity;
-                        }
-                    }
-                }
-
-                totalDiscount = parseFloat(totalDiscount.toFixed(3));
-
-                if (totalDiscount > 0) {
-                    promoData = {
-                        code: promo.code,
-                        name: promo.name,
-                        promoCodeId: promo._id,
-                        totalDiscount,
-                        discounts
-                    };
-
-                    // NOTE: Usage is NOT counted here — it is counted AFTER payment
-                    // is confirmed in handlePaymentCallback / verifyPayment / webhook
-                    console.log(`[PAYMENT] ✅ Promo "${promo.code}" applied — discount ${totalDiscount} KWD (usage counted after payment)`);
-                }
-            } else {
-                console.log(`[PAYMENT] ⚠️ Promo "${promoCodeStr}" rejected: ${validity.reason}`);
-            }
+        if (result.promoData) {
+            promoData = result.promoData;
+            totalDiscount = promoData.totalDiscount;
+            // NOTE: Usage is NOT counted here — it is counted AFTER payment is
+            // confirmed in handlePaymentCallback / verifyPayment / webhook.
+            console.log(`[PAYMENT] ✅ Promo "${promoData.code}" applied — discount ${totalDiscount} KWD (usage counted after payment)`);
+        } else {
+            console.log(`[PAYMENT] ⚠️ Promo "${promoCodeStr}" rejected: ${result.reason}`);
         }
     }
 
@@ -1111,5 +1124,6 @@ module.exports = {
     verifyPayment,
     handlePaymentCallback,
     handleWebhook,
-    processCOD
+    processCOD,
+    initApplePaySession
 };

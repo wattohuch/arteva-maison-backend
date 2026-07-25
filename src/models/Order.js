@@ -16,7 +16,14 @@ const orderItemSchema = new mongoose.Schema({
     isRefunded: { type: Boolean, default: false },
     refundAmount: { type: Number, default: 0 },
     refundedAt: Date,
-    refundedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    refundedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    /**
+     * How many units this line has actually taken out of Product.stock.
+     * Every stock mutation reconciles against this number rather than against
+     * `quantity`, which is what makes edits and refunds idempotent: replaying
+     * the same save can never double-deduct or double-restore.
+     */
+    stockHeld: { type: Number, default: 0, min: 0 }
 });
 
 // Status history entry schema for tracking status changes
@@ -45,6 +52,22 @@ const orderSchema = new mongoose.Schema({
     orderNumber: {
         type: String,
         unique: true
+    },
+    /**
+     * Where the order came from. `online` is a customer checkout; `manual` is a
+     * receipt an admin built in the receipt generator. The admin Orders page
+     * filters on this, and revenue reports break down by it.
+     */
+    orderSource: {
+        type: String,
+        enum: ['online', 'manual'],
+        default: 'online',
+        index: true
+    },
+    // Admin who created a manual receipt (null for online orders)
+    createdByAdmin: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     },
     items: [orderItemSchema],
     shippingAddress: {
@@ -137,6 +160,27 @@ const orderSchema = new mongoose.Schema({
         totalDiscount: {
             type: Number,
             default: 0
+        },
+        /**
+         * Attribution trail. `visitId` links back to the PromoVisit created when
+         * the shopper first landed on a promo link, so a code that drives traffic
+         * but no sales is still measurable. `source` records how the code got
+         * onto the order.
+         */
+        visitId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'PromoVisit'
+        },
+        source: {
+            type: String,
+            enum: ['link', 'manual_entry', 'admin_receipt'],
+            default: 'manual_entry'
+        },
+        // Set once the code's usageCount has been incremented for this order,
+        // so payment retries and webhook replays cannot inflate usage.
+        usageCounted: {
+            type: Boolean,
+            default: false
         },
         discounts: [{
             product: {
@@ -272,5 +316,11 @@ orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ printedAt: 1, paymentStatus: 1 });
+// Admin Orders list: newest-first within a source filter
+orderSchema.index({ orderSource: 1, createdAt: -1 });
+// Revenue aggregation scans paid orders inside a date window
+orderSchema.index({ paymentStatus: 1, createdAt: -1 });
+// Promo code analytics (orders attributed to a code, newest first)
+orderSchema.index({ 'promoCode.promoCodeId': 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

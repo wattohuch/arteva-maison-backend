@@ -1,7 +1,10 @@
+const mongoose = require('mongoose');
 const { asyncHandler } = require('../middleware/error'); // Fix import destructuring
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const stockService = require('../services/stockService');
+const promoService = require('../services/promoService');
 const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
 
 // Helper function to parse boolean values consistently
@@ -292,15 +295,101 @@ const deleteProduct = asyncHandler(async (req, res) => {
     res.json({ success: true, message: 'Product removed' });
 });
 
-// @desc    Get all orders
+// @desc    Get orders with filtering, search and pagination
 // @route   GET /api/admin/orders
 // @access  Private/Admin
+//
+// Query: source=all|online|manual, status, paymentStatus, search, from, to,
+//        page, limit. Every filter is applied in Mongo rather than in the
+//        browser — the previous version shipped the entire order collection to
+//        the client on every page load, which is the single biggest cause of
+//        the admin panel stalling on phones.
 const getAdminOrders = asyncHandler(async (req, res) => {
-    const orders = await Order.find({})
-        .populate('user', 'name email phone')
-        .populate('deliveryPilot', 'name phone')
-        .sort({ createdAt: -1 });
-    res.json({ success: true, data: orders });
+    const {
+        source = 'all',
+        status,
+        paymentStatus,
+        search,
+        from,
+        to,
+        page = 1,
+        limit = 50,
+    } = req.query;
+
+    const filter = {};
+
+    if (source === 'manual' || source === 'online') {
+        filter.orderSource = source === 'manual'
+            ? 'manual'
+            // Orders created before orderSource existed are online orders.
+            : { $in: ['online', null] };
+    }
+
+    if (status && status !== 'all') filter.orderStatus = status;
+    if (paymentStatus && paymentStatus !== 'all') filter.paymentStatus = paymentStatus;
+
+    if (from || to) {
+        filter.createdAt = {};
+        if (from) filter.createdAt.$gte = new Date(from);
+        if (to) {
+            const end = new Date(to);
+            end.setHours(23, 59, 59, 999);
+            filter.createdAt.$lte = end;
+        }
+    }
+
+    // Search spans the order number and the customer, so the user lookup has to
+    // resolve first. Escaped so a customer named "a+b" cannot break the regex.
+    if (search && search.trim()) {
+        const term = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const rx = new RegExp(term, 'i');
+        const matchedUsers = await User.find({
+            $or: [{ name: rx }, { email: rx }, { phone: rx }],
+        }).select('_id').limit(100).lean();
+
+        filter.$or = [
+            { orderNumber: rx },
+            { 'shippingAddress.phone': rx },
+            ...(matchedUsers.length ? [{ user: { $in: matchedUsers.map(u => u._id) } }] : []),
+        ];
+    }
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const perPage = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+
+    const [orders, total, counts] = await Promise.all([
+        Order.find(filter)
+            .populate('user', 'name email phone')
+            .populate('deliveryPilot', 'name phone')
+            .sort({ createdAt: -1 })
+            .skip((pageNum - 1) * perPage)
+            .limit(perPage)
+            .lean(),
+        Order.countDocuments(filter),
+        // Tab badges. Counted separately from `filter` so the numbers stay
+        // stable while the user moves between tabs.
+        Order.aggregate([
+            { $group: { _id: { $ifNull: ['$orderSource', 'online'] }, count: { $sum: 1 } } },
+        ]),
+    ]);
+
+    const bySource = counts.reduce((acc, c) => ({ ...acc, [c._id]: c.count }), {});
+
+    res.json({
+        success: true,
+        data: orders,
+        pagination: {
+            page: pageNum,
+            limit: perPage,
+            total,
+            pages: Math.ceil(total / perPage) || 1,
+        },
+        counts: {
+            all: (bySource.online || 0) + (bySource.manual || 0),
+            online: bySource.online || 0,
+            manual: bySource.manual || 0,
+        },
+    });
 });
 
 // @desc    Update order status
@@ -1382,6 +1471,16 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         }
     }
 
+    // Snapshot the lines as they stand so the stock reconcile below knows what
+    // this order is currently holding. Taken before any mutation.
+    const previousItems = order.items.map(i => ({
+        product: i.product,
+        name: i.name,
+        quantity: i.quantity,
+        isRefunded: i.isRefunded,
+        stockHeld: i.stockHeld,
+    }));
+
     // Update items if provided
     if (items && Array.isArray(items)) {
         order.items = items.map((item, idx) => {
@@ -1404,7 +1503,10 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
                 isRefunded: existing.isRefunded || false,
                 refundAmount: existing.refundAmount || 0,
                 refundedAt: existing.refundedAt,
-                refundedBy: existing.refundedBy
+                refundedBy: existing.refundedBy,
+                // Carried over so the reconcile can compute a delta rather than
+                // re-deducting the whole line.
+                stockHeld: existing.stockHeld || 0
             };
         });
         order.markModified('items');
@@ -1425,13 +1527,33 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         order.notes = notes;
     }
 
+    // ── Inventory ──
+    // Adding a line to a receipt takes stock out; reducing a quantity or
+    // removing a line puts it back. Runs before save so an over-sell is
+    // rejected with the order untouched.
+    await stockService.syncOrderStock(order, { previousItems });
+
     // Recalculate subtotal, refundAmount and total
     order.subtotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     order.refundAmount = order.items.reduce((sum, item) => sum + (item.isRefunded ? (item.price * item.quantity) : 0), 0);
     order.total = order.subtotal + (order.shippingCost || 0) - (order.discount || 0) - (order.refundAmount || 0);
     if (order.total < 0) order.total = 0;
 
-    await order.save();
+    try {
+        await order.save();
+    } catch (err) {
+        // The stock movement already landed. Walk it back to the pre-edit
+        // holdings so a failed save cannot leave inventory reflecting an order
+        // state that was never persisted.
+        await stockService.reconcile(
+            stockService.buildTargets(order.items, previousItems, i => Number(i.stockHeld) || 0)
+        ).catch(rollbackErr => {
+            console.error(
+                `[STOCK] ⚠️ Rollback failed for order ${order.orderNumber}: ${rollbackErr.message}`
+            );
+        });
+        throw err;
+    }
 
     // Return updated order with user populated
     const updated = await Order.findById(order._id)
@@ -1448,7 +1570,15 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
 // @route   POST /api/admin/orders
 // @access  Private (admin/superuser)
 const createOrder = asyncHandler(async (req, res) => {
-    const { orderNumber, createdAt, orderStatus, paymentStatus, paymentMethod, user, shippingAddress, items, shippingCost, discount, notes } = req.body;
+    const {
+        orderNumber, createdAt, orderStatus, paymentStatus, paymentMethod,
+        user, shippingAddress, items, shippingCost, discount, notes, promoCode
+    } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+        res.status(400);
+        throw new Error('A receipt needs at least one line item');
+    }
 
     let orderUser = req.user._id;
 
@@ -1466,9 +1596,24 @@ const createOrder = asyncHandler(async (req, res) => {
         orderUser = foundUser._id;
     }
 
+    const normalisedItems = items.map(item => ({
+        product: item.product || null,
+        name: item.name || 'Product',
+        nameAr: item.nameAr || '',
+        sku: item.sku || '',
+        image: item.image || '',
+        price: Number(item.price) || 0,
+        quantity: Math.max(1, Number(item.quantity) || 1),
+        stockHeld: 0
+    }));
+
     const newOrderData = {
         user: orderUser,
         orderNumber: orderNumber || undefined, // undefined will let pre-save hook generate one
+        // Everything created here is an over-the-counter receipt, not a
+        // storefront checkout. The Orders page and revenue reports split on it.
+        orderSource: 'manual',
+        createdByAdmin: req.user._id,
         createdAt: createdAt ? new Date(createdAt) : new Date(),
         orderStatus: orderStatus || 'confirmed',
         paymentStatus: paymentStatus || 'paid',
@@ -1480,28 +1625,78 @@ const createOrder = asyncHandler(async (req, res) => {
             phone: user?.phone || '',
             fullName: user?.name || 'Guest'
         },
-        items: (items || []).map(item => ({
-            product: item.product || null,
-            name: item.name || 'Product',
-            nameAr: item.nameAr || '',
-            sku: item.sku || '',
-            price: Number(item.price) || 0,
-            quantity: Number(item.quantity) || 1
-        })),
+        items: normalisedItems,
         shippingCost: Number(shippingCost) || 0,
-        discount: Number(discount) || 0,
         notes: notes || ''
     };
 
-    newOrderData.subtotal = newOrderData.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    newOrderData.total = newOrderData.subtotal + newOrderData.shippingCost - newOrderData.discount;
-    if (newOrderData.total < 0) newOrderData.total = 0;
+    newOrderData.subtotal = normalisedItems.reduce((sum, i) => sum + (i.price * i.quantity), 0);
 
-    const order = await Order.createWithRetry(newOrderData);
+    // ── Promo code ──
+    // Priced server-side from the code, so an admin cannot key in a discount
+    // the code does not actually grant. A manual `discount` amount is still
+    // honoured when no code is attached.
+    let resolvedDiscount = Number(discount) || 0;
+
+    if (promoCode && String(promoCode).trim()) {
+        const { promoData, reason } = await promoService.buildOrderPromo(
+            promoCode,
+            normalisedItems,
+            { userId: orderUser, source: 'admin_receipt' }
+        );
+
+        if (promoData) {
+            newOrderData.promoCode = promoData;
+            resolvedDiscount = promoData.totalDiscount;
+        } else {
+            console.log(`[RECEIPT] Promo "${promoCode}" not applied: ${reason}`);
+        }
+    }
+
+    newOrderData.discount = resolvedDiscount;
+    newOrderData.total = Math.max(
+        0,
+        newOrderData.subtotal + newOrderData.shippingCost - resolvedDiscount
+    );
+
+    // ── Inventory ──
+    // Deduct before the order exists. If any line oversells, nothing is written
+    // and the admin gets a 409 naming the product.
+    const stockTargets = stockService.buildTargets(
+        [], normalisedItems, stockService.heldForLine
+    );
+    await stockService.reconcile(stockTargets);
+    normalisedItems.forEach(i => {
+        i.stockHeld = stockService.isTrackedLine(i) ? stockService.heldForLine(i) : 0;
+    });
+
+    let order;
+    try {
+        order = await Order.createWithRetry(newOrderData);
+    } catch (err) {
+        // Give the stock back — the receipt never came into existence.
+        await stockService.reconcile(
+            stockService.buildTargets(normalisedItems, [], () => 0)
+        ).catch(() => {});
+        throw err;
+    }
+
+    // A manual receipt is settled at the counter, so a promo used on it counts
+    // immediately rather than waiting for a payment callback that never comes.
+    if (order.promoCode?.promoCodeId && order.paymentStatus === 'paid') {
+        await promoService.countUsageOnce(order).catch(err => {
+            console.error('[RECEIPT] Promo usage count failed:', err.message);
+        });
+    }
 
     const populatedOrder = await Order.findById(order._id)
         .populate('user', 'name email phone language')
         .lean();
+
+    console.log(
+        `[RECEIPT] 🧾 Manual order ${order.orderNumber} created by ${req.user.email} ` +
+        `(${normalisedItems.length} line(s), ${order.total.toFixed(3)} KWD)`
+    );
 
     res.status(201).json({
         success: true,
@@ -1522,6 +1717,16 @@ const processRefund = asyncHandler(async (req, res) => {
 
     const { type, itemId } = req.body;
     let totalRefundedNow = 0;
+
+    // Baseline for the stock reconcile below — captured before any line is
+    // flagged as refunded.
+    const previousItems = order.items.map(i => ({
+        product: i.product,
+        name: i.name,
+        quantity: i.quantity,
+        isRefunded: i.isRefunded,
+        stockHeld: i.stockHeld,
+    }));
 
     if (type === 'full') {
         if (order.refundStatus === 'Full') {
@@ -1579,7 +1784,26 @@ const processRefund = asyncHandler(async (req, res) => {
     order.refundedAt = new Date();
     order.refundedBy = req.user._id;
 
-    await order.save();
+    // ── Inventory ──
+    // A refunded line is back on the shelf. `heldForLine` returns 0 for
+    // refunded items, so this restores exactly the units that line was holding
+    // and nothing more — refunding the same item twice is already blocked
+    // above, and even if it were not, the reconcile would be a no-op.
+    await stockService.syncOrderStock(order, { previousItems });
+
+    try {
+        await order.save();
+    } catch (err) {
+        await stockService.reconcile(
+            stockService.buildTargets(order.items, previousItems, i => Number(i.stockHeld) || 0)
+        ).catch(() => {});
+        throw err;
+    }
+
+    console.log(
+        `[REFUND] ↩️ Order ${order.orderNumber} — ${type} refund of ` +
+        `${totalRefundedNow.toFixed(3)} KWD by ${req.user.email}; stock restored`
+    );
 
     const updated = await Order.findById(order._id)
         .populate('user', 'name email phone language')
@@ -1588,6 +1812,53 @@ const processRefund = asyncHandler(async (req, res) => {
     res.json({
         success: true,
         data: updated
+    });
+});
+
+// @desc    Delete an order permanently (restores stock and promo usage)
+// @route   DELETE /api/admin/orders/:id
+// @access  Private/Owner
+//
+// Deliberately owner-gated at the route level as well as here: deleting an
+// order destroys an accounting record, so it is not something a regular admin
+// should be able to do even by calling the API directly.
+const deleteOrder = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    const snapshot = {
+        orderNumber: order.orderNumber,
+        total: order.total,
+        source: order.orderSource,
+    };
+
+    // Return every unit this order is still holding. Lines already refunded
+    // hold nothing, so their stock is not restored twice.
+    await stockService.releaseOrderStock(order);
+
+    // Free the promo use so a limited-run code is not consumed by an order
+    // that no longer exists.
+    if (order.promoCode?.promoCodeId) {
+        await promoService.releaseUsage(order).catch(err => {
+            console.error('[ORDER-DELETE] Promo release failed:', err.message);
+        });
+    }
+
+    await order.deleteOne();
+
+    console.warn(
+        `[ORDER-DELETE] 🗑️ Order ${snapshot.orderNumber} (${snapshot.source}, ` +
+        `${(snapshot.total || 0).toFixed(3)} KWD) deleted by owner ${req.user.email}`
+    );
+
+    res.json({
+        success: true,
+        message: `Order ${snapshot.orderNumber} deleted. Stock restored.`,
+        data: { _id: req.params.id, orderNumber: snapshot.orderNumber },
     });
 });
 
@@ -1796,6 +2067,7 @@ module.exports = {
     updateOrderReceipt,
     createOrder,
     processRefund,
+    deleteOrder,
     getSiteSettings,
     updateSiteSettings,
     getSiteVisitStats

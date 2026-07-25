@@ -29,11 +29,13 @@ const {
     updateOrderReceipt,
     createOrder,
     processRefund,
+    deleteOrder,
     getSiteSettings,
     updateSiteSettings,
     getSiteVisitStats
 } = require('../controllers/adminController');
-const { protect, admin } = require('../middleware/auth');
+const { getRevenueOverview } = require('../controllers/revenueController');
+const { protect, admin, owner } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // Site Settings (public GET for frontend, protected PUT for admin)
@@ -147,13 +149,56 @@ router.get('/whatsapp-status', protect, admin, async (req, res) => {
     }
 });
 
-// Print Agent Polling (no JWT — uses shared API key)
-const PRINT_AGENT_KEY = process.env.PRINT_AGENT_KEY || 'arteva-print-2026';
+// ═══════════════════════════════════════════════════
+// AGENT ENDPOINTS (Raspberry Pi print + WhatsApp workers)
+//
+// These carry no JWT — the devices authenticate with a shared key. That makes
+// the key the ONLY thing standing between the public internet and
+// /print-queue/poll, which returns full customer records: names, emails,
+// phone numbers and delivery addresses.
+//
+// The fallback below is a literal committed to this repository. If
+// PRINT_AGENT_KEY is unset in production, that customer data is readable by
+// anyone who has seen this file. The default is kept so an existing print
+// station does not stop working on deploy, but it is now logged loudly at
+// boot so it cannot pass unnoticed.
+// ═══════════════════════════════════════════════════
+const DEFAULT_AGENT_KEY = 'arteva-print-2026';
+const PRINT_AGENT_KEY = process.env.PRINT_AGENT_KEY || DEFAULT_AGENT_KEY;
 
-// Helper: Accept key from X-API-Key header (preferred) or query param (backward compat)
+if (PRINT_AGENT_KEY === DEFAULT_AGENT_KEY) {
+    console.warn(
+        '\n╔══════════════════════════════════════════════════════════════╗\n' +
+        '║  ⚠  SECURITY: PRINT_AGENT_KEY is not set.                     ║\n' +
+        '║                                                              ║\n' +
+        '║  The agent endpoints are running on the public default key   ║\n' +
+        '║  committed to this repository. /api/admin/print-queue/poll   ║\n' +
+        '║  exposes customer names, emails, phones and addresses to      ║\n' +
+        '║  anyone who knows it.                                        ║\n' +
+        '║                                                              ║\n' +
+        '║  Set PRINT_AGENT_KEY to a random secret on the server AND    ║\n' +
+        '║  on each Raspberry Pi agent.                                 ║\n' +
+        '╚══════════════════════════════════════════════════════════════╝\n'
+    );
+}
+
+/**
+ * Accept the key from the X-API-Key header (preferred) or a query parameter.
+ *
+ * Compared with `timingSafeEqual` rather than `===`: a plain string comparison
+ * exits at the first differing byte, which leaks the key one character at a
+ * time to an attacker who can measure response times.
+ */
 function checkAgentKey(req) {
-    const key = req.headers['x-api-key'] || req.query.key;
-    return key === PRINT_AGENT_KEY;
+    const provided = req.headers['x-api-key'] || req.query.key;
+    if (typeof provided !== 'string') return false;
+
+    const a = Buffer.from(provided);
+    const b = Buffer.from(PRINT_AGENT_KEY);
+    // timingSafeEqual throws on length mismatch, so guard first. Length alone
+    // is not a useful signal to an attacker.
+    if (a.length !== b.length) return false;
+    return require('crypto').timingSafeEqual(a, b);
 }
 
 router.get('/print-queue/poll', async (req, res) => {
@@ -300,6 +345,12 @@ router.put('/orders/:id/status', protect, admin, updateOrderStatus);
 router.put('/orders/:id/assign', protect, admin, assignDriver);
 router.put('/orders/:id/receipt', protect, admin, updateOrderReceipt);
 router.post('/orders/:id/refund', protect, admin, processRefund);
+// Owner-only: deleting an order destroys an accounting record and restores
+// stock, so it sits behind the stricter guard rather than plain `admin`.
+router.delete('/orders/:id', protect, owner, deleteOrder);
+
+// Unified revenue model (online orders + manual receipts)
+router.get('/revenue/overview', protect, owner, getRevenueOverview);
 
 // Users
 router.route('/users')

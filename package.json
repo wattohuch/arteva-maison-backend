@@ -15,7 +15,10 @@
     "backup": "node src/backup.js",
     "restore": "node src/restore.js",
     "push": "node push-to-github.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/stockService.test.js && node tests/promoService.test.js && node tests/api.smoke.test.js",
+    "test:stock": "node tests/stockService.test.js",
+    "test:promo": "node tests/promoService.test.js",
+    "test:api": "node tests/api.smoke.test.js"
   },
   "keywords": [],
   "author": "",

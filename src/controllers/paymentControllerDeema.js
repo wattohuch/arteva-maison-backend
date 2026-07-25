@@ -15,29 +15,20 @@ const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
 const deemaService = require('../services/deemaService');
+const promoService = require('../services/promoService');
 const { sendOrderConfirmation } = require('../services/emailService');
 
-// Helper: Increment promo code usage
+/**
+ * Count a promo use once payment is confirmed.
+ *
+ * Deema confirms through both a browser callback and a server webhook, so this
+ * runs twice for a single sale. `countUsageOnce` claims the count with a
+ * conditional update on the order, so only one of them succeeds.
+ */
 async function incrementPromoUsage(order) {
     if (!order.promoCode || !order.promoCode.promoCodeId || !order.user) return;
     try {
-        const userId = order.user._id || order.user;
-        const promoId = order.promoCode.promoCodeId;
-        const promo = await PromoCode.findById(promoId);
-        if (!promo) return;
-        const userUsageEntry = promo.usedBy.find(u => u.user.toString() === userId.toString());
-        if (userUsageEntry) {
-            await PromoCode.updateOne(
-                { _id: promoId, 'usedBy.user': userId },
-                { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
-            );
-        } else {
-            await PromoCode.updateOne(
-                { _id: promoId },
-                { $inc: { usageCount: 1 }, $push: { usedBy: { user: userId, count: 1 } } }
-            );
-        }
-        console.log(`[DEEMA] ✅ Promo usage counted for "${order.promoCode.code}" (order ${order.orderNumber})`);
+        await promoService.countUsageOnce(order);
     } catch (err) {
         console.error(`[DEEMA] ⚠️ Failed to increment promo usage:`, err.message);
     }
@@ -150,7 +141,7 @@ async function confirmPaidOrder(order) {
 // POST /api/payments/deema/checkout
 // ═══════════════════════════════════════════════════
 const createDeemaCheckout = asyncHandler(async (req, res) => {
-    const { shippingAddress } = req.body;
+    const { shippingAddress, promoVisitId } = req.body;
 
     if (!shippingAddress) {
         res.status(400);
@@ -182,39 +173,6 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
     let totalDiscount = 0;
     let promoCodeData = null;
 
-    // Handle promo code
-    if (req.body.promoCode) {
-        try {
-            const promo = await PromoCode.findOne({
-                code: req.body.promoCode.toUpperCase(),
-                isActive: true,
-                validFrom: { $lte: new Date() },
-                validUntil: { $gte: new Date() }
-            });
-            if (promo) {
-                if (promo.discountType === 'percentage') {
-                    totalDiscount = parseFloat((subtotal * promo.discountValue / 100).toFixed(3));
-                } else {
-                    totalDiscount = promo.discountValue;
-                }
-                if (promo.maxDiscount && totalDiscount > promo.maxDiscount) {
-                    totalDiscount = promo.maxDiscount;
-                }
-                promoCodeData = {
-                    promoCodeId: promo._id,
-                    code: promo.code,
-                    discountType: promo.discountType,
-                    discountValue: promo.discountValue,
-                    totalDiscount
-                };
-            }
-        } catch (e) {
-            console.warn('[DEEMA] Promo code lookup failed:', e.message);
-        }
-    }
-
-    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
-
     const cartItems = cart.items.map(item => ({
         product: item.product._id,
         name: item.product.name,
@@ -223,6 +181,33 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
         quantity: item.quantity,
         image: item.product.images[0]?.url
     }));
+
+    // ── Promo code ──
+    // Priced by the shared calculator, the same one used by MyFatoorah
+    // checkout and by /promo-codes/validate. The previous implementation here
+    // queried fields this PromoCode schema does not have (`validFrom`,
+    // `validUntil`, a top-level `discountType`/`discountValue`), so the lookup
+    // never matched and promo codes silently did nothing on Deema orders.
+    if (req.body.promoCode) {
+        try {
+            const result = await promoService.buildOrderPromo(req.body.promoCode, cartItems, {
+                userId: req.user._id,
+                source: promoVisitId ? 'link' : 'manual_entry',
+                visitId: promoVisitId,
+            });
+            if (result.promoData) {
+                promoCodeData = result.promoData;
+                totalDiscount = promoCodeData.totalDiscount;
+            } else {
+                console.log(`[DEEMA] Promo "${req.body.promoCode}" not applied: ${result.reason}`);
+            }
+        } catch (e) {
+            // A promo failure must not cost the sale — proceed at full price.
+            console.warn('[DEEMA] Promo code lookup failed:', e.message);
+        }
+    }
+
+    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
 
     // ── DEDUP: Reuse existing pending Deema order for this user ──
     let order = await Order.findOne({

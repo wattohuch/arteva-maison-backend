@@ -186,11 +186,18 @@ app.use('/api/orders', apiLimiter, require('./routes/orders'));
 app.use('/api/payments', paymentLimiter, require('./routes/payments'));
 app.use('/api/contact', apiLimiter, require('./routes/contact'));
 app.use('/api/delivery', apiLimiter, require('./routes/delivery'));
+// Mounted ahead of the general /api/admin router so the promo-code paths are
+// resolved by their own router rather than falling through it.
+app.use('/api/admin/promo-codes', apiLimiter, require('./routes/promoCodes'));
 app.use('/api/admin', apiLimiter, require('./routes/admin'));
 app.use('/api/driver', apiLimiter, require('./routes/driver'));
 app.use('/api/images', apiLimiter, require('./routes/images'));
 app.use('/api/hero', apiLimiter, require('./routes/hero'));
 app.use('/api/push', apiLimiter, require('./routes/pushRoutes'));
+// Same router is also mounted at /api/admin/promo-codes above — one set of
+// handlers and one set of guards, addressable from either prefix. The
+// admin-only endpoints carry `admin` middleware inside the router, so the
+// alias grants no extra access.
 app.use('/api/promo-codes', apiLimiter, require('./routes/promoCodes'));
 app.use('/api/whatsapp', apiLimiter, require('./routes/whatsapp'));
 

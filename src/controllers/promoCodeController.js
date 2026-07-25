@@ -1,6 +1,8 @@
 const PromoCode = require('../models/PromoCode');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const PromoVisit = require('../models/PromoVisit');
+const promoService = require('../services/promoService');
 const { asyncHandler } = require('../middleware/error');
 
 // @desc    Create a new promo code
@@ -97,6 +99,36 @@ const getPromoCodeStats = asyncHandler(async (req, res) => {
 
     const totalDiscountGiven = orders.reduce((sum, o) => sum + (o.promoCode?.totalDiscount || 0), 0);
 
+    // Visitor funnel for this code
+    const [visitStats] = await PromoVisit.aggregate([
+        { $match: { promoCodeId: promoCode._id } },
+        {
+            $group: {
+                _id: null,
+                visits: { $sum: 1 },
+                uniqueVisitors: { $addToSet: '$visitorId' },
+                conversions: { $sum: { $cond: ['$converted', 1, 0] } },
+            }
+        },
+    ]);
+
+    const uniqueVisitors = visitStats ? visitStats.uniqueVisitors.length : 0;
+
+    // Daily visit trend (last 30 days) so a code's traffic curve is visible
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const dailyVisits = await PromoVisit.aggregate([
+        { $match: { promoCodeId: promoCode._id, createdAt: { $gte: thirtyDaysAgo } } },
+        {
+            $group: {
+                _id: '$date',
+                visitors: { $addToSet: '$visitorId' },
+                conversions: { $sum: { $cond: ['$converted', 1, 0] } },
+            }
+        },
+        { $sort: { _id: 1 } },
+    ]);
+
     res.json({
         success: true,
         data: {
@@ -105,8 +137,19 @@ const getPromoCodeStats = asyncHandler(async (req, res) => {
                 totalOrders: orders.length,
                 totalRevenue: parseFloat(totalRevenue.toFixed(3)),
                 totalDiscountGiven: parseFloat(totalDiscountGiven.toFixed(3)),
-                uniqueUsers: promoCode.usedBy.length
+                uniqueUsers: promoCode.usedBy.length,
+                visits: visitStats ? visitStats.visits : 0,
+                uniqueVisitors,
+                conversions: visitStats ? visitStats.conversions : 0,
+                conversionRate: uniqueVisitors > 0
+                    ? parseFloat(((orders.length / uniqueVisitors) * 100).toFixed(1))
+                    : 0,
             },
+            dailyVisits: dailyVisits.map(d => ({
+                date: d._id,
+                visitors: d.visitors.length,
+                conversions: d.conversions,
+            })),
             recentOrders: orders
         }
     });
@@ -282,77 +325,161 @@ const validatePromoCode = asyncHandler(async (req, res) => {
     const { code, cartItems } = req.body;
     // cartItems: [{ product: ObjectId, quantity: Number, price: Number }]
 
-    if (!code) {
-        res.status(400);
-        throw new Error('Promo code is required');
-    }
-
-    const promoCode = await PromoCode.findOne({ code: code.toUpperCase().trim() })
-        .populate('products.product', 'name nameAr price');
-
-    if (!promoCode) {
-        res.status(404);
-        throw new Error('Invalid promo code');
-    }
-
-    // Check validity including per-user limit
     const userId = req.user ? req.user._id : null;
-    const validity = promoCode.canUserUse(userId);
-    if (!validity.valid) {
-        res.status(400);
-        throw new Error(validity.reason);
+    const resolved = await promoService.resolveForUser(code, userId);
+
+    if (!resolved.ok) {
+        res.status(resolved.reason === 'Invalid promo code' ? 404 : 400);
+        throw new Error(resolved.reason);
     }
 
-    // Calculate discounts for cart items
-    const discounts = [];
-    let totalDiscount = 0;
+    const { promo } = resolved;
 
-    if (cartItems && Array.isArray(cartItems)) {
-        for (const cartItem of cartItems) {
-            const promoProduct = promoCode.products.find(
-                p => p.product._id.toString() === cartItem.product.toString()
-            );
-
-            if (promoProduct) {
-                let discount = 0;
-                if (promoProduct.discountType === 'percentage') {
-                    discount = (cartItem.price * promoProduct.discountValue / 100) * cartItem.quantity;
-                } else {
-                    // Fixed discount per unit
-                    discount = promoProduct.discountValue * cartItem.quantity;
-                }
-
-                // Ensure discount doesn't exceed item total
-                const itemTotal = cartItem.price * cartItem.quantity;
-                discount = Math.min(discount, itemTotal);
-
-                discounts.push({
-                    product: cartItem.product,
-                    productName: promoProduct.product.name,
-                    originalPrice: cartItem.price,
-                    discountType: promoProduct.discountType,
-                    discountValue: promoProduct.discountValue,
-                    quantity: cartItem.quantity,
-                    discountAmount: parseFloat(discount.toFixed(3))
-                });
-
-                totalDiscount += discount;
-            }
-        }
-    }
+    // Same calculator the payment path uses, so the quoted saving is exactly
+    // what the shopper will be charged.
+    const { discounts, totalDiscount, matchedProducts, discountedUnits } =
+        promoService.calculateDiscount(promo, Array.isArray(cartItems) ? cartItems : []);
 
     res.json({
         success: true,
         data: {
-            code: promoCode.code,
-            name: promoCode.name,
-            promoCodeId: promoCode._id,
+            code: promo.code,
+            name: promo.name,
+            promoCodeId: promo._id,
             valid: true,
             discounts,
-            totalDiscount: parseFloat(totalDiscount.toFixed(3)),
-            applicableProducts: promoCode.products.length,
-            matchedProducts: discounts.length
+            totalDiscount,
+            discountedUnits,
+            applicableProducts: promo.products.length,
+            matchedProducts
         }
+    });
+});
+
+// @desc    Record a visitor arriving with a promo code (link or manual entry)
+// @route   POST /api/promo-codes/track-visit
+// @access  Public (optionalAuth)
+const trackPromoVisit = asyncHandler(async (req, res) => {
+    const { code, visitorId, referrer, landingPage, source } = req.body;
+
+    if (!code || !visitorId) {
+        res.status(400);
+        throw new Error('code and visitorId are required');
+    }
+
+    const visit = await promoService.recordVisit({
+        code,
+        visitorId: String(visitorId).slice(0, 64),
+        ip: req.ip || req.headers['x-forwarded-for'] || '',
+        userAgent: req.headers['user-agent'] || '',
+        referrer,
+        landingPage,
+        source,
+        userId: req.user?._id,
+    });
+
+    // An unknown code is not an error for the client — tracking must never
+    // interrupt a page load — but nothing is recorded.
+    res.json({
+        success: true,
+        data: visit ? { visitId: visit._id, code: visit.code } : null,
+    });
+});
+
+// @desc    Visitor / conversion analytics for every promo code
+// @route   GET /api/admin/promo-codes/analytics
+// @access  Private/Admin
+const getPromoAnalytics = asyncHandler(async (req, res) => {
+    const { from, to } = req.query;
+
+    const range = {};
+    if (from) range.$gte = new Date(from);
+    if (to) {
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+        range.$lte = end;
+    }
+    const dateFilter = Object.keys(range).length ? { createdAt: range } : {};
+
+    const [visitAgg, orderAgg, codes] = await Promise.all([
+        PromoVisit.aggregate([
+            { $match: dateFilter },
+            {
+                $group: {
+                    _id: '$promoCodeId',
+                    visits: { $sum: 1 },
+                    uniqueVisitors: { $addToSet: '$visitorId' },
+                    conversions: { $sum: { $cond: ['$converted', 1, 0] } },
+                    attributedRevenue: { $sum: { $cond: ['$converted', '$orderTotal', 0] } },
+                }
+            },
+        ]),
+        // Orders are the authoritative revenue figure; visits only cover
+        // shoppers who arrived through a tracked link.
+        Order.aggregate([
+            {
+                $match: {
+                    'promoCode.promoCodeId': { $ne: null },
+                    paymentStatus: 'paid',
+                    ...dateFilter,
+                }
+            },
+            {
+                $group: {
+                    _id: '$promoCode.promoCodeId',
+                    orders: { $sum: 1 },
+                    revenue: { $sum: '$total' },
+                    discountGiven: { $sum: '$promoCode.totalDiscount' },
+                    refunded: { $sum: '$refundAmount' },
+                }
+            },
+        ]),
+        PromoCode.find({}).select('code name isActive expiresAt usageCount maxUsage').lean(),
+    ]);
+
+    const visitsById = new Map(visitAgg.map(v => [String(v._id), v]));
+    const ordersById = new Map(orderAgg.map(o => [String(o._id), o]));
+
+    const rows = codes.map(c => {
+        const v = visitsById.get(String(c._id));
+        const o = ordersById.get(String(c._id));
+        const uniqueVisitors = v ? v.uniqueVisitors.length : 0;
+        const orders = o ? o.orders : 0;
+        return {
+            _id: c._id,
+            code: c.code,
+            name: c.name,
+            isActive: c.isActive,
+            expiresAt: c.expiresAt,
+            usageCount: c.usageCount,
+            maxUsage: c.maxUsage,
+            visits: v ? v.visits : 0,
+            uniqueVisitors,
+            orders,
+            // Conversion is orders per unique visitor who arrived on the code.
+            conversionRate: uniqueVisitors > 0
+                ? parseFloat(((orders / uniqueVisitors) * 100).toFixed(1))
+                : 0,
+            revenue: promoService.round3(o ? o.revenue : 0),
+            netRevenue: promoService.round3(o ? o.revenue - (o.refunded || 0) : 0),
+            discountGiven: promoService.round3(o ? o.discountGiven : 0),
+        };
+    });
+
+    rows.sort((a, b) => b.revenue - a.revenue || b.visits - a.visits);
+
+    res.json({
+        success: true,
+        data: {
+            codes: rows,
+            totals: {
+                visits: rows.reduce((s, r) => s + r.visits, 0),
+                uniqueVisitors: rows.reduce((s, r) => s + r.uniqueVisitors, 0),
+                orders: rows.reduce((s, r) => s + r.orders, 0),
+                revenue: promoService.round3(rows.reduce((s, r) => s + r.revenue, 0)),
+                discountGiven: promoService.round3(rows.reduce((s, r) => s + r.discountGiven, 0)),
+            },
+        },
     });
 });
 
@@ -365,5 +492,7 @@ module.exports = {
     deletePromoCode,
     addProductsToPromo,
     removeProductFromPromo,
-    validatePromoCode
+    validatePromoCode,
+    trackPromoVisit,
+    getPromoAnalytics
 };

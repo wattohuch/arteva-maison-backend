@@ -9,12 +9,23 @@ const {
     deletePromoCode,
     addProductsToPromo,
     removeProductFromPromo,
-    validatePromoCode
+    validatePromoCode,
+    trackPromoVisit,
+    getPromoAnalytics
 } = require('../controllers/promoCodeController');
-const { protect, admin } = require('../middleware/auth');
+const { protect, admin, optionalAuth } = require('../middleware/auth');
 
 // Public validation endpoint (requires login)
 router.post('/validate', protect, validatePromoCode);
+
+// Visit tracking — fires on page load for anyone arriving with a code, so it
+// must work for logged-out visitors. optionalAuth attaches the user when there
+// is one without rejecting when there is not.
+router.post('/track-visit', optionalAuth, trackPromoVisit);
+
+// Cross-code visitor/conversion analytics. Declared before '/:id' so the
+// literal path is not swallowed by the id param.
+router.get('/analytics', protect, admin, getPromoAnalytics);
 
 // Admin CRUD routes
 router.route('/')

@@ -7,7 +7,8 @@ const {
     verifyPayment,
     handlePaymentCallback,
     handleWebhook,
-    processCOD
+    processCOD,
+    initApplePaySession
 } = require('../controllers/paymentControllerMyFatoorah');
 const {
     createDeemaCheckout,
@@ -26,6 +27,11 @@ router.post('/webhook', handleWebhook);
 router.post('/create-session', protect, createPaymentSession);
 router.post('/execute', protect, executePayment);
 router.post('/cod', protect, processCOD);
+
+// Apple Pay — merchant validation happens server-side because it needs the
+// MyFatoorah secret key. Payment itself still settles through /execute and is
+// confirmed by the same callback/webhook verification as every other method.
+router.post('/applepay/session', protect, initApplePaySession);
 
 // ── Deema BNPL routes ──
 router.post('/deema/checkout', protect, createDeemaCheckout);

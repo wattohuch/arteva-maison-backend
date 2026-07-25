@@ -404,6 +404,87 @@ class MyFatoorahService {
     }
 
     /**
+     * Resolve the Apple Pay payment method for a given amount.
+     *
+     * The id was previously hardcoded to 20. MyFatoorah assigns method ids per
+     * merchant account and per currency, so a hardcoded id silently sends
+     * shoppers to the wrong method (or a 'method not available' error) on any
+     * account where it differs. Asking InitiatePayment is the only reliable
+     * way to know, and it doubles as an availability check: if Apple Pay is not
+     * enabled on the account, it simply is not in the list.
+     *
+     * @returns {Promise<{ available: boolean, methodId: number|null, reason?: string }>}
+     */
+    async getApplePayMethod(amount = 1) {
+        try {
+            const { methods } = await this.getPaymentMethods(amount);
+            const applePay = methods.find(m =>
+                /apple\s*pay/i.test(m.name || '') || (m.code || '').toLowerCase() === 'ap'
+            );
+
+            if (!applePay) {
+                return {
+                    available: false,
+                    methodId: null,
+                    reason: 'APPLE_PAY_NOT_ENABLED',
+                };
+            }
+
+            return {
+                available: true,
+                methodId: applePay.id,
+                isDirectPayment: applePay.isDirectPayment,
+            };
+        } catch (error) {
+            // Availability is advisory — a gateway blip should hide the button,
+            // not blow up the checkout page.
+            console.error('[MYFATOORAH] getApplePayMethod failed:', error.message);
+            return {
+                available: false,
+                methodId: null,
+                reason: error.code || 'PAYMENT_GATEWAY_UNREACHABLE',
+            };
+        }
+    }
+
+    /**
+     * Open an embedded payment session.
+     *
+     * Required for the in-page Apple Pay sheet (MyFatoorah's embedded SDK):
+     * the returned SessionId is what authorises the browser to raise the Apple
+     * Pay sheet against the merchant's registered domain. Without a session the
+     * only route is the hosted redirect page.
+     */
+    async initiateSession(customerIdentifier) {
+        this.assertConfigured('initiateSession');
+        try {
+            const response = await axios.post(
+                `${this.baseUrl}/v2/InitiateSession`,
+                customerIdentifier ? { CustomerIdentifier: String(customerIdentifier) } : {},
+                { headers: this.headers, timeout: this.timeout }
+            );
+
+            if (!response.data?.IsSuccess || !response.data?.Data?.SessionId) {
+                throw ApiError.badGateway(
+                    'PAYMENT_SESSION_UNAVAILABLE',
+                    response.data?.Message || 'Failed to open a payment session',
+                    { operation: 'initiateSession' }
+                );
+            }
+
+            return {
+                success: true,
+                sessionId: response.data.Data.SessionId,
+                countryCode: response.data.Data.CountryCode,
+            };
+        } catch (error) {
+            if (error instanceof ApiError) throw error;
+            console.error('[MYFATOORAH] initiateSession failed:', error.response?.data || error.message);
+            throw toApiError(error, 'initiateSession');
+        }
+    }
+
+    /**
      * Refund payment
      * NOTE: This initiates a refund request in MyFatoorah.
      * Refunds typically require MANUAL APPROVAL in MyFatoorah merchant dashboard.
