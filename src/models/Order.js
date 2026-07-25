@@ -17,6 +17,10 @@ const orderItemSchema = new mongoose.Schema({
     refundAmount: { type: Number, default: 0 },
     refundedAt: Date,
     refundedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    isExchanged: { type: Boolean, default: false },
+    oldName: { type: String },
+    oldPrice: { type: Number },
+    exchangeDiff: { type: Number },
     /**
      * How many units this line has actually taken out of Product.stock.
      * Every stock mutation reconciles against this number rather than against

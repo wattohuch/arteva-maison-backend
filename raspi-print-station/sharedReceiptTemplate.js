@@ -94,12 +94,34 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
     }
 
     const refundedBadge = it.isRefunded ? ' <span style="color:#ef4444;font-size:9px;font-weight:700;border:1px solid #ef4444;padding:1px 3px;border-radius:3px;margin-left:4px;">REFUNDED</span>' : '';
+    const exchangedBadge = (it.isExchanged || it.oldName) ? ' <span style="color:#2563eb;font-size:9px;font-weight:700;border:1px solid #2563eb;padding:1px 3px;border-radius:3px;margin-left:4px;">EXCHANGED</span>' : '';
+
+    let exchangeDetailsHTML = '';
+    if (it.isExchanged || it.oldName) {
+      const oldN = escapeHTML(it.oldName || 'Original Item');
+      const oldP = safeFixed(it.oldPrice || 0);
+      const diff = parseFloat(it.exchangeDiff) || 0;
+      let diffLabel = '';
+      if (diff > 0) {
+        diffLabel = `<span style="color:#059669;font-weight:700;display:block;margin-top:2px;">Paid Extra: +${safeFixed(diff)} KWD</span>`;
+      } else if (diff < 0) {
+        diffLabel = `<span style="color:#dc2626;font-weight:700;display:block;margin-top:2px;">Refunded Amount: -${safeFixed(Math.abs(diff))} KWD</span>`;
+      } else {
+        diffLabel = `<span style="color:#4b5563;font-weight:600;display:block;margin-top:2px;">Even Exchange (0.000 KWD)</span>`;
+      }
+      exchangeDetailsHTML = `<div style="font-size:10px;color:#2563eb;margin-top:3px;background:#eff6ff;padding:3px 6px;border-radius:4px;border:1px solid #bfdbfe;">
+        <div><strong>Original (Old):</strong> ${oldN} (${oldP} KWD)</div>
+        <div><strong>Replacement (New):</strong> ${name} (${price} KWD)</div>
+        ${diffLabel}
+      </div>`;
+    }
 
     return `<tr>
       <td class="sku-col">${sku}</td>
       <td>
-        <div style="font-weight:500; display:flex; align-items:center; flex-wrap:wrap;">${name}${refundedBadge}</div>
+        <div style="font-weight:500; display:flex; align-items:center; flex-wrap:wrap;">${name}${refundedBadge}${exchangedBadge}</div>
         ${nameAr ? '<div style="font-size:10px;color:#888;font-family:var(--font-arabic);direction:rtl">' + nameAr + '</div>' : ''}
+        ${exchangeDetailsHTML}
       </td>
       <td>${priceCell}</td>
       <td style="text-align:center">${qty}</td>
