@@ -1,4 +1,7 @@
 const { asyncHandler } = require('../middleware/error');
+const ApiError = require('../utils/ApiError');
+const frontendUrls = require('../utils/frontendUrls');
+const { getMyFatoorahStatus, getDeemaStatus } = require('../config/paymentConfig');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
@@ -6,6 +9,53 @@ const PromoCode = require('../models/PromoCode');
 const myfatoorah = require('../services/myfatoorahService');
 const { sendOrderConfirmation } = require('../services/emailService');
 const { WhatsAppService } = require('../services/whatsappService');
+
+/**
+ * Validates a shipping address coming off the wire.
+ * Returns an array of `{field, message}`; empty means valid.
+ */
+function validateShippingAddress(address) {
+    const errors = [];
+    if (!address || typeof address !== 'object') {
+        return [{ field: 'shippingAddress', message: 'Shipping address is required' }];
+    }
+
+    const str = (v) => (typeof v === 'string' ? v.trim() : '');
+
+    if (!str(address.street)) errors.push({ field: 'street', message: 'Street address is required' });
+    if (!str(address.city)) errors.push({ field: 'city', message: 'City is required' });
+
+    const phone = str(address.phone).replace(/[^\d+]/g, '');
+    if (!phone) {
+        errors.push({ field: 'phone', message: 'Phone number is required' });
+    } else if (phone.replace(/\D/g, '').length < 8) {
+        errors.push({ field: 'phone', message: 'Phone number is too short' });
+    }
+
+    if (address.coordinates != null) {
+        const { lat, lng } = address.coordinates;
+        const validLat = typeof lat === 'number' && Number.isFinite(lat) && lat >= -90 && lat <= 90;
+        const validLng = typeof lng === 'number' && Number.isFinite(lng) && lng >= -180 && lng <= 180;
+        if (!validLat || !validLng) {
+            // Bad coordinates should never block an order — drop them and continue.
+            delete address.coordinates;
+        }
+    }
+
+    return errors;
+}
+
+/** Throws a 400 VALIDATION_ERROR when the address is unusable. */
+function assertValidAddress(address) {
+    const errors = validateShippingAddress(address);
+    if (errors.length) {
+        throw ApiError.badRequest(
+            'VALIDATION_ERROR',
+            errors.map(e => e.message).join(', '),
+            errors
+        );
+    }
+}
 
 // Helper: Increment promo code usage AFTER payment is confirmed
 // This ensures usage is only counted for orders that actually paid
@@ -41,13 +91,59 @@ async function incrementPromoUsage(order) {
 // @desc    Get available payment methods
 // @route   GET /api/payments/methods
 // @access  Public
+//
+// This endpoint used to 500 whenever MyFatoorah was unreachable or the API key
+// was invalid, which took the whole checkout page down with it. Availability of
+// an optional gateway is not a server fault, so it now always answers 200 with
+// an explicit `gateways` block describing what the shopper can actually use.
+// Cash on delivery is not offered by ARTÉVA and is never advertised here.
 const getPaymentMethods = asyncHandler(async (req, res) => {
-    const amount = req.query.amount || 1;
-    const methods = await myfatoorah.getPaymentMethods(amount);
+    const parsed = Number(req.query.amount);
+    const amount = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+
+    const mfStatus = getMyFatoorahStatus();
+    const deemaStatus = getDeemaStatus();
+
+    // `reason` is a stable client-facing code, never the raw config message —
+    // that names environment variables and stays in the server log.
+    const gateways = {
+        myfatoorah: { available: false, reason: 'PAYMENT_GATEWAY_UNAVAILABLE' },
+        deema: {
+            available: deemaStatus.configured,
+            reason: deemaStatus.configured ? null : 'PAYMENT_GATEWAY_UNAVAILABLE',
+        },
+    };
+
+    let methods = [];
+
+    if (mfStatus.configured) {
+        try {
+            const result = await myfatoorah.getPaymentMethods(amount);
+            methods = result.methods || [];
+            gateways.myfatoorah = { available: true, reason: null };
+        } catch (err) {
+            // Degrade instead of failing: log for the operator and tell the
+            // client the gateway is down so checkout can say so plainly.
+            console.error(
+                `[PAYMENTS] [${req.id || '-'}] Payment methods unavailable ` +
+                `(${err.code || 'UNKNOWN'}): ${err.message}`
+            );
+            gateways.myfatoorah = {
+                available: false,
+                reason: err.code || 'PAYMENT_GATEWAY_ERROR',
+            };
+        }
+    } else {
+        console.error(
+            `[PAYMENTS] [${req.id || '-'}] MyFatoorah not configured — ${mfStatus.reason}`
+        );
+        gateways.myfatoorah = { available: false, reason: 'PAYMENT_GATEWAY_UNAVAILABLE' };
+    }
 
     res.json({
         success: true,
-        data: methods.methods || []
+        data: methods,
+        gateways,
     });
 });
 
@@ -57,18 +153,32 @@ const getPaymentMethods = asyncHandler(async (req, res) => {
 const createPaymentSession = asyncHandler(async (req, res) => {
     const { paymentMethod, shippingAddress } = req.body;
 
-    // Normalize phone before processing
-    if (shippingAddress && shippingAddress.phone) {
-        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
-        console.log(`[PAYMENT-SESSION] Normalized phone: ${shippingAddress.phone}`);
+    const mfStatus = getMyFatoorahStatus();
+    if (!mfStatus.configured) {
+        // The reason names an env var, so it stays server-side only.
+        console.error(`[PAYMENTS] [${req.id || '-'}] Gateway unusable — ${mfStatus.reason}`);
+        throw ApiError.unavailable(
+            'PAYMENT_GATEWAY_UNAVAILABLE',
+            'Online payments are temporarily unavailable. Please try again shortly.'
+        );
     }
+
+    assertValidAddress(shippingAddress);
+    shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
 
     if (!cart || cart.items.length === 0) {
-        res.status(400);
-        throw new Error('Cart is empty');
+        throw ApiError.badRequest('CART_EMPTY', 'Your cart is empty.');
+    }
+
+    cart.items = cart.items.filter(i => i.product);
+    if (cart.items.length === 0) {
+        throw ApiError.badRequest(
+            'CART_ITEMS_UNAVAILABLE',
+            'The items in your cart are no longer available.'
+        );
     }
 
     // Calculate totals
@@ -142,37 +252,67 @@ const createPaymentSession = asyncHandler(async (req, res) => {
 const executePayment = asyncHandler(async (req, res) => {
     const { paymentMethodId, shippingAddress, promoCode: promoCodeStr } = req.body;
 
-    // Validate paymentMethodId — must be a positive integer
-    // The frontend dynamically detects valid IDs from MyFatoorah's InitiatePayment API,
-    // so we accept any positive integer here rather than hardcoding a whitelist
-    const methodId = parseInt(paymentMethodId);
-    if (!methodId || methodId < 1) {
-        res.status(400);
-        throw new Error(`Invalid payment method: ${paymentMethodId}`);
+    // ── Fail fast when the gateway cannot be used at all ──
+    // Previously this reached MyFatoorah with a placeholder key, got a 401, and
+    // surfaced as an opaque 500 after burning the full request timeout.
+    const mfStatus = getMyFatoorahStatus();
+    if (!mfStatus.configured) {
+        // The reason names an env var, so it stays server-side only.
+        console.error(`[PAYMENTS] [${req.id || '-'}] Gateway unusable — ${mfStatus.reason}`);
+        throw ApiError.unavailable(
+            'PAYMENT_GATEWAY_UNAVAILABLE',
+            'Online payments are temporarily unavailable. Please try again shortly.'
+        );
+    }
+
+    // ── Validate input ──
+    // The frontend resolves real IDs from MyFatoorah's InitiatePayment response,
+    // so any positive integer is accepted rather than a hardcoded whitelist.
+    const methodId = Number.parseInt(paymentMethodId, 10);
+    if (!Number.isInteger(methodId) || methodId < 1) {
+        throw ApiError.badRequest(
+            'INVALID_PAYMENT_METHOD',
+            'A valid payment method must be selected.',
+            [{ field: 'paymentMethodId', message: `Received: ${JSON.stringify(paymentMethodId)}` }]
+        );
+    }
+
+    assertValidAddress(shippingAddress);
+
+    if (promoCodeStr != null && typeof promoCodeStr !== 'string') {
+        throw ApiError.badRequest('INVALID_PROMO_CODE', 'Promo code must be text.');
     }
 
     // Normalize phone before processing
-    if (shippingAddress && shippingAddress.phone) {
-        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
-    }
+    shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
 
-    console.log('=== EXECUTE PAYMENT REQUEST ===');
-    console.log('Payment Method ID:', paymentMethodId);
-    console.log('Shipping Phone (normalized):', shippingAddress?.phone);
-    console.log('User:', req.user.email);
-
-    // paymentMethodId: 1=KNET, 2=VISA/Master, 20=Apple Pay
+    console.log(
+        `[PAYMENTS] [${req.id || '-'}] execute method=${methodId} user=${req.user.email}`
+    );
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
 
     if (!cart || cart.items.length === 0) {
-        console.error('Cart is empty for user:', req.user.email);
-        res.status(400);
-        throw new Error('Cart is empty');
+        throw ApiError.badRequest('CART_EMPTY', 'Your cart is empty.');
     }
 
-    console.log('Cart items:', cart.items.length);
+    // A product deleted between add-to-cart and checkout leaves a null populate,
+    // which used to throw a TypeError deep inside the subtotal reduce → 500.
+    const invalidItems = cart.items.filter(i => !i.product);
+    if (invalidItems.length) {
+        cart.items = cart.items.filter(i => i.product);
+        await cart.save();
+        if (cart.items.length === 0) {
+            throw ApiError.badRequest(
+                'CART_ITEMS_UNAVAILABLE',
+                'The items in your cart are no longer available.'
+            );
+        }
+        console.warn(
+            `[PAYMENTS] [${req.id || '-'}] Dropped ${invalidItems.length} unavailable cart item(s)`
+        );
+    }
 
     // Calculate totals
     const subtotal = cart.items.reduce((sum, item) => {
@@ -324,14 +464,9 @@ const executePayment = asyncHandler(async (req, res) => {
         }))
     };
 
-    console.log('Calling MyFatoorah executePayment...');
-
     try {
         const payment = await myfatoorah.executePayment(paymentData, totalDiscount);
 
-        console.log('MyFatoorah response:', JSON.stringify(payment, null, 2));
-
-        // Update order
         order.myfatoorahInvoiceId = payment.invoiceId;
         await order.save();
 
@@ -347,23 +482,26 @@ const executePayment = asyncHandler(async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('=== PAYMENT EXECUTION FAILED ===');
-        console.error('Error message:', error.message);
-        console.error('Error stack:', error.stack);
+        // Mark the orphaned order, then re-throw so the central handler emits the
+        // typed status the service already classified (503/502/504) instead of the
+        // blanket 500 this used to return for every failure mode.
+        try {
+            order.paymentStatus = 'failed';
+            order.orderStatus = 'cancelled';
+            order.notes = `Payment execution failed: ${error.message}`;
+            await order.save();
+            console.error(
+                `[PAYMENTS] [${req.id || '-'}] Order ${order.orderNumber} marked failed — ` +
+                `${error.code || 'UNKNOWN'}: ${error.message}`
+            );
+        } catch (saveErr) {
+            console.error(
+                `[PAYMENTS] [${req.id || '-'}] Could not mark order ${order.orderNumber} failed:`,
+                saveErr.message
+            );
+        }
 
-        // Payment execution failed — mark the orphaned order
-        order.paymentStatus = 'failed';
-        order.orderStatus = 'cancelled';
-        order.notes = `Payment execution failed: ${error.message}`;
-        await order.save();
-        console.log(`[PAYMENT] Order ${order.orderNumber} marked as failed`);
-
-        // Return detailed error to frontend for debugging
-        res.status(500).json({
-            success: false,
-            message: error.message || 'Payment execution failed',
-            error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
+        throw error;
     }
 });
 
@@ -667,20 +805,39 @@ const handleWebhook = asyncHandler(async (req, res) => {
 // @route   POST /api/payments/cod
 // @access  Private
 const processCOD = asyncHandler(async (req, res) => {
-    const { shippingAddress } = req.body;
+    // Cash on delivery was retired as a payment option. The route stays mounted
+    // so older clients get a clear, typed refusal instead of a 404, but no new
+    // COD order is ever created.
+    throw ApiError.badRequest(
+        'PAYMENT_METHOD_NOT_OFFERED',
+        'Cash on delivery is no longer available. Please pay by card, KNET or Deema.'
+    );
 
-    // Normalize phone before processing
-    if (shippingAddress && shippingAddress.phone) {
-        shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
-        console.log(`[COD] Normalized phone: ${shippingAddress.phone}`);
-    }
+    /* eslint-disable no-unreachable */
+    const { shippingAddress, notes } = req.body;
+
+    assertValidAddress(shippingAddress);
+    shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
 
     // Get user's cart
     const cart = await Cart.findOne({ user: req.user._id }).populate('items.product');
 
     if (!cart || cart.items.length === 0) {
-        res.status(400);
-        throw new Error('Cart is empty');
+        throw ApiError.badRequest('CART_EMPTY', 'Your cart is empty.');
+    }
+
+    // Drop items whose product no longer exists (deleted mid-session)
+    const before = cart.items.length;
+    cart.items = cart.items.filter(i => i.product);
+    if (cart.items.length !== before) {
+        await cart.save();
+        console.warn(`[COD] [${req.id || '-'}] Dropped ${before - cart.items.length} unavailable item(s)`);
+    }
+    if (cart.items.length === 0) {
+        throw ApiError.badRequest(
+            'CART_ITEMS_UNAVAILABLE',
+            'The items in your cart are no longer available.'
+        );
     }
 
     // Calculate totals
@@ -708,7 +865,8 @@ const processCOD = asyncHandler(async (req, res) => {
         orderStatus: 'confirmed',
         subtotal,
         shippingCost,
-        total
+        total,
+        notes: typeof notes === 'string' ? notes.slice(0, 1000) : undefined
     });
 
     // Update stock
@@ -718,20 +876,27 @@ const processCOD = asyncHandler(async (req, res) => {
         });
     }
 
-    // Send confirmation email (don't fail order if email fails)
+    // Send confirmation email (never fail the order because email failed)
     try {
         await sendOrderConfirmation(order, req.user);
     } catch (emailErr) {
-        console.error('COD email send failed:', emailErr.message);
+        console.error(`[COD] [${req.id || '-'}] Email send failed:`, emailErr.message);
     }
 
-    // Send WhatsApp notifications (owner + customer)
+    // WhatsApp notifications — fire and forget so a slow provider cannot stall
+    // the response or, worse, reject an order that is already committed.
     try {
         const whatsapp = require('../services/whatsappService');
-        await whatsapp.notifyOwnerNewOrder(order, req.user);
-        await whatsapp.notifyCustomerNewOrder(order, req.user);
+        Promise.allSettled([
+            whatsapp.notifyOwnerNewOrder(order, req.user),
+            whatsapp.notifyCustomerNewOrder(order, req.user),
+        ]).then(results => {
+            results.filter(r => r.status === 'rejected').forEach(r =>
+                console.error(`[COD] WhatsApp notification failed:`, r.reason?.message || r.reason)
+            );
+        });
     } catch (whatsappErr) {
-        console.error('WhatsApp notification error:', whatsappErr);
+        console.error(`[COD] [${req.id || '-'}] WhatsApp dispatch error:`, whatsappErr.message);
     }
 
     // Clear cart
@@ -745,6 +910,7 @@ const processCOD = asyncHandler(async (req, res) => {
             orderId: order._id
         }
     });
+    /* eslint-enable no-unreachable */
 });
 
 // Helper function
@@ -769,7 +935,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
     console.log('Query params:', req.query);
 
     if (!idToVerify) {
-        return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=missing_payment_id`);
+        return res.redirect(frontendUrls.paymentError({ error: 'missing_payment_id' }));
     }
 
     try {
@@ -782,7 +948,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
 
         if (!order) {
             console.error('Order not found:', paymentStatus.orderId);
-            return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=order_not_found`);
+            return res.redirect(frontendUrls.paymentError({ error: 'order_not_found' }));
         }
 
         // Handle based on payment status
@@ -790,7 +956,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
             // Idempotency check
             if (order.paymentStatus === 'paid') {
                 console.log('Payment already processed for order:', order.orderNumber);
-                return res.redirect(`${process.env.FRONTEND_URL}/order-success.html?order=${order.orderNumber}`);
+                return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
             }
 
             // Verify amount
@@ -800,7 +966,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 order.notes = 'Payment amount mismatch detected';
                 await order.save();
                 console.error('Payment amount mismatch:', { expected: order.total, received: paymentStatus.amount });
-                return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=amount_mismatch&order=${order.orderNumber}`);
+                return res.redirect(frontendUrls.paymentError({ error: 'amount_mismatch', order: order.orderNumber }));
             }
 
             // Payment successful
@@ -914,7 +1080,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
             await order.save();
             console.log('Payment successful for order:', order.orderNumber);
 
-            return res.redirect(`${process.env.FRONTEND_URL}/order-success.html?order=${order.orderNumber}`);
+            return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
 
         } else if (paymentStatus.status === 'Failed' || paymentStatus.status === 'Expired') {
             // Payment failed or expired
@@ -924,17 +1090,17 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
             await order.save();
             console.log(`Payment ${paymentStatus.status} for order:`, order.orderNumber);
 
-            return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?status=${paymentStatus.status.toLowerCase()}&order=${order.orderNumber}`);
+            return res.redirect(frontendUrls.paymentError({ status: paymentStatus.status.toLowerCase(), order: order.orderNumber }));
 
         } else {
             // Payment still pending or other status
             console.log('Payment status pending for order:', order.orderNumber, 'Status:', paymentStatus.status);
-            return res.redirect(`${process.env.FRONTEND_URL}/payment-pending.html?order=${order.orderNumber}`);
+            return res.redirect(frontendUrls.paymentPending(order.orderNumber));
         }
 
     } catch (error) {
         console.error('Payment callback error:', error);
-        return res.redirect(`${process.env.FRONTEND_URL}/payment-error.html?error=verification_failed`);
+        return res.redirect(frontendUrls.paymentError({ error: 'verification_failed' }));
     }
 });
 

@@ -9,6 +9,7 @@
  */
 
 const { asyncHandler } = require('../middleware/error');
+const frontendUrls = require('../utils/frontendUrls');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
@@ -423,7 +424,7 @@ const handleDeemaCallback = asyncHandler(async (req, res) => {
             await result.order.save();
             console.log(`[DEEMA] ❌ Order ${result.order.orderNumber} marked as failed`);
         }
-        return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
+        return res.redirect(frontendUrls.paymentError({ error: 'payment_failed' }));
     }
 
     // ── Order not found at all ──
@@ -432,7 +433,7 @@ const handleDeemaCallback = asyncHandler(async (req, res) => {
         console.error('[DEEMA] ❌ This likely means the customer was charged but order cannot be matched.');
         console.error('[DEEMA] ❌ Manual intervention needed. Check Deema dashboard.');
         const debugParams = encodeURIComponent(JSON.stringify(req.query));
-        return res.redirect(`${frontendUrl}/payment-error.html?error=order_not_found&debug=${debugParams}`);
+        return res.redirect(frontendUrls.paymentError({ error: 'order_not_found', debug: debugParams }));
     }
 
     const { order, chargeId, method, chargeStatus: preloadedChargeStatus } = result;
@@ -441,7 +442,7 @@ const handleDeemaCallback = asyncHandler(async (req, res) => {
     // ── Already paid — just redirect to success ──
     if (order.paymentStatus === 'paid') {
         console.log(`[DEEMA] Order ${order.orderNumber} already paid, redirecting to success`);
-        return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+        return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
     }
 
     // ── Verify payment status with Deema/Tap API if we have a charge ID ──
@@ -453,19 +454,19 @@ const handleDeemaCallback = asyncHandler(async (req, res) => {
 
             if (tapStatus === 'CAPTURED') {
                 await confirmPaidOrder(order);
-                return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+                return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
             } else if (['FAILED', 'DECLINED', 'CANCELLED', 'ABANDONED'].includes(tapStatus)) {
                 order.paymentStatus = 'failed';
                 order.orderStatus = 'cancelled';
                 order.notes = `Deema/Tap status: ${tapStatus}`;
                 await order.save();
-                return res.redirect(`${frontendUrl}/payment-error.html?error=payment_failed`);
+                return res.redirect(frontendUrls.paymentError({ error: 'payment_failed' }));
             } else {
                 // Status is INITIATED, PENDING, or something else — assume success since
                 // Deema redirected to success callback
                 console.log(`[DEEMA] ⚠️ Charge status is "${tapStatus}" but callback reached. Confirming order.`);
                 await confirmPaidOrder(order);
-                return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+                return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
             }
         } catch (err) {
             console.error(`[DEEMA] ⚠️ Could not verify charge ${chargeId}: ${err.message}`);
@@ -473,14 +474,14 @@ const handleDeemaCallback = asyncHandler(async (req, res) => {
             // (Deema only redirects to success URL on successful payment)
             console.log(`[DEEMA] Confirming order despite verification failure (callback reached success URL)`);
             await confirmPaidOrder(order);
-            return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+            return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
         }
     }
 
     // ── No charge ID but order found — Deema success callback means payment approved ──
     console.log(`[DEEMA] No chargeId to verify but callback reached. Confirming order ${order.orderNumber}.`);
     await confirmPaidOrder(order);
-    return res.redirect(`${frontendUrl}/order-success.html?order=${order.orderNumber}`);
+    return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
 });
 
 // ═══════════════════════════════════════════════════

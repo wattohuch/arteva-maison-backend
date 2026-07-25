@@ -6,7 +6,8 @@ const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/db');
-const { errorHandler } = require('./middleware/error');
+const { errorHandler, requestId, notFoundHandler } = require('./middleware/error');
+const { reportPaymentConfig } = require('./config/paymentConfig');
 const { startBackupScheduler, updateActivity, forceBackup } = require('./autoBackup');
 const { initializeSocket } = require('./socketHandler');
 const Order = require('./models/Order');
@@ -74,28 +75,42 @@ app.use(helmet({
     }
 }));
 
-// Rate limiting — general API
+// Rate limiting — skip in dev or when request originates from localhost / 127.0.0.1
+const skipRateLimit = (req) => {
+    if (!isProd) return true;
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
+    const host = req.headers.host || '';
+    if (ip.includes('127.0.0.1') || ip.includes('::1') || ip === '::ffff:127.0.0.1' || host.includes('localhost')) {
+        return true;
+    }
+    return false;
+};
+
+// General API — 300 req / 15 min in production
 const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100,
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    skip: skipRateLimit,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many requests, please try again later.' }
 });
 
-// Stricter rate limiting — auth routes (15 attempts per 15 min to prevent brute force)
+// Auth routes — stricter (30 attempts / 15 min) to deter brute force
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 15,
+    max: 30,
+    skip: skipRateLimit,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many login attempts, please try again later.' }
 });
 
-// Payment rate limiter — prevent payment abuse
+// Payment routes — tightest limit to prevent abuse
 const paymentLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 20, // 20 payment attempts per 15 min
+    max: 30,
+    skip: skipRateLimit,
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many payment attempts, please try again later.' }
@@ -107,16 +122,17 @@ const corsOptions = {
         const allowedOrigins = [
             process.env.FRONTEND_URL,
             'https://artevamaisonkw.com',
-            'https://www.artevamaisonkw.com'
+            'https://www.artevamaisonkw.com',
+            'http://localhost:5173',
+            'http://127.0.0.1:5173',
+            'http://localhost:3000',
+            'http://127.0.0.1:3000'
         ];
 
         // Allow requests with no origin (mobile apps, Postman, server-to-server)
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.indexOf(origin) !== -1 || origin === 'https://arteva-maison-frontend.vercel.app') {
-            callback(null, true);
-        } else if (!isProd && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
-            // Only allow localhost in development
+        if (allowedOrigins.indexOf(origin) !== -1 || origin === 'https://arteva-maison-frontend.vercel.app' || origin.includes('localhost') || origin.includes('127.0.0.1')) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
@@ -130,6 +146,9 @@ const io = initializeSocket(server, corsOptions);
 app.locals.io = io;
 
 app.use(cors(corsOptions));
+
+// Correlation id — echoed in every error body and log line
+app.use(requestId);
 
 // Body parser with size limits
 app.use(express.json({ limit: '10kb' }));
@@ -204,18 +223,23 @@ app.post('/api/site-visit', apiLimiter, async (req, res) => {
 });
 
 // Health check (no rate limiting)
+// Surfaces payment gateway readiness so a misconfigured key is visible from
+// monitoring rather than only when a shopper reaches checkout.
 app.get('/api/health', (req, res) => {
+    const { getMyFatoorahStatus, getDeemaStatus } = require('./config/paymentConfig');
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        socketConnected: !!io
+        socketConnected: !!io,
+        gateways: {
+            myfatoorah: getMyFatoorahStatus().configured,
+            deema: getDeemaStatus().configured
+        }
     });
 });
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({ success: false, message: 'Route not found' });
-});
+// 404 handler — same JSON shape as real errors
+app.use(notFoundHandler);
 
 // Error handler
 app.use(errorHandler);
@@ -240,6 +264,11 @@ const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, async () => {
     log.info(`Server running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
+
+    // Report payment gateway readiness at boot. Always logged (including in
+    // production) — a placeholder API key is the kind of thing that must be
+    // loud, not discovered when a customer fails to check out.
+    reportPaymentConfig(console);
 
     // Email service initializes automatically on module load
     // (see emailService.js - Resend API, initializes on require())

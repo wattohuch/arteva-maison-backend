@@ -8,6 +8,69 @@
  */
 
 const axios = require('axios');
+const ApiError = require('../utils/ApiError');
+const { isUsableKey } = require('../config/paymentConfig');
+const frontendUrls = require('../utils/frontendUrls');
+
+/**
+ * Turns an axios failure from MyFatoorah into a typed ApiError.
+ *
+ * Every call site previously did `throw new Error(...)`, which the error
+ * middleware could only report as a 500. Classifying here means the client
+ * learns whether the problem is credentials, a timeout, a validation error in
+ * our payload, or a genuine gateway outage.
+ */
+function toApiError(error, operation) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    const gatewayMessage = data?.Message || data?.message;
+    const validationErrors = data?.ValidationErrors;
+
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+        return ApiError.gatewayTimeout(
+            'PAYMENT_GATEWAY_TIMEOUT',
+            'The payment provider did not respond in time. Please try again.'
+        );
+    }
+
+    if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'EAI_AGAIN') {
+        return ApiError.unavailable(
+            'PAYMENT_GATEWAY_UNREACHABLE',
+            'Could not reach the payment provider. Please try again shortly.'
+        );
+    }
+
+    if (status === 401 || status === 403) {
+        // Credentials rejected — an operator problem, never the shopper's fault.
+        return ApiError.unavailable(
+            'PAYMENT_GATEWAY_UNAUTHORIZED',
+            'Online payments are temporarily unavailable. Please try again shortly.',
+            { operation }
+        );
+    }
+
+    if (status === 400 && validationErrors) {
+        return ApiError.badGateway(
+            'PAYMENT_GATEWAY_REJECTED_REQUEST',
+            gatewayMessage || 'The payment provider rejected the request.',
+            { operation, validationErrors }
+        );
+    }
+
+    if (status >= 500) {
+        return ApiError.badGateway(
+            'PAYMENT_GATEWAY_ERROR',
+            'The payment provider is having trouble. Please try again shortly.',
+            { operation }
+        );
+    }
+
+    return ApiError.badGateway(
+        'PAYMENT_GATEWAY_ERROR',
+        gatewayMessage || error.message || 'Payment request failed.',
+        { operation }
+    );
+}
 
 class MyFatoorahService {
     /**
@@ -29,21 +92,42 @@ class MyFatoorahService {
             'Content-Type': 'application/json'
         };
 
-        // Request timeout (10 seconds)
-        this.timeout = 10000;
+        // Request timeout (15 seconds — MyFatoorah's ExecutePayment can be slow)
+        this.timeout = Number(process.env.MYFATOORAH_TIMEOUT_MS) || 15000;
 
-        if (this.apiKey && this.apiKey !== 'your_myfatoorah_api_key_here' && this.apiKey !== 'your_deema_test_api_key_here') {
+        this.configured = isUsableKey(this.apiKey);
+
+        if (this.configured) {
             console.log(`[MYFATOORAH] ${this.label} service initialized (${mode} mode)`);
+        } else {
+            console.error(
+                `[MYFATOORAH] ${this.label} service NOT configured — API key is missing, ` +
+                `truncated, or still the setup placeholder. Calls will fail fast with ` +
+                `PAYMENT_GATEWAY_UNAVAILABLE rather than hitting the gateway.`
+            );
         }
+    }
+
+    /**
+     * Fail fast when the key is unusable. Without this every call spent the full
+     * timeout budget getting a 401 back, then surfaced as an opaque 500.
+     */
+    assertConfigured(operation) {
+        if (this.configured) return;
+        throw ApiError.unavailable(
+            'PAYMENT_GATEWAY_UNAVAILABLE',
+            'Online payments are temporarily unavailable. Please try again shortly.',
+            { operation, provider: this.label }
+        );
     }
 
     /**
      * Initialize payment - creates invoice and returns payment URL
      */
     async initiatePayment(orderData) {
+        this.assertConfigured('initiatePayment');
         try {
-            console.log('MyFatoorah initiatePayment - Base URL:', this.baseUrl);
-            console.log('MyFatoorah initiatePayment - Order Data:', JSON.stringify(orderData, null, 2));
+            console.log(`[MYFATOORAH] initiatePayment order=${orderData.orderNumber} amount=${orderData.amount}`);
 
             // Clean phone number - same logic as executePayment
             let rawPhone = (orderData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
@@ -70,7 +154,7 @@ class MyFatoorahService {
                 CustomerEmail: orderData.customerEmail,
                 CustomerMobile: cleanPhone,
                 CallBackUrl: `${process.env.BACKEND_URL || 'https://arteva-maison-backend-gy1x.onrender.com'}/api/payments/callback`,
-                ErrorUrl: `${process.env.FRONTEND_URL}/payment-error.html`,
+                ErrorUrl: frontendUrls.gatewayErrorUrl(),
                 Language: orderData.language || 'en',
                 CustomerReference: orderData.orderNumber,
                 UserDefinedField: orderData.orderId, // Store order ID for webhook
@@ -89,19 +173,24 @@ class MyFatoorahService {
                 { headers: this.headers, timeout: this.timeout }
             );
 
-            if (response.data.IsSuccess) {
-                return {
-                    success: true,
-                    paymentUrl: response.data.Data.PaymentURL,
-                    invoiceId: response.data.Data.InvoiceId,
-                    paymentMethods: response.data.Data.PaymentMethodId
-                };
-            } else {
-                throw new Error(response.data.Message || 'Payment initiation failed');
+            if (!response.data?.IsSuccess || !response.data?.Data?.PaymentURL) {
+                throw ApiError.badGateway(
+                    'PAYMENT_GATEWAY_REJECTED_REQUEST',
+                    response.data?.Message || 'Payment initiation failed',
+                    { operation: 'initiatePayment', validationErrors: response.data?.ValidationErrors }
+                );
             }
+
+            return {
+                success: true,
+                paymentUrl: response.data.Data.PaymentURL,
+                invoiceId: response.data.Data.InvoiceId,
+                paymentMethods: response.data.Data.PaymentMethodId
+            };
         } catch (error) {
-            console.error('MyFatoorah initiate payment error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.Message || error.message);
+            if (error instanceof ApiError) throw error;
+            console.error('[MYFATOORAH] initiatePayment failed:', error.response?.data || error.message);
+            throw toApiError(error, 'initiatePayment');
         }
     }
 
@@ -109,9 +198,12 @@ class MyFatoorahService {
      * Execute payment with specific method (KNET, Card, Apple Pay)
      */
     async executePayment(paymentData, discount = 0) {
+        this.assertConfigured('executePayment');
         try {
-            console.log('MyFatoorah executePayment - Base URL:', this.baseUrl);
-            console.log('MyFatoorah executePayment - Payment Data:', JSON.stringify(paymentData, null, 2));
+            console.log(
+                `[MYFATOORAH] executePayment order=${paymentData.orderNumber} ` +
+                `method=${paymentData.paymentMethodId} amount=${paymentData.amount}`
+            );
 
             // Clean phone number - strip all formatting, then extract country code + local number
             let rawPhone = (paymentData.customerPhone || '').replace(/[\s\-\(\)\+]/g, '');
@@ -178,14 +270,24 @@ class MyFatoorahService {
                 CustomerEmail: paymentData.customerEmail,
                 InvoiceValue: paymentData.amount,
                 CallBackUrl: `${process.env.BACKEND_URL || 'https://arteva-maison-backend-gy1x.onrender.com'}/api/payments/callback`,
-                ErrorUrl: `${process.env.FRONTEND_URL}/payment-error.html`,
+                ErrorUrl: frontendUrls.gatewayErrorUrl(),
                 Language: paymentData.language === 'ar' ? 'AR' : 'EN',
                 CustomerReference: paymentData.orderNumber,
                 UserDefinedField: paymentData.orderId,
                 InvoiceItems: invoiceItems
             };
 
-            console.log('MyFatoorah payload:', JSON.stringify(payload, null, 2));
+            // Guard the invariant MyFatoorah enforces server-side:
+            // Sum(UnitPrice × Quantity) must equal InvoiceValue exactly.
+            const lineSum = invoiceItems.reduce((s, i) => s + i.UnitPrice * i.Quantity, 0);
+            if (Math.abs(lineSum - paymentData.amount) > 0.001) {
+                console.error(
+                    `[MYFATOORAH] Invoice line sum ${lineSum.toFixed(3)} ≠ InvoiceValue ` +
+                    `${paymentData.amount} — collapsing to a single line to stay valid.`
+                );
+                invoiceItems.length = 0;
+                invoiceItems.push({ ItemName: 'Order Total', Quantity: 1, UnitPrice: paymentData.amount });
+            }
 
             const response = await axios.post(
                 `${this.baseUrl}/v2/ExecutePayment`,
@@ -193,32 +295,34 @@ class MyFatoorahService {
                 { headers: this.headers, timeout: this.timeout }
             );
 
-            console.log('MyFatoorah response:', JSON.stringify(response.data, null, 2));
-
-            if (response.data.IsSuccess) {
-                return {
-                    success: true,
-                    paymentUrl: response.data.Data.PaymentURL,
-                    invoiceId: response.data.Data.InvoiceId
-                };
-            } else {
-                throw new Error(response.data.Message || 'Payment execution failed');
+            if (!response.data?.IsSuccess || !response.data?.Data?.PaymentURL) {
+                console.error('[MYFATOORAH] executePayment rejected:', {
+                    message: response.data?.Message,
+                    validationErrors: response.data?.ValidationErrors,
+                });
+                throw ApiError.badGateway(
+                    'PAYMENT_GATEWAY_REJECTED_REQUEST',
+                    response.data?.Message || 'Payment execution failed',
+                    { operation: 'executePayment', validationErrors: response.data?.ValidationErrors }
+                );
             }
+
+            return {
+                success: true,
+                paymentUrl: response.data.Data.PaymentURL,
+                invoiceId: response.data.Data.InvoiceId
+            };
         } catch (error) {
-            console.error('MyFatoorah execute payment error:', {
+            if (error instanceof ApiError) throw error;
+
+            console.error('[MYFATOORAH] executePayment failed:', {
                 message: error.message,
-                response: error.response?.data,
-                validationErrors: error.response?.data?.ValidationErrors,
                 status: error.response?.status,
-                headers: error.response?.headers
+                gatewayMessage: error.response?.data?.Message,
+                validationErrors: error.response?.data?.ValidationErrors,
             });
 
-            // Log validation errors in detail
-            if (error.response?.data?.ValidationErrors) {
-                console.error('Validation Errors Detail:', JSON.stringify(error.response.data.ValidationErrors, null, 2));
-            }
-
-            throw new Error(error.response?.data?.Message || error.message);
+            throw toApiError(error, 'executePayment');
         }
     }
 
@@ -226,6 +330,7 @@ class MyFatoorahService {
      * Get payment status
      */
     async getPaymentStatus(paymentId) {
+        this.assertConfigured('getPaymentStatus');
         try {
             const response = await axios.post(
                 `${this.baseUrl}/v2/GetPaymentStatus`,
@@ -233,24 +338,30 @@ class MyFatoorahService {
                 { headers: this.headers, timeout: this.timeout }
             );
 
-            if (response.data.IsSuccess) {
-                const data = response.data.Data;
-                return {
-                    success: true,
-                    status: data.InvoiceStatus, // 'Paid', 'Pending', 'Failed', 'Expired'
-                    amount: data.InvoiceValue,
-                    paidAmount: data.InvoiceDisplayValue,
-                    paymentMethod: data.PaymentGateway,
-                    transactionId: data.InvoiceTransactions[0]?.TransactionId,
-                    customerReference: data.CustomerReference,
-                    orderId: data.UserDefinedField
-                };
-            } else {
-                throw new Error(response.data.Message || 'Failed to get payment status');
+            if (!response.data?.IsSuccess || !response.data?.Data) {
+                throw ApiError.badGateway(
+                    'PAYMENT_STATUS_UNAVAILABLE',
+                    response.data?.Message || 'Failed to get payment status',
+                    { operation: 'getPaymentStatus' }
+                );
             }
+
+            const data = response.data.Data;
+            return {
+                success: true,
+                status: data.InvoiceStatus, // 'Paid' | 'Pending' | 'Failed' | 'Expired'
+                amount: data.InvoiceValue,
+                paidAmount: data.InvoiceDisplayValue,
+                paymentMethod: data.PaymentGateway,
+                // InvoiceTransactions can be absent on a pending invoice
+                transactionId: data.InvoiceTransactions?.[0]?.TransactionId,
+                customerReference: data.CustomerReference,
+                orderId: data.UserDefinedField
+            };
         } catch (error) {
-            console.error('MyFatoorah get status error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.Message || error.message);
+            if (error instanceof ApiError) throw error;
+            console.error('[MYFATOORAH] getPaymentStatus failed:', error.response?.data || error.message);
+            throw toApiError(error, 'getPaymentStatus');
         }
     }
 
@@ -258,6 +369,7 @@ class MyFatoorahService {
      * Get available payment methods
      */
     async getPaymentMethods(amount = 1) {
+        this.assertConfigured('getPaymentMethods');
         try {
             const response = await axios.post(
                 `${this.baseUrl}/v2/InitiatePayment`,
@@ -265,24 +377,29 @@ class MyFatoorahService {
                 { headers: this.headers, timeout: this.timeout }
             );
 
-            if (response.data.IsSuccess) {
-                return {
-                    success: true,
-                    methods: response.data.Data.PaymentMethods.map(method => ({
-                        id: method.PaymentMethodId,
-                        name: method.PaymentMethodEn,
-                        nameAr: method.PaymentMethodAr,
-                        code: method.PaymentMethodCode,
-                        isDirectPayment: method.IsDirectPayment,
-                        imageUrl: method.ImageUrl
-                    }))
-                };
-            } else {
-                throw new Error(response.data.Message || 'Failed to get payment methods');
+            if (!response.data?.IsSuccess || !Array.isArray(response.data?.Data?.PaymentMethods)) {
+                throw ApiError.badGateway(
+                    'PAYMENT_METHODS_UNAVAILABLE',
+                    response.data?.Message || 'Failed to get payment methods',
+                    { operation: 'getPaymentMethods' }
+                );
             }
+
+            return {
+                success: true,
+                methods: response.data.Data.PaymentMethods.map(method => ({
+                    id: method.PaymentMethodId,
+                    name: method.PaymentMethodEn,
+                    nameAr: method.PaymentMethodAr,
+                    code: method.PaymentMethodCode,
+                    isDirectPayment: method.IsDirectPayment,
+                    imageUrl: method.ImageUrl
+                }))
+            };
         } catch (error) {
-            console.error('MyFatoorah get methods error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.Message || error.message);
+            if (error instanceof ApiError) throw error;
+            console.error('[MYFATOORAH] getPaymentMethods failed:', error.response?.data || error.message);
+            throw toApiError(error, 'getPaymentMethods');
         }
     }
 
@@ -293,6 +410,7 @@ class MyFatoorahService {
      * The refund is not automatic - merchant must log in and approve it.
      */
     async refundPayment(paymentId, amount, reason) {
+        this.assertConfigured('refundPayment');
         try {
             const response = await axios.post(
                 `${this.baseUrl}/v2/MakeRefund`,
@@ -307,21 +425,26 @@ class MyFatoorahService {
                 { headers: this.headers, timeout: this.timeout }
             );
 
-            if (response.data.IsSuccess) {
-                console.log(`[MYFATOORAH] Refund request created: ${response.data.Data.RefundId}`);
-                console.log(`[MYFATOORAH] ⚠️  IMPORTANT: Refund requires manual approval in MyFatoorah dashboard`);
-                return {
-                    success: true,
-                    refundId: response.data.Data.RefundId,
-                    refundReference: response.data.Data.RefundReference,
-                    requiresApproval: true // Flag to indicate manual approval needed
-                };
-            } else {
-                throw new Error(response.data.Message || 'Refund failed');
+            if (!response.data?.IsSuccess) {
+                throw ApiError.badGateway(
+                    'REFUND_REJECTED',
+                    response.data?.Message || 'Refund failed',
+                    { operation: 'refundPayment' }
+                );
             }
+
+            console.log(`[MYFATOORAH] Refund request created: ${response.data.Data.RefundId}`);
+            console.log('[MYFATOORAH] ⚠️  Refund requires manual approval in the MyFatoorah dashboard');
+            return {
+                success: true,
+                refundId: response.data.Data.RefundId,
+                refundReference: response.data.Data.RefundReference,
+                requiresApproval: true
+            };
         } catch (error) {
-            console.error('MyFatoorah refund error:', error.response?.data || error.message);
-            throw new Error(error.response?.data?.Message || error.message);
+            if (error instanceof ApiError) throw error;
+            console.error('[MYFATOORAH] refundPayment failed:', error.response?.data || error.message);
+            throw toApiError(error, 'refundPayment');
         }
     }
 }
