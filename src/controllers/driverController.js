@@ -33,6 +33,7 @@ exports.getAssignedOrders = async (req, res) => {
 
         const orders = await Order.find(filter)
             .populate('user', 'name email phone')
+            .populate('items.product', 'sku name image nameAr')
             .sort({ createdAt: -1 });
 
         res.status(200).json({
