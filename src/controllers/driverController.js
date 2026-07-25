@@ -32,14 +32,41 @@ exports.getAssignedOrders = async (req, res) => {
             : { deliveryPilot: req.user._id };
 
         const orders = await Order.find(filter)
-            .populate('user', 'name email phone')
-            .populate('items.product', 'sku name image nameAr')
-            .sort({ createdAt: -1 });
+            .populate('user', 'name email phone addresses')
+            .populate({
+                path: 'items.product',
+                select: 'sku name image nameAr code productNumber'
+            })
+            .sort({ createdAt: -1 })
+            .lean();
+
+        // Auto-enrich orders with coordinates from user's saved address if missing on order record
+        const enrichedOrders = orders.map(order => {
+            if (!order.shippingAddress) order.shippingAddress = {};
+
+            const hasOrderCoords = order.shippingAddress.coordinates?.lat && order.shippingAddress.coordinates?.lng;
+
+            if (!hasOrderCoords && order.user?.addresses?.length) {
+                const match = order.user.addresses.find(a => 
+                    a.coordinates?.lat && a.coordinates?.lng && 
+                    (a.street === order.shippingAddress.street || a.label === order.shippingAddress.label)
+                ) || order.user.addresses.find(a => a.coordinates?.lat && a.coordinates?.lng);
+
+                if (match?.coordinates) {
+                    order.shippingAddress.coordinates = {
+                        lat: Number(match.coordinates.lat),
+                        lng: Number(match.coordinates.lng)
+                    };
+                }
+            }
+
+            return order;
+        });
 
         res.status(200).json({
             success: true,
-            count: orders.length,
-            data: orders
+            count: enrichedOrders.length,
+            data: enrichedOrders
         });
     } catch (error) {
         res.status(500).json({
