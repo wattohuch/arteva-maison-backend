@@ -217,19 +217,29 @@ class WhatsAppService {
     sendAllOrderNotifications(order, user) {
         // Fire and forget — don't await, don't block the HTTP response
         setImmediate(async () => {
-            try {
-                console.log(`[WA-NOTIFY] ═══ Starting notifications for ${order.orderNumber} ═══`);
-                const ownerResults = await this.notifyOwnerNewOrder(order, user);
-                const ownerSuccess = ownerResults.filter(r => r.success).length;
-                console.log(`[WA-NOTIFY] Owners: ${ownerSuccess}/${ownerResults.length} delivered`);
-                
-                const customerResult = await this.notifyCustomerNewOrder(order, user);
-                console.log(`[WA-NOTIFY] Customer: ${customerResult.success ? '✅' : '❌ ' + (customerResult.error || 'unknown')}`);
-                
-                console.log(`[WA-NOTIFY] ═══ Notifications complete for ${order.orderNumber} ═══`);
-            } catch (err) {
-                console.error(`[WA-NOTIFY] ❌ FATAL error for ${order.orderNumber}:`, err.message, err.stack);
-            }
+            console.log(`[WA-NOTIFY] ═══ Starting notifications for ${order.orderNumber} ═══`);
+
+            /* The customer goes first, and each recipient is settled on its own.
+             *
+             * These used to run as two awaits in one try block, owner first. A
+             * rejection from the owner send — an unregistered owner number, a
+             * 4xx from Meta, anything — jumped straight to the catch and the
+             * customer, the one person who is actually waiting to hear that
+             * their order went through, was never messaged at all. Nothing
+             * either recipient does can now suppress the other. */
+            const customerResult = await this.notifyCustomerNewOrder(order, user)
+                .catch(err => ({ success: false, error: err.message }));
+            console.log(`[WA-NOTIFY] Customer: ${customerResult?.success ? '✅' : '❌ ' + (customerResult?.error || 'unknown')}`);
+
+            const ownerResults = await this.notifyOwnerNewOrder(order, user)
+                .catch(err => {
+                    console.error(`[WA-NOTIFY] Owner notification threw:`, err.message);
+                    return [];
+                });
+            const ownerSuccess = (ownerResults || []).filter(r => r.success).length;
+            console.log(`[WA-NOTIFY] Owners: ${ownerSuccess}/${(ownerResults || []).length} delivered`);
+
+            console.log(`[WA-NOTIFY] ═══ Notifications complete for ${order.orderNumber} ═══`);
         });
     }
 

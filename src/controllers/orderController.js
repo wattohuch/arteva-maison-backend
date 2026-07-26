@@ -218,11 +218,16 @@ const createOrder = asyncHandler(async (req, res) => {
         console.error('Socket notification error:', e.message);
     }
 
-    // Send WhatsApp notification to OWNER and CUSTOMER
+    /* WhatsApp notifications for OWNER and CUSTOMER.
+     *
+     * Handed to the background sender rather than awaited here. Awaiting them
+     * cost the checkout response two round trips to Meta plus the queue's 10s
+     * inter-message gap, and the pair shared one try block — so an owner-side
+     * failure took the customer's confirmation down with it. The service now
+     * settles each recipient independently, customer first. */
     try {
         const whatsapp = require('../services/whatsappService');
-        await whatsapp.notifyOwnerNewOrder(order, req.user);
-        await whatsapp.notifyCustomerNewOrder(order, req.user);
+        whatsapp.sendAllOrderNotifications(order, req.user);
     } catch (e) {
         console.error('WhatsApp notification error:', e.message);
     }

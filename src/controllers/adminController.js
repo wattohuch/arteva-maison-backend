@@ -602,14 +602,28 @@ const sendOfferEmail = async (req, res) => {
     const images = req.files || []; // Get uploaded images from multer
 
     try {
-        let users;
-        if (recipientType === 'all') {
-            users = await User.find({});
-        } else if (recipientType === 'subscribers') {
-            users = await User.find({ isSubscribed: true });
-        } else {
-            return res.status(400).json({ success: false, message: 'Invalid recipient type' });
+        // The admin panel offers all / customers / admins; `subscribers` is kept
+        // for the older vanilla dashboard, which still posts it. Anything the
+        // panel can send has to be accepted here or the campaign 400s before a
+        // single email is built.
+        const RECIPIENT_FILTERS = {
+            all: {},
+            customers: { role: { $in: [null, 'user', 'customer'] } },
+            admins: { role: { $in: ['admin', 'owner', 'superuser'] } },
+            subscribers: { isSubscribed: true },
+        };
+
+        const filter = RECIPIENT_FILTERS[recipientType || 'all'];
+        if (!filter) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid recipient type "${recipientType}". Expected one of: ${Object.keys(RECIPIENT_FILTERS).join(', ')}`
+            });
         }
+
+        // No address, no email — and an undeliverable send counts against the
+        // monthly quota just the same.
+        const users = (await User.find(filter)).filter(u => u.email);
 
         if (users.length === 0) {
             return res.status(400).json({ success: false, message: 'No users found to send emails to' });
@@ -618,23 +632,53 @@ const sendOfferEmail = async (req, res) => {
         // Limit to 50 users for safety
         const targetUsers = users.slice(0, 50);
 
-        // Build image HTML if images are attached
+        /* Campaign images.
+         *
+         * These used to be linked as `${FRONTEND_URL}/uploads/${image.filename}`,
+         * which could never load. Multer runs on memoryStorage, so `filename` is
+         * undefined and every campaign shipped `/uploads/undefined`; even with a
+         * name, the file sat on the API host, not the frontend, and Render's
+         * disk is wiped on redeploy. They go to Cloudinary instead, which is
+         * where the rest of the site's images already live. */
         let imagesHtml = '';
         if (images && images.length > 0) {
-            imagesHtml = '<div style="margin: 20px 0; text-align: center;">';
-            images.forEach(image => {
-                const imageUrl = `${process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com'}/uploads/${image.filename}`;
-                imagesHtml += `<img src="${imageUrl}" alt="Campaign Image" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">`;
-            });
-            imagesHtml += '</div>';
+            const { uploadToCloudinary } = require('../config/cloudinary');
+            const uploaded = [];
+
+            for (const image of images) {
+                try {
+                    const { url } = await uploadToCloudinary(image.buffer, 'campaigns');
+                    uploaded.push(url);
+                } catch (upErr) {
+                    console.error('[EMAIL CAMPAIGN] Image upload failed:', upErr.message);
+                }
+            }
+
+            if (uploaded.length > 0) {
+                imagesHtml = '<div style="margin: 20px 0; text-align: center;">'
+                    + uploaded.map(url =>
+                        `<img src="${url}" alt="" style="max-width: 100%; height: auto; margin: 10px 0; border-radius: 8px;">`
+                    ).join('')
+                    + '</div>';
+            }
+
+            if (uploaded.length < images.length) {
+                return res.status(502).json({
+                    success: false,
+                    message: `Only ${uploaded.length} of ${images.length} images could be uploaded. Nothing was sent — fix the images and try again.`
+                });
+            }
         }
 
-        // Respond immediately — emails will be sent in the background
+        // Respond before sending: a campaign of 50 outlives the request. The
+        // client is told this is queued, not delivered — the completion counts
+        // arrive on the admin socket as `email_campaign_complete`.
         res.status(202).json({
             success: true,
             message: `Email campaign queued for ${targetUsers.length} recipients. Emails are being sent in the background.`,
             details: {
                 total: targetUsers.length,
+                images: images.length,
                 status: 'processing'
             }
         });
