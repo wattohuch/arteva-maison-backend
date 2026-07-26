@@ -243,6 +243,65 @@ const check = (name, cond, detail = '') => {
     check('GET /admin/promo-codes/analytics -> 200', analytics.status === 200, String(analytics.status));
     check('  lists codes with visit data', Array.isArray(analytics.body?.data?.codes));
 
+    // ── 11. Delivery endpoints are staff-only ──
+    // Both move an order along the workflow and `delivered` marks a COD order
+    // PAID, so a customer reaching either is a way to get goods without paying.
+    const customer = await User.create({ name: 'Cust', email: 'cust@x.com', password: 'password123', role: 'user' });
+    const victim = await Order.create({
+        user: customer._id, orderNumber: 'VICTIM01', items: [], paymentMethod: 'cod',
+        subtotal: 0, total: 0, shippingAddress: { street: 'a', city: 'b', phone: '1' },
+    });
+
+    const anonLoc = await req(`/delivery/location/${victim._id}`, {
+        method: 'PUT', body: JSON.stringify({ lat: 29.3, lng: 47.9 }),
+    });
+    check('PUT /delivery/location unauthenticated -> 401', anonLoc.status === 401, String(anonLoc.status));
+
+    const custLoc = await req(`/delivery/location/${victim._id}`, {
+        method: 'PUT', body: JSON.stringify({ lat: 29.3, lng: 47.9 }),
+    }, tok(customer));
+    check('PUT /delivery/location as customer -> 403', custLoc.status === 403, String(custLoc.status));
+
+    const custStatus = await req(`/delivery/status/${victim._id}`, {
+        method: 'PUT', body: JSON.stringify({ status: 'delivered' }),
+    }, tok(customer));
+    check('PUT /delivery/status as customer -> 403', custStatus.status === 403, String(custStatus.status));
+    check('  COD order not marked paid',
+        (await Order.findById(victim._id)).paymentStatus !== 'paid');
+
+    const adminStatus = await req(`/delivery/status/${victim._id}`, {
+        method: 'PUT', body: JSON.stringify({ status: 'confirmed' }),
+    }, tok(admin));
+    check('PUT /delivery/status as admin -> 200', adminStatus.status === 200, JSON.stringify(adminStatus.body).slice(0, 160));
+
+    // ── 12. Validation layer rejects bad input with a typed error ──
+    const badLogin = await req('/auth/login', {
+        method: 'POST', body: JSON.stringify({ email: 'not-an-email' }),
+    });
+    check('POST /auth/login invalid -> 400', badLogin.status === 400, String(badLogin.status));
+    check('  code is VALIDATION_ERROR', badLogin.body?.code === 'VALIDATION_ERROR', JSON.stringify(badLogin.body));
+    check('  names the offending fields',
+        Array.isArray(badLogin.body?.details) && badLogin.body.details.some(d => d.field === 'password'),
+        JSON.stringify(badLogin.body?.details));
+
+    // A negative quantity used to pass the stock check (it is always < stock).
+    const badQty = await req('/cart', {
+        method: 'POST', body: JSON.stringify({ productId: String(product._id), quantity: -5 }),
+    }, tok(customer));
+    check('POST /cart negative quantity -> 400', badQty.status === 400, String(badQty.status));
+
+    const badId = await req('/orders/not-a-real-id', {}, tok(customer));
+    check('GET /orders/:id malformed id -> 400', badId.status === 400, String(badId.status));
+
+    const badStatus = await req(`/delivery/status/${victim._id}`, {
+        method: 'PUT', body: JSON.stringify({ status: 'teleported' }),
+    }, tok(admin));
+    check('PUT /delivery/status bad enum -> 400', badStatus.status === 400, String(badStatus.status));
+
+    // ── 13. Pagination is bounded ──
+    const huge = await req('/orders?limit=99999999', {}, tok(customer));
+    check('GET /orders?limit=99999999 -> 400', huge.status === 400, String(huge.status));
+
     await mongoose.disconnect();
     await mongod.stop();
     console.log(`\n${pass} passed, ${fail} failed`);

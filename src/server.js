@@ -154,10 +154,14 @@ app.use(requestId);
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// NoSQL injection prevention — sanitize request body/query/params
+// NoSQL injection prevention — strips $-prefixed and dotted keys from bodies.
+// Express 5 makes req.query/req.params read-only, which is why this is a local
+// middleware rather than express-mongo-sanitize (that package mutates them and
+// throws on Express 5).
 const sanitizeRequest = require('./middleware/sanitize');
 app.use(sanitizeRequest);
-// Additional validation is done via express-validator in routes
+// Per-route input validation lives in src/validators and is applied through
+// src/middleware/validate.js. Coverage is partial — see AUDIT.md.
 
 // Logging — only in development
 if (!isProd) {

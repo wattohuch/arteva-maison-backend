@@ -12,10 +12,29 @@ const formatPrice = (price, currency = 'KWD') => {
     return `${price.toFixed(3)} ${currency}`;
 };
 
+/**
+ * Hard ceiling on page size, applied to every paginated query.
+ *
+ * `limit` comes straight off the query string, so without a cap `?limit=1e9`
+ * asks the database for the entire collection and buffers it in memory — one
+ * unauthenticated request was enough to do it. Clamped rather than rejected so
+ * existing callers keep working; the admin screens that legitimately ask for
+ * 10000 rows are noted as debt in AUDIT.md.
+ */
+const MAX_PAGE_SIZE = 10000;
+
 // Paginate results
 const paginate = (page = 1, limit = 12) => {
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 12;
+    const parsedPage = parseInt(page, 10);
+    const parsedLimit = parseInt(limit, 10);
+
+    // Negative or non-numeric input previously produced a negative `skip`,
+    // which MongoDB rejects outright.
+    const pageNum = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+    const limitNum = Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, MAX_PAGE_SIZE)
+        : 12;
+
     const skip = (pageNum - 1) * limitNum;
     return { skip, limit: limitNum, page: pageNum };
 };
@@ -38,5 +57,6 @@ module.exports = {
     generateToken,
     formatPrice,
     paginate,
-    buildSortQuery
+    buildSortQuery,
+    MAX_PAGE_SIZE
 };

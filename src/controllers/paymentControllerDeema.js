@@ -521,17 +521,46 @@ const handleDeemaWebhook = asyncHandler(async (req, res) => {
             return res.status(200).json({ received: true });
         }
 
-        // Determine payment status
-        let paymentStatus = (data.status || '').toUpperCase();
+        /*
+         * Payment status comes from the provider, never from the request body.
+         *
+         * This endpoint is unauthenticated — it has to be, the provider calls
+         * it — and it previously took `data.status` at face value, only asking
+         * Tap when the body omitted a status. So a POST of
+         *   { merchant_order_id: "<order number>", status: "CAPTURED" }
+         * marked that order paid: stock decremented, receipt printed,
+         * confirmations sent, no money taken. Order numbers appear in tracking
+         * links and on receipts, so they are not a secret.
+         *
+         * The body is now treated as nothing more than a nudge telling us which
+         * charge to go and ask about. If we cannot reach the provider we make
+         * no decision at all — a webhook we could not verify is not evidence of
+         * payment, and the callback and /deema/reconcile paths both re-check
+         * later, so nothing is lost by declining to act here.
+         */
+        const claimedStatus = (data.status || '').toUpperCase();
+        let paymentStatus = '';
 
-        // If we have a Tap charge ID, verify with Tap API for authoritative status
-        if (chargeId && !paymentStatus) {
-            try {
-                const chargeStatus = await deemaService.getChargeStatus(chargeId);
+        if (chargeId) {
+            const chargeStatus = await deemaService.getChargeStatus(chargeId);
+            if (chargeStatus.success) {
                 paymentStatus = (chargeStatus.status || '').toUpperCase();
-            } catch (e) {
-                console.log(`[DEEMA] Webhook: could not get charge status: ${e.message}`);
             }
+        }
+
+        if (!paymentStatus) {
+            console.warn(
+                `[DEEMA] ⚠️ Webhook for order ${order.orderNumber} claimed "${claimedStatus || 'none'}" ` +
+                `but could not be verified with the provider — ignoring.`
+            );
+            return res.status(200).json({ received: true });
+        }
+
+        if (claimedStatus && claimedStatus !== paymentStatus) {
+            console.warn(
+                `[DEEMA] ⚠️ Webhook claimed "${claimedStatus}" for order ${order.orderNumber} ` +
+                `but the provider reports "${paymentStatus}" — using the provider.`
+            );
         }
 
         // Deema merchant API webhook may use different status names
