@@ -277,13 +277,14 @@ const getMyOrders = asyncHandler(async (req, res) => {
 
     const filter = { user: req.user._id, paymentStatus: { $ne: 'awaiting_payment' } };
 
-    const orders = await Order.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean();
-
-    const total = await Order.countDocuments(filter);
+    const [orders, total] = await Promise.all([
+        Order.find(filter)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Order.countDocuments(filter),
+    ]);
 
     res.json({
         success: true,
@@ -334,14 +335,15 @@ const getAllOrders = asyncHandler(async (req, res) => {
         filter.orderStatus = status;
     }
 
-    const orders = await Order.find(filter)
-        .populate('user', 'name email')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean();
-
-    const total = await Order.countDocuments(filter);
+    const [orders, total] = await Promise.all([
+        Order.find(filter)
+            .populate('user', 'name email')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Order.countDocuments(filter),
+    ]);
 
     res.json({
         success: true,

@@ -72,15 +72,19 @@ const getProducts = asyncHandler(async (req, res) => {
 
     const sortQuery = buildSortQuery(sort);
 
-    const products = await Product.find(filter)
-        .populate('category', 'name slug')
-        .populate('additionalCategories', 'name slug')
-        .sort(sortQuery)
-        .skip(skip)
-        .limit(limit)
-        .lean();
-
-    const total = await Product.countDocuments(filter);
+    // The page and its count are independent queries; awaiting them one after
+    // the other put two full round trips to Atlas in front of the catalogue,
+    // the most-hit endpoint on the site.
+    const [products, total] = await Promise.all([
+        Product.find(filter)
+            .populate('category', 'name slug')
+            .populate('additionalCategories', 'name slug')
+            .sort(sortQuery)
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Product.countDocuments(filter),
+    ]);
 
     res.json({
         success: true,

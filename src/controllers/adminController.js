@@ -28,10 +28,6 @@ const parseBoolean = (value) => {
 // @route   GET /api/admin/stats
 // @access  Private/Admin
 const getDashboardStats = asyncHandler(async (req, res) => {
-    const totalUsers = await User.countDocuments({ role: 'user' });
-    const totalProducts = await Product.countDocuments();
-    const totalOrders = await Order.countDocuments();
-
     // Revenue is deliberately NOT part of this payload, for anyone — not even
     // the owner. The dashboard renders that tile blurred and fetches the real
     // figure separately from /admin/revenue/total, which requires both the
@@ -40,12 +36,20 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     // that is not entitled to read it.
     const isOwner = req.user.role === 'owner';
 
-    // Recent orders
-    const recentOrders = await Order.find()
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .populate('user', 'name email')
-        .populate('deliveryPilot', 'name phone');
+    // Four independent queries that were awaited in series, so the dashboard
+    // paid four sequential round trips to Atlas before it could render. None
+    // of them depends on another.
+    const [totalUsers, totalProducts, totalOrders, recentOrders] = await Promise.all([
+        User.countDocuments({ role: 'user' }),
+        Product.countDocuments(),
+        Order.countDocuments(),
+        Order.find()
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .populate('user', 'name email')
+            .populate('deliveryPilot', 'name phone')
+            .lean(),
+    ]);
 
     res.json({
         success: true,
@@ -80,9 +84,13 @@ const getRevenueTotal = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/products
 // @access  Private/Admin
 const getAdminProducts = asyncHandler(async (req, res) => {
+    // .lean() — this is a read-only table. Without it Mongoose hydrates a full
+    // document, with getters, setters and change tracking, for every product in
+    // the catalogue on every load of the products screen.
     const products = await Product.find({})
         .sort({ sortOrder: 1, createdAt: -1 })
-        .populate('category', 'name');
+        .populate('category', 'name')
+        .lean();
     res.json({ success: true, data: products });
 });
 
