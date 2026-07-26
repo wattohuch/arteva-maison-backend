@@ -13,6 +13,7 @@ const {
     updateUserRole,
     deleteUser,
     sendOfferEmail,
+    getEmailDiagnostics,
     getProductViewAnalytics,
     getIPVisitorLog,
     getRevenueHistory,
@@ -377,6 +378,9 @@ router.route('/users/:id')
 
 // Email (with image attachments support)
 router.post('/send-email', protect, admin, upload.array('images', 5), sendOfferEmail);
+
+// Why a campaign did not arrive — domain state and Mailgun's own recent events
+router.get('/email-diagnostics', protect, admin, getEmailDiagnostics);
 
 // Backup management
 const { listBackups, downloadBackup, createBackup, restoreBackup } = require('../controllers/backupController');

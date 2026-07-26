@@ -157,6 +157,68 @@ function getEmailServiceStatus() {
 }
 
 /**
+ * Ask Mailgun itself what is wrong.
+ *
+ * A sandbox domain only delivers to addresses explicitly authorised on it, so
+ * campaigns to real customers vanish with a 200 from our side and a rejection
+ * on theirs. Nothing in our logs shows that — this reads the domain's true
+ * state and the last delivery events straight from the API.
+ */
+async function getMailgunDiagnostics() {
+    if (!mg || !mailgunDomain) {
+        return {
+            ok: false,
+            reason: 'Mailgun is not initialised — MAILGUN_API_KEY or MAILGUN_DOMAIN is missing.',
+        };
+    }
+
+    const isSandbox = /^sandbox[0-9a-f]+\.mailgun\.org$/i.test(mailgunDomain);
+    const report = {
+        ok: true,
+        domain: mailgunDomain,
+        isSandbox,
+        from: process.env.EMAIL_FROM || `noreply@${mailgunDomain}`,
+    };
+
+    try {
+        const info = await mg.domains.get(mailgunDomain);
+        report.state = info?.domain?.state || info?.state || 'unknown';
+        // `unverified` means the DNS records are not in place; Mailgun will
+        // refuse or silently drop mail to anyone outside the authorised list.
+        report.verified = report.state === 'active';
+    } catch (err) {
+        report.domainLookupError = err.message;
+    }
+
+    if (isSandbox) {
+        try {
+            const recipients = await mg.domains.domainCredentials.list?.(mailgunDomain);
+            report.authorizedRecipients = recipients || 'unavailable';
+        } catch {
+            report.authorizedRecipients = 'unavailable';
+        }
+    }
+
+    try {
+        const events = await mg.events.get(mailgunDomain, { limit: 25 });
+        const items = events?.items || [];
+        report.recentEvents = items.map(e => ({
+            event: e.event,
+            recipient: e.recipient,
+            reason: e.reason || e['delivery-status']?.message || undefined,
+            at: e.timestamp ? new Date(e.timestamp * 1000).toISOString() : undefined,
+        }));
+        report.rejected = report.recentEvents.filter(e =>
+            e.event === 'failed' || e.event === 'rejected'
+        );
+    } catch (err) {
+        report.eventsError = err.message;
+    }
+
+    return report;
+}
+
+/**
  * Send new order notification email to admin
  */
 async function sendAdminNewOrderNotification(order, customer) {
@@ -257,5 +319,6 @@ module.exports = {
     sendWelcomeEmail,
     sendOTPEmail,
     getEmailServiceStatus,
+    getMailgunDiagnostics,
     sendAdminNewOrderNotification
 };

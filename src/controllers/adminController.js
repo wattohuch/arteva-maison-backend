@@ -597,6 +597,26 @@ const deleteUser = asyncHandler(async (req, res) => {
 // @desc    Send offer email
 // @route   POST /api/admin/send-email
 // @access  Private/Admin
+// @desc    Report what Mailgun actually thinks of our domain and recent sends
+// @route   GET /api/admin/email-diagnostics
+// @access  Private/Admin
+const getEmailDiagnostics = async (req, res) => {
+    try {
+        const { getEmailServiceStatus, getMailgunDiagnostics } = require('../services/emailService');
+        const diagnostics = await getMailgunDiagnostics();
+
+        res.json({
+            success: true,
+            data: {
+                status: getEmailServiceStatus(),
+                ...diagnostics,
+            },
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 const sendOfferEmail = async (req, res) => {
     const { subject, message, recipientType } = req.body;
     const images = req.files || []; // Get uploaded images from multer
@@ -2173,6 +2193,7 @@ module.exports = {
     updateUserRole,
     deleteUser,
     sendOfferEmail,
+    getEmailDiagnostics,
     getProductViewAnalytics,
     getIPVisitorLog,
     getRevenueHistory,
