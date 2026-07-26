@@ -150,8 +150,16 @@ app.use(cors(corsOptions));
 // Correlation id — echoed in every error body and log line
 app.use(requestId);
 
-// Body parser with size limits
-app.use(express.json({ limit: '10kb' }));
+// Body parser with size limits.
+// The raw buffer is kept for /api/meta/* only: Meta signs its webhooks with an
+// HMAC over the exact bytes it sent, so a re-serialised body cannot be
+// verified. Holding it for every route would be a needless copy per request.
+app.use(express.json({
+    limit: '10kb',
+    verify: (req, res, buf) => {
+        if (req.originalUrl.startsWith('/api/meta/')) req.rawBody = buf;
+    },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
 // NoSQL injection prevention — strips $-prefixed and dotted keys from bodies.
@@ -204,6 +212,8 @@ app.use('/api/push', apiLimiter, require('./routes/pushRoutes'));
 // alias grants no extra access.
 app.use('/api/promo-codes', apiLimiter, require('./routes/promoCodes'));
 app.use('/api/whatsapp', apiLimiter, require('./routes/whatsapp'));
+// Meta: catalogue feed, WhatsApp Cloud API webhook, integration status
+app.use('/api/meta', apiLimiter, require('./routes/meta'));
 
 // Site Visit Tracking — lightweight public endpoint (no auth required)
 app.post('/api/site-visit', apiLimiter, async (req, res) => {

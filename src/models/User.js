@@ -17,8 +17,21 @@ const userSchema = new mongoose.Schema({
     },
     password: {
         type: String,
-        required: [true, 'Please provide a password'],
+        // Required only for accounts that sign in with one. An account created
+        // through Facebook has no password to store, and demanding a fake one
+        // would mean writing a credential nobody chose and nobody can use.
+        required: [
+            function () { return !this.facebookId; },
+            'Please provide a password'
+        ],
         minlength: [6, 'Password must be at least 6 characters'],
+        select: false
+    },
+    /** Meta's user id for this person, when they signed in with Facebook. */
+    facebookId: {
+        type: String,
+        unique: true,
+        sparse: true,
         select: false
     },
     phone: {
@@ -97,6 +110,9 @@ userSchema.pre('save', async function () {
 
 // Compare password method
 userSchema.methods.matchPassword = async function (enteredPassword) {
+    // A Facebook-only account has nothing to compare against. bcrypt would
+    // throw on an undefined hash; a plain false is the honest answer.
+    if (!this.password) return false;
     return await bcrypt.compare(enteredPassword, this.password);
 };
 

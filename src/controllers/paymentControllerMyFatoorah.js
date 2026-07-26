@@ -736,6 +736,17 @@ const handleWebhook = asyncHandler(async (req, res) => {
                 console.error('WhatsApp webhook notification error:', whatsappErr.message);
             }
 
+            // Meta conversion. The webhook is the authoritative "this was paid"
+            // moment, and unlike the browser it always happens. Deduplicated
+            // against the pixel's copy by the order-derived event_id.
+            try {
+                const meta = require('../services/metaConversions');
+                meta.trackPurchase(order, order.user)
+                    .catch(err => console.error('[META-CAPI] purchase failed:', err.message));
+            } catch (metaErr) {
+                console.error('Meta conversion error:', metaErr.message);
+            }
+
             // Notify admin dashboard in real-time
             try {
                 const { emitNewOrder } = require('../socketHandler');

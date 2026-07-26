@@ -232,6 +232,24 @@ const createOrder = asyncHandler(async (req, res) => {
         console.error('WhatsApp notification error:', e.message);
     }
 
+    /* Report the conversion to Meta from here as well as from the browser.
+     * Ad blockers, Safari's ITP and iOS tracking prompts all delete the pixel's
+     * copy, and a customer who pays then closes the tab never reaches the
+     * success page at all. Both events carry the same order-derived event_id,
+     * so Meta keeps one and drops the twin. Never awaited — attribution is not
+     * worth delaying a checkout response for, let alone failing one. */
+    try {
+        const meta = require('../services/metaConversions');
+        meta.trackPurchase(order, req.user, {
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+            fbp: req.cookies?._fbp,
+            fbc: req.cookies?._fbc,
+        }).catch(err => console.error('[META-CAPI] purchase failed:', err.message));
+    } catch (e) {
+        console.error('Meta conversion error:', e.message);
+    }
+
     // Send email notification to admin
     try {
         const { sendAdminNewOrderNotification } = require('../services/emailService');

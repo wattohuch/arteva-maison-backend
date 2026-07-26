@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, updateProfile, addAddress, deleteAddress, forgotPassword, verifyOTP, resetPassword, verifyPassword } = require('../controllers/authController');
+const { register, login, facebookLogin, getMe, updateProfile, addAddress, deleteAddress, forgotPassword, verifyOTP, resetPassword, verifyPassword } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const {
@@ -16,6 +16,9 @@ const { mongoIdParam } = require('../validators/commonValidators');
 
 router.post('/register', validate(registerRules), register);
 router.post('/login', validate(loginRules), login);
+// No validator: the only input is an opaque Meta token, and its validity is
+// decided by Meta rather than by a shape check here.
+router.post('/facebook', facebookLogin);
 router.post('/forgot-password', validate(forgotPasswordRules), forgotPassword);
 router.post('/verify-otp', validate(verifyOtpRules), verifyOTP);
 router.post('/reset-password', validate(resetPasswordRules), resetPassword);

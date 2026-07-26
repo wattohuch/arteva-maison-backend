@@ -63,6 +63,12 @@ async function confirmPaidOrder(order) {
         const whatsapp = new WhatsAppService();
         whatsapp.sendAllOrderNotifications(order, order.user);
     } catch (e) { /* silent */ }
+    // Meta conversion — deduplicated against the browser pixel by event_id.
+    try {
+        const meta = require('../services/metaConversions');
+        meta.trackPurchase(order, order.user)
+            .catch(err => console.error('[META-CAPI] purchase failed:', err.message));
+    } catch (e) { /* silent */ }
     try {
         const { emitNewOrder } = require('../socketHandler');
         emitNewOrder(order);
