@@ -1,6 +1,11 @@
 /**
  * Setup Superuser Script
  * Creates or updates a user with superuser role and revenue password
+ *
+ * NOTE: `superuser` is the developer account and no longer has access to
+ * revenue — that belongs to the `owner` role alone. The revenue password this
+ * script sets is therefore inert on a superuser. The owner sets their own
+ * revenue password from the admin dashboard the first time they open Revenue.
  */
 
 require('dotenv').config();

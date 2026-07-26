@@ -165,12 +165,51 @@ const check = (name, cond, detail = '') => {
     check('DELETE as owner -> 200', ownerDelete.status === 200, JSON.stringify(ownerDelete.body));
     check('  order removed', (await Order.countDocuments()) === 0);
 
-    // ── 9. Revenue is owner-only ──
+    // ── 9. Revenue is owner-only AND password-gated ──
     const revAdmin = await req('/admin/revenue/overview', {}, tok(admin));
     check('GET revenue as admin -> 403', revAdmin.status === 403, String(revAdmin.status));
 
-    const revOwner = await req('/admin/revenue/overview?preset=month', {}, tok(owner));
-    check('GET revenue as owner -> 200', revOwner.status === 200, JSON.stringify(revOwner.body).slice(0, 200));
+    // superuser is the developer account and is deliberately shut out of the
+    // takings, unlike everywhere else where it inherits owner's powers.
+    const superuser = await User.create({ name: 'Dev', email: 'dev@x.com', password: 'password123', role: 'superuser' });
+    const revSuper = await req('/admin/revenue/overview', {}, tok(superuser));
+    check('GET revenue as superuser -> 403', revSuper.status === 403, String(revSuper.status));
+
+    // Being the owner is not enough on its own: the revenue password has to be
+    // exchanged for an unlock token first.
+    const revLocked = await req('/admin/revenue/overview?preset=month', {}, tok(owner));
+    check('GET revenue as owner without unlock -> 403', revLocked.status === 403, String(revLocked.status));
+    check('  reports REVENUE_LOCKED', revLocked.body?.code === 'REVENUE_LOCKED', JSON.stringify(revLocked.body));
+
+    const setPw = await req('/admin/set-revenue-password', {
+        method: 'POST',
+        body: JSON.stringify({ revenuePassword: 'vault-secret-1' }),
+    }, tok(owner));
+    check('POST set-revenue-password as owner -> 200', setPw.status === 200, JSON.stringify(setPw.body));
+
+    const badPw = await req('/admin/revenue-auth', {
+        method: 'POST',
+        body: JSON.stringify({ revenuePassword: 'wrong-password' }),
+    }, tok(owner));
+    check('POST revenue-auth with wrong password -> 401', badPw.status === 401, String(badPw.status));
+
+    const unlock = await req('/admin/revenue-auth', {
+        method: 'POST',
+        body: JSON.stringify({ revenuePassword: 'vault-secret-1' }),
+    }, tok(owner));
+    check('POST revenue-auth -> 200', unlock.status === 200, JSON.stringify(unlock.body).slice(0, 200));
+    check('  returns an unlock token', typeof unlock.body?.revenueToken === 'string');
+
+    // A login JWT must not be accepted in place of a scoped unlock token.
+    const wrongScope = await req('/admin/revenue/overview?preset=month', {
+        headers: { 'X-Revenue-Token': tok(owner) },
+    }, tok(owner));
+    check('GET revenue with login JWT as unlock -> 403', wrongScope.status === 403, String(wrongScope.status));
+
+    const revOwner = await req('/admin/revenue/overview?preset=month', {
+        headers: { 'X-Revenue-Token': unlock.body.revenueToken },
+    }, tok(owner));
+    check('GET revenue as unlocked owner -> 200', revOwner.status === 200, JSON.stringify(revOwner.body).slice(0, 200));
     check('  reports net total', typeof revOwner.body?.data?.totals?.net === 'number');
     check('  splits by source', !!revOwner.body?.data?.bySource?.manual);
 

@@ -49,6 +49,63 @@ const owner = (req, res, next) => {
     }
 };
 
+/**
+ * Strictly the shop owner — superuser is NOT admitted.
+ *
+ * `superuser` is the developer account: it exists to administer the system and
+ * is deliberately kept out of the takings. `owner` is the person who owns the
+ * business, and revenue is theirs to see. Everywhere else superuser inherits
+ * owner's powers; this is the one place the two roles diverge, so it needs its
+ * own guard rather than reusing `owner`.
+ */
+const ownerOnly = (req, res, next) => {
+    if (req.user && req.user.role === 'owner') {
+        next();
+    } else {
+        res.status(403).json({
+            success: false,
+            message: 'Revenue is restricted to the owner account.'
+        });
+    }
+};
+
+/**
+ * Second factor on top of `ownerOnly`: a short-lived token minted by
+ * POST /admin/revenue-auth after the owner re-enters their revenue password.
+ *
+ * Being logged in as the owner is not enough to read revenue — an unattended
+ * open session would otherwise expose it. The token is scoped so an ordinary
+ * login JWT cannot be passed off as one.
+ */
+const revenueUnlocked = (req, res, next) => {
+    const token = req.headers['x-revenue-token'] || req.query.revenueToken;
+
+    // 403, not 401, on purpose: the login session is perfectly valid, it just
+    // has not been unlocked. A 401 would make the client discard the JWT and
+    // sign the owner out of the whole dashboard.
+    if (!token) {
+        return res.status(403).json({
+            success: false,
+            code: 'REVENUE_LOCKED',
+            message: 'Revenue password required.'
+        });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.scope !== 'revenue' || String(decoded.id) !== String(req.user._id)) {
+            throw new Error('wrong scope');
+        }
+        next();
+    } catch {
+        return res.status(403).json({
+            success: false,
+            code: 'REVENUE_LOCKED',
+            message: 'Revenue session expired. Please re-enter your revenue password.'
+        });
+    }
+};
+
 // Admin only (not owner) middleware (includes superuser)
 const adminOnly = (req, res, next) => {
     if (req.user && (req.user.role === 'admin' || req.user.role === 'superuser')) {
@@ -85,4 +142,4 @@ const driver = (req, res, next) => {
 };
 
 
-module.exports = { protect, admin, adminOnly, owner, driver, optionalAuth };
+module.exports = { protect, admin, adminOnly, owner, ownerOnly, revenueUnlocked, driver, optionalAuth };

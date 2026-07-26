@@ -57,8 +57,9 @@ const login = asyncHandler(async (req, res) => {
     const user = await User.findOne({ email }).select('+password +revenuePassword');
 
     if (user && (await user.matchPassword(password))) {
-        // Check if superuser needs to set revenue password
-        const needsRevenuePassword = user.role === 'superuser' && !user.revenuePassword;
+        // Revenue belongs to the owner, not the superuser (the developer
+        // account), so it is the owner who is prompted to set the password.
+        const needsRevenuePassword = user.role === 'owner' && !user.revenuePassword;
 
         res.json({
             success: true,

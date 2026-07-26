@@ -7,6 +7,10 @@ const stockService = require('../services/stockService');
 const promoService = require('../services/promoService');
 const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
 
+// How long a revenue unlock lasts before the owner has to re-enter the
+// password. Short enough that walking away from the dashboard closes it.
+const REVENUE_SESSION_MINUTES = 30;
+
 // Helper function to parse boolean values consistently
 // Handles: boolean, string ('true'/'false'), number (1/0), undefined
 const parseBoolean = (value) => {
@@ -28,12 +32,19 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     const totalProducts = await Product.countDocuments();
     const totalOrders = await Order.countDocuments();
 
-    // Calculate total revenue using aggregation (memory-efficient, runs on DB server)
-    const revenueResult = await Order.aggregate([
-        { $match: { paymentStatus: 'paid' } },
-        { $group: { _id: null, totalRevenue: { $sum: '$total' } } }
-    ]);
-    const totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+    // Revenue is the owner's alone. This endpoint is open to every admin (and
+    // to superuser, the developer account), so the figure is only computed and
+    // returned when the caller is the owner — otherwise the headline number
+    // would walk straight past the revenue password gate.
+    const isOwner = req.user.role === 'owner';
+    let totalRevenue;
+    if (isOwner) {
+        const revenueResult = await Order.aggregate([
+            { $match: { paymentStatus: 'paid' } },
+            { $group: { _id: null, totalRevenue: { $sum: '$total' } } }
+        ]);
+        totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+    }
 
     // Recent orders
     const recentOrders = await Order.find()
@@ -48,7 +59,10 @@ const getDashboardStats = asyncHandler(async (req, res) => {
             totalUsers,
             totalProducts,
             totalOrders,
-            totalRevenue,
+            // Absent, not zero — a zero would read as "no sales" rather than
+            // "not yours to see".
+            ...(isOwner ? { totalRevenue } : {}),
+            canSeeRevenue: isOwner,
             recentOrders
         }
     });
@@ -762,9 +776,9 @@ const getProductViewAnalytics = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/revenue-history
 // @access  Private/Superuser
 const getRevenueHistory = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'superuser') {
+    if (req.user.role !== 'owner') {
         res.status(403);
-        throw new Error('Access denied. Only superuser can access revenue data.');
+        throw new Error('Access denied. Revenue is restricted to the owner account.');
     }
 
     const now = new Date();
@@ -949,26 +963,49 @@ const getRevenueHistory = asyncHandler(async (req, res) => {
 const checkSuperuser = asyncHandler(async (req, res) => {
     res.json({
         success: true,
-        isSuperuser: req.user.role === 'superuser'
+        isSuperuser: req.user.role === 'superuser',
+        isOwner: req.user.role === 'owner'
+    });
+});
+
+// @desc    Whether this account may open revenue, and whether it has a password yet
+// @route   GET /api/admin/revenue/status
+// @access  Private
+const getRevenueAccessStatus = asyncHandler(async (req, res) => {
+    const isOwner = req.user.role === 'owner';
+
+    // Only the owner is ever told anything about the revenue password; for
+    // everyone else the answer is a flat "no access", with no hint about
+    // whether a password exists to be guessed at.
+    if (!isOwner) {
+        return res.json({ success: true, isOwner: false, hasPassword: false });
+    }
+
+    const user = await User.findById(req.user._id).select('+revenuePassword');
+
+    res.json({
+        success: true,
+        isOwner: true,
+        hasPassword: Boolean(user?.revenuePassword)
     });
 });
 
 // @desc    Authenticate revenue access with password
 // @route   POST /api/admin/revenue-auth
-// @access  Private/Superuser
+// @access  Private/Owner
 const authenticateRevenueAccess = asyncHandler(async (req, res) => {
     const { revenuePassword } = req.body;
 
-    if (req.user.role !== 'superuser') {
+    if (req.user.role !== 'owner') {
         res.status(403);
-        throw new Error('Access denied. Only superuser can access revenue data.');
+        throw new Error('Access denied. Revenue is restricted to the owner account.');
     }
 
     const user = await User.findById(req.user._id).select('+revenuePassword');
 
     if (!user.revenuePassword) {
         res.status(400);
-        throw new Error('Revenue password not set. Please contact administrator.');
+        throw new Error('Revenue password not set. Please set one first.');
     }
 
     // Compare directly against revenuePassword (not the login password)
@@ -980,19 +1017,31 @@ const authenticateRevenueAccess = asyncHandler(async (req, res) => {
         throw new Error('Invalid revenue password');
     }
 
+    // Short-lived and separately scoped, so the ordinary login JWT can never
+    // be replayed as a revenue unlock. Expires on its own, which is what keeps
+    // an abandoned dashboard from staying open.
+    const jwt = require('jsonwebtoken');
+    const revenueToken = jwt.sign(
+        { id: user._id, scope: 'revenue' },
+        process.env.JWT_SECRET,
+        { expiresIn: REVENUE_SESSION_MINUTES + 'm' }
+    );
+
     res.json({
         success: true,
-        message: 'Revenue access authenticated'
+        message: 'Revenue access authenticated',
+        revenueToken,
+        expiresInMinutes: REVENUE_SESSION_MINUTES
     });
 });
 
 // @desc    Request revenue OTP
 // @route   POST /api/admin/revenue-otp/request
-// @access  Private/Superuser
+// @access  Private/Owner
 const requestRevenueOTP = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'superuser') {
+    if (req.user.role !== 'owner') {
         res.status(403);
-        throw new Error('Access denied. Only superuser can request revenue OTP.');
+        throw new Error('Access denied. Revenue is restricted to the owner account.');
     }
 
     const user = await User.findById(req.user._id);
@@ -1039,13 +1088,13 @@ const requestRevenueOTP = asyncHandler(async (req, res) => {
 
 // @desc    Verify revenue OTP
 // @route   POST /api/admin/revenue-otp/verify
-// @access  Private/Superuser
+// @access  Private/Owner
 const verifyRevenueOTP = asyncHandler(async (req, res) => {
     const { otp } = req.body;
 
-    if (req.user.role !== 'superuser') {
+    if (req.user.role !== 'owner') {
         res.status(403);
-        throw new Error('Access denied. Only superuser can verify revenue OTP.');
+        throw new Error('Access denied. Revenue is restricted to the owner account.');
     }
 
     const user = await User.findById(req.user._id);
@@ -1141,15 +1190,15 @@ const generatePrintStationToken = asyncHandler(async (req, res) => {
     });
 });
 
-// @desc    Set revenue password for superuser (first time)
+// @desc    Set revenue password for the owner (first time)
 // @route   POST /api/admin/set-revenue-password
-// @access  Private/Superuser
+// @access  Private/Owner
 const setRevenuePassword = asyncHandler(async (req, res) => {
     const { revenuePassword } = req.body;
 
-    if (req.user.role !== 'superuser') {
+    if (req.user.role !== 'owner') {
         res.status(403);
-        throw new Error('Access denied. Only superuser can set revenue password.');
+        throw new Error('Access denied. Only the owner can set the revenue password.');
     }
 
     if (!revenuePassword || revenuePassword.length < 6) {
@@ -1171,7 +1220,7 @@ const setRevenuePassword = asyncHandler(async (req, res) => {
     user.revenuePassword = await bcrypt.hash(revenuePassword, salt);
     await user.save();
 
-    console.log(`[REVENUE] Revenue password set for superuser: ${user.email}`);
+    console.log(`[REVENUE] Revenue password set for owner: ${user.email}`);
 
     res.json({
         success: true,
@@ -1182,11 +1231,11 @@ const setRevenuePassword = asyncHandler(async (req, res) => {
 
 // @desc    Get detailed revenue analytics per product per price
 // @route   GET /api/admin/revenue-analytics
-// @access  Private (superuser only)
+// @access  Private (owner only)
 const getRevenueAnalytics = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'superuser') {
+    if (req.user.role !== 'owner') {
         res.status(403);
-        throw new Error('Access denied. Only superuser can access revenue analytics.');
+        throw new Error('Access denied. Revenue is restricted to the owner account.');
     }
 
     const Order = require('../models/Order');
@@ -2076,6 +2125,7 @@ module.exports = {
     getIPVisitorLog,
     getRevenueHistory,
     checkSuperuser,
+    getRevenueAccessStatus,
     authenticateRevenueAccess,
     requestRevenueOTP,
     verifyRevenueOTP,

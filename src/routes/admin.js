@@ -17,6 +17,7 @@ const {
     getIPVisitorLog,
     getRevenueHistory,
     checkSuperuser,
+    getRevenueAccessStatus,
     authenticateRevenueAccess,
     requestRevenueOTP,
     verifyRevenueOTP,
@@ -35,7 +36,7 @@ const {
     getSiteVisitStats
 } = require('../controllers/adminController');
 const { getRevenueOverview } = require('../controllers/revenueController');
-const { protect, admin, owner } = require('../middleware/auth');
+const { protect, admin, owner, ownerOnly, revenueUnlocked } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // Site Settings (public GET for frontend, protected PUT for admin)
@@ -48,16 +49,26 @@ router.get('/stats', protect, admin, getDashboardStats);
 // Superuser check
 router.get('/check-superuser', protect, checkSuperuser);
 
+// ── Revenue ──
+// `owner` is the shop owner and the only role revenue is visible to.
+// `superuser` is the developer account: it administers everything else but is
+// deliberately kept out of the takings, so these use `ownerOnly`, not `owner`.
+// On top of the role check, reading revenue also needs an unlock token minted
+// by /revenue-auth, so an open owner session is not enough on its own.
+
+// Whether this account can open revenue, and whether it has a password yet
+router.get('/revenue/status', protect, getRevenueAccessStatus);
+
 // Revenue password setup (first time)
-router.post('/set-revenue-password', protect, setRevenuePassword);
+router.post('/set-revenue-password', protect, ownerOnly, setRevenuePassword);
 
 // Revenue access authentication
-router.post('/revenue-auth', protect, authenticateRevenueAccess);
-router.post('/revenue-otp/request', protect, requestRevenueOTP);
-router.post('/revenue-otp/verify', protect, verifyRevenueOTP);
+router.post('/revenue-auth', protect, ownerOnly, authenticateRevenueAccess);
+router.post('/revenue-otp/request', protect, ownerOnly, requestRevenueOTP);
+router.post('/revenue-otp/verify', protect, ownerOnly, verifyRevenueOTP);
 
-// Revenue History (superuser only)
-router.get('/revenue-history', protect, admin, getRevenueHistory);
+// Revenue History (owner only)
+router.get('/revenue-history', protect, ownerOnly, revenueUnlocked, getRevenueHistory);
 
 // Receipt generation (superuser only)
 router.get('/receipt/:orderId', protect, generateReceipt);
@@ -70,8 +81,8 @@ router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
 router.get('/analytics/visitor-log', protect, admin, getIPVisitorLog);
 router.get('/analytics/site-visits', protect, admin, getSiteVisitStats);
 
-// Revenue Analytics (superuser only - detailed per-product breakdown)
-router.get('/revenue-analytics', protect, admin, getRevenueAnalytics);
+// Revenue Analytics (owner only - detailed per-product breakdown)
+router.get('/revenue-analytics', protect, ownerOnly, revenueUnlocked, getRevenueAnalytics);
 
 // Product Discounts
 router.put('/products/:id/discount', protect, admin, updateProductDiscount);
@@ -350,7 +361,7 @@ router.post('/orders/:id/refund', protect, admin, processRefund);
 router.delete('/orders/:id', protect, owner, deleteOrder);
 
 // Unified revenue model (online orders + manual receipts)
-router.get('/revenue/overview', protect, owner, getRevenueOverview);
+router.get('/revenue/overview', protect, ownerOnly, revenueUnlocked, getRevenueOverview);
 
 // Users
 router.route('/users')
