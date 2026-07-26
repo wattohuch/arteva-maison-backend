@@ -32,19 +32,13 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     const totalProducts = await Product.countDocuments();
     const totalOrders = await Order.countDocuments();
 
-    // Revenue is the owner's alone. This endpoint is open to every admin (and
-    // to superuser, the developer account), so the figure is only computed and
-    // returned when the caller is the owner — otherwise the headline number
-    // would walk straight past the revenue password gate.
+    // Revenue is deliberately NOT part of this payload, for anyone — not even
+    // the owner. The dashboard renders that tile blurred and fetches the real
+    // figure separately from /admin/revenue/total, which requires both the
+    // owner role and a password unlock. Blur is a CSS property and any admin
+    // can remove it in devtools, so the number must never be sent to a browser
+    // that is not entitled to read it.
     const isOwner = req.user.role === 'owner';
-    let totalRevenue;
-    if (isOwner) {
-        const revenueResult = await Order.aggregate([
-            { $match: { paymentStatus: 'paid' } },
-            { $group: { _id: null, totalRevenue: { $sum: '$total' } } }
-        ]);
-        totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
-    }
 
     // Recent orders
     const recentOrders = await Order.find()
@@ -59,12 +53,26 @@ const getDashboardStats = asyncHandler(async (req, res) => {
             totalUsers,
             totalProducts,
             totalOrders,
-            // Absent, not zero — a zero would read as "no sales" rather than
-            // "not yours to see".
-            ...(isOwner ? { totalRevenue } : {}),
+            // Whether to offer the unlock affordance on the blurred tile. Not
+            // a permission in itself — the real check is on /revenue/total.
             canSeeRevenue: isOwner,
             recentOrders
         }
+    });
+});
+
+// @desc    Total paid revenue, for the dashboard tile
+// @route   GET /api/admin/revenue/total
+// @access  Private/Owner + revenue unlock
+const getRevenueTotal = asyncHandler(async (req, res) => {
+    const result = await Order.aggregate([
+        { $match: { paymentStatus: 'paid' } },
+        { $group: { _id: null, totalRevenue: { $sum: '$total' } } }
+    ]);
+
+    res.json({
+        success: true,
+        data: { totalRevenue: result.length > 0 ? result[0].totalRevenue : 0 }
     });
 });
 
@@ -2126,6 +2134,7 @@ module.exports = {
     getRevenueHistory,
     checkSuperuser,
     getRevenueAccessStatus,
+    getRevenueTotal,
     authenticateRevenueAccess,
     requestRevenueOTP,
     verifyRevenueOTP,

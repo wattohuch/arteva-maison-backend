@@ -210,6 +210,31 @@ const check = (name, cond, detail = '') => {
         headers: { 'X-Revenue-Token': unlock.body.revenueToken },
     }, tok(owner));
     check('GET revenue as unlocked owner -> 200', revOwner.status === 200, JSON.stringify(revOwner.body).slice(0, 200));
+
+    // ── 9b. The dashboard tile's figure is gated the same way ──
+    // The tile is blurred client-side, but blur is only styling: what actually
+    // protects the number is that it is never in the /admin/stats payload and
+    // /revenue/total refuses anyone without an unlock.
+    const statsAdmin = await req('/admin/stats', {}, tok(admin));
+    check('GET /admin/stats -> 200', statsAdmin.status === 200, String(statsAdmin.status));
+    check('  carries no revenue for admin', statsAdmin.body?.data?.totalRevenue === undefined);
+    check('  canSeeRevenue false for admin', statsAdmin.body?.data?.canSeeRevenue === false);
+
+    const statsOwner = await req('/admin/stats', {}, tok(owner));
+    check('  carries no revenue for owner either', statsOwner.body?.data?.totalRevenue === undefined);
+    check('  canSeeRevenue true for owner', statsOwner.body?.data?.canSeeRevenue === true);
+
+    const totalAdmin = await req('/admin/revenue/total', {}, tok(admin));
+    check('GET revenue/total as admin -> 403', totalAdmin.status === 403, String(totalAdmin.status));
+
+    const totalLocked = await req('/admin/revenue/total', {}, tok(owner));
+    check('GET revenue/total as locked owner -> 403', totalLocked.status === 403, String(totalLocked.status));
+
+    const totalOwner = await req('/admin/revenue/total', {
+        headers: { 'X-Revenue-Token': unlock.body.revenueToken },
+    }, tok(owner));
+    check('GET revenue/total as unlocked owner -> 200', totalOwner.status === 200, String(totalOwner.status));
+    check('  returns a number', typeof totalOwner.body?.data?.totalRevenue === 'number');
     check('  reports net total', typeof revOwner.body?.data?.totals?.net === 'number');
     check('  splits by source', !!revOwner.body?.data?.bySource?.manual);
 

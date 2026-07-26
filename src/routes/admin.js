@@ -18,6 +18,7 @@ const {
     getRevenueHistory,
     checkSuperuser,
     getRevenueAccessStatus,
+    getRevenueTotal,
     authenticateRevenueAccess,
     requestRevenueOTP,
     verifyRevenueOTP,
@@ -362,6 +363,9 @@ router.delete('/orders/:id', protect, owner, deleteOrder);
 
 // Unified revenue model (online orders + manual receipts)
 router.get('/revenue/overview', protect, ownerOnly, revenueUnlocked, getRevenueOverview);
+
+// Headline total behind the blurred dashboard tile
+router.get('/revenue/total', protect, ownerOnly, revenueUnlocked, getRevenueTotal);
 
 // Users
 router.route('/users')
