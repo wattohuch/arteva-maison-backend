@@ -2308,6 +2308,62 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
     }
 });
 
+// @desc    Every shopper's current cart — what they have added but not yet
+//          bought. Guests have no server-side cart (nothing to sign it with),
+//          so this only ever covers logged-in accounts.
+// @route   GET /api/admin/carts
+// @access  Private/Admin
+const getActiveCarts = asyncHandler(async (req, res) => {
+    const Cart = require('../models/Cart');
+
+    const carts = await Cart.find({ 'items.0': { $exists: true } })
+        .populate('user', 'name email phone')
+        .populate('items.product', 'name price images stock')
+        .sort({ updatedAt: -1 })
+        .lean();
+
+    let totalItems = 0;
+    let totalValue = 0;
+
+    const data = carts
+        // A cart can outlive the account it belonged to, or every product in
+        // it can be deleted — either leaves nothing an admin can act on.
+        .filter(cart => cart.user)
+        .map(cart => {
+            const items = cart.items.filter(item => item.product);
+            const itemCount = items.reduce((sum, i) => sum + i.quantity, 0);
+            const value = items.reduce((sum, i) => sum + (i.product.price || 0) * i.quantity, 0);
+
+            totalItems += itemCount;
+            totalValue += value;
+
+            return {
+                _id: cart._id,
+                user: cart.user,
+                items: items.map(i => ({
+                    product: i.product,
+                    quantity: i.quantity,
+                    lineTotal: (i.product.price || 0) * i.quantity,
+                })),
+                itemCount,
+                value,
+                updatedAt: cart.updatedAt,
+            };
+        });
+
+    res.json({
+        success: true,
+        data: {
+            carts: data,
+            totals: {
+                carts: data.length,
+                items: totalItems,
+                value: totalValue,
+            },
+        },
+    });
+});
+
 module.exports = {
     getDashboardStats,
     getAdminProducts,
@@ -2343,5 +2399,6 @@ module.exports = {
     deleteOrder,
     getSiteSettings,
     updateSiteSettings,
-    getSiteVisitStats
+    getSiteVisitStats,
+    getActiveCarts
 };

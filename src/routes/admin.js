@@ -35,7 +35,8 @@ const {
     deleteOrder,
     getSiteSettings,
     updateSiteSettings,
-    getSiteVisitStats
+    getSiteVisitStats,
+    getActiveCarts
 } = require('../controllers/adminController');
 const { getRevenueOverview } = require('../controllers/revenueController');
 const { protect, admin, owner, ownerOnly, revenueUnlocked } = require('../middleware/auth');
@@ -82,6 +83,9 @@ router.post('/generate-print-token', protect, admin, generatePrintStationToken);
 router.get('/analytics/product-views', protect, admin, getProductViewAnalytics);
 router.get('/analytics/visitor-log', protect, admin, getIPVisitorLog);
 router.get('/analytics/site-visits', protect, admin, getSiteVisitStats);
+
+// Every logged-in shopper's current cart (guests have none server-side)
+router.get('/carts', protect, admin, getActiveCarts);
 
 // Revenue Analytics (owner only - detailed per-product breakdown)
 router.get('/revenue-analytics', protect, ownerOnly, revenueUnlocked, getRevenueAnalytics);
