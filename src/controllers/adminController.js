@@ -2015,40 +2015,157 @@ const deleteOrder = asyncHandler(async (req, res) => {
 // @desc    Get IP visitor log for analytics
 // @route   GET /api/admin/analytics/visitor-log
 // @access  Private/Admin
+/**
+ * Read a user-agent well enough to be useful in a table.
+ *
+ * Not a full UA parser — those are a dependency and a maintenance burden for
+ * what is, here, three columns in an admin screen. Order matters: Edge claims
+ * to be Chrome, Chrome claims to be Safari, and every one of them claims to be
+ * Mozilla, so the most specific token has to be tested first.
+ */
+function describeUserAgent(ua = '') {
+    if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Unknown', bot: false };
+
+    const bot = /bot|crawl|spider|slurp|bingpreview|facebookexternalhit|headless/i.test(ua);
+
+    const browser =
+        /edg\//i.test(ua) ? 'Edge'
+            : /opr\/|opera/i.test(ua) ? 'Opera'
+                : /samsungbrowser/i.test(ua) ? 'Samsung Internet'
+                    : /chrome|crios/i.test(ua) ? 'Chrome'
+                        : /firefox|fxios/i.test(ua) ? 'Firefox'
+                            : /safari/i.test(ua) ? 'Safari'
+                                : 'Other';
+
+    const os =
+        /windows nt/i.test(ua) ? 'Windows'
+            : /android/i.test(ua) ? 'Android'
+                : /iphone|ipad|ipod/i.test(ua) ? 'iOS'
+                    : /mac os x/i.test(ua) ? 'macOS'
+                        : /linux/i.test(ua) ? 'Linux'
+                            : 'Other';
+
+    const device =
+        /ipad|tablet/i.test(ua) ? 'Tablet'
+            : /mobi|iphone|android/i.test(ua) ? 'Mobile'
+                : 'Desktop';
+
+    return { browser, os, device, bot };
+}
+
+// @desc    Visitor log: who has been on the site, by IP
+// @route   GET /api/admin/analytics/visitor-log
+// @access  Private/Admin
+//
+// This read from ProductView, which records only visits to a *product* page.
+// With no product views recorded the table was permanently empty, while
+// SiteVisit — the collection that actually holds every visit, tens of
+// thousands of them — went unread. It reads SiteVisit now, and returns two
+// shapes: a roll-up per IP, which is the question being asked ("who is
+// visiting"), and the raw entries behind it.
 const getIPVisitorLog = asyncHandler(async (req, res) => {
-    const limit = parseInt(req.query.limit) || 200;
+    const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
     const dateFilter = req.query.date || '';
+    const search = (req.query.search || '').trim();
 
     try {
+        const SiteVisit = require('../models/SiteVisit');
         const ProductView = require('../models/ProductView');
-        const query = dateFilter ? { date: dateFilter } : {};
-        const views = await ProductView.find(query)
-            .populate('product', 'name nameAr images')
+
+        const query = {};
+        if (dateFilter) query.date = dateFilter;
+        // Anchored so a search cannot be turned into an expensive regex scan.
+        if (search) query.ip = { $regex: `^${search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` };
+
+        const visits = await SiteVisit.find(query)
             .sort({ createdAt: -1 })
             .limit(limit)
             .lean();
 
-        const data = views.map(v => {
-            let productImage = '';
-            if (v.product?.images?.length > 0) {
-                const primary = v.product.images.find(img => img.isPrimary);
-                productImage = (primary || v.product.images[0]).url || '';
-            }
+        const log = visits.map(v => {
+            const ua = describeUserAgent(v.userAgent);
             return {
                 ip: v.ip,
                 date: v.date,
-                productName: v.product?.name || 'Deleted Product',
-                productImage,
-                userAgent: v.userAgent || '',
+                page: v.page || '/',
                 referrer: v.referrer || '',
-                createdAt: v.createdAt
+                userAgent: v.userAgent || '',
+                browser: ua.browser,
+                os: ua.os,
+                device: ua.device,
+                isBot: ua.bot,
+                createdAt: v.createdAt,
             };
         });
 
-        res.json({ success: true, data });
+        // Roll the entries up per IP. One SiteVisit document is one IP on one
+        // day, so the number of documents for an IP is the number of days it
+        // has visited on — which is the figure worth showing.
+        const byIpMap = new Map();
+        for (const entry of log) {
+            const existing = byIpMap.get(entry.ip);
+            if (existing) {
+                existing.visits += 1;
+                existing.lastSeen = existing.lastSeen > entry.createdAt ? existing.lastSeen : entry.createdAt;
+                existing.firstSeen = existing.firstSeen < entry.createdAt ? existing.firstSeen : entry.createdAt;
+                if (entry.page && !existing.pages.includes(entry.page)) existing.pages.push(entry.page);
+            } else {
+                byIpMap.set(entry.ip, {
+                    ip: entry.ip,
+                    visits: 1,
+                    firstSeen: entry.createdAt,
+                    lastSeen: entry.createdAt,
+                    pages: entry.page ? [entry.page] : [],
+                    browser: entry.browser,
+                    os: entry.os,
+                    device: entry.device,
+                    isBot: entry.isBot,
+                    referrer: entry.referrer,
+                    productViews: 0,
+                });
+            }
+        }
+
+        // Fold in product interest where we have it. Absence is normal — a
+        // visitor who never opened a product page simply has none.
+        try {
+            const ips = [...byIpMap.keys()];
+            if (ips.length) {
+                const productQuery = { ip: { $in: ips } };
+                if (dateFilter) productQuery.date = dateFilter;
+
+                const views = await ProductView.find(productQuery)
+                    .populate('product', 'name')
+                    .lean();
+
+                for (const view of views) {
+                    const row = byIpMap.get(view.ip);
+                    if (!row) continue;
+                    row.productViews += 1;
+                    if (!row.lastProduct && view.product?.name) row.lastProduct = view.product.name;
+                }
+            }
+        } catch (viewErr) {
+            console.error('[ANALYTICS] Product view join failed:', viewErr.message);
+        }
+
+        const byIp = [...byIpMap.values()].sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+
+        res.json({
+            success: true,
+            data: {
+                log,
+                byIp,
+                totals: {
+                    entries: log.length,
+                    uniqueIps: byIp.length,
+                    bots: byIp.filter(r => r.isBot).length,
+                },
+            },
+        });
     } catch (e) {
         console.error('[ANALYTICS] Visitor log error:', e.message);
-        res.json({ success: true, data: [] });
+        res.json({ success: true, data: { log: [], byIp: [], totals: { entries: 0, uniqueIps: 0, bots: 0 } } });
     }
 });
 
@@ -2134,9 +2251,6 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
         // Get total visit records
         const totalVisits = await SiteVisit.countDocuments();
 
-        // Get today's unique visitors
-        const todayVisitors = await SiteVisit.countDocuments({ date: today });
-
         // Daily breakdown (last 90 days)
         const dailyBreakdown = await SiteVisit.aggregate([
             { $match: { date: { $gte: ninetyDaysAgoStr } } },
@@ -2155,6 +2269,12 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
             uniqueVisitors: d.uniqueVisitors.length,
             totalVisits: d.totalVisits
         }));
+
+        /* Today's figure is read out of the same breakdown the table below it
+           renders, rather than counted by a separate query. Two queries meant
+           the stat card and the table could disagree about the same day — and
+           they did: the card read 0 while the row for today read 3. */
+        const todayVisitors = daily.find(d => d.date === today)?.totalVisits || 0;
 
         // Last 30 days summary
         const thirtyDaysAgo = new Date();
