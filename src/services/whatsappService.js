@@ -151,9 +151,76 @@ class WhatsAppService {
     }
 
     /**
+     * Send an approved template.
+     *
+     * Free-form text only reaches a customer inside the 24-hour window that
+     * opens when *they* message us. Order notifications are the opposite case
+     * — we message first, often days later — so Meta requires a template that
+     * has been approved in advance. Without one the send is accepted by our
+     * code and rejected by Meta, which is silent unless someone reads the log.
+     *
+     * Template names and their language are configured per notification type
+     * (see TEMPLATE_FOR_TYPE). `params` fill the {{1}}, {{2}} … placeholders in
+     * the approved body, in order.
+     */
+    async sendOfficialTemplate(to, templateName, languageCode, params = []) {
+        const cleanPhone = this.formatPhone(to);
+        if (!cleanPhone) throw new Error('Invalid phone number format');
+
+        const url = `${this.whatsappApiUrl}/${this.whatsappApiVersion}/${this.whatsappPhoneNumberId}/messages`;
+
+        const payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: cleanPhone,
+            type: 'template',
+            template: {
+                name: templateName,
+                language: { code: languageCode || 'en' },
+            },
+        };
+
+        if (params.length) {
+            payload.template.components = [{
+                type: 'body',
+                parameters: params.map(text => ({ type: 'text', text: String(text ?? '') })),
+            }];
+        }
+
+        const response = await axios.post(url, payload, {
+            headers: {
+                'Authorization': `Bearer ${this.whatsappAccessToken}`,
+                'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+        });
+
+        return response.data;
+    }
+
+    /**
+     * The approved template configured for a notification type, if any.
+     *
+     * Read from the environment rather than hardcoded: the names are decided
+     * by whoever submits them for approval in Business Manager, and approval
+     * happens long after this code ships. Nothing configured means the service
+     * keeps sending free-form text exactly as it does today, so adding this
+     * changes no behaviour until a template is actually named.
+     */
+    templateFor(type) {
+        const key = `WHATSAPP_TEMPLATE_${String(type).toUpperCase()}`;
+        const name = process.env[key];
+        if (!name) return null;
+        return {
+            name,
+            language: process.env[`${key}_LANG`] || process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+        };
+    }
+
+    /**
      * Send WhatsApp message (tries Meta official API, falls back to print-station queue)
      */
-    async sendMessage(to, message, type = 'test', orderId = null) {
+    async sendMessage(to, message, type = 'test', orderId = null, templateParams = null) {
         const phone = this.formatPhone(to);
         if (!phone) {
             console.warn('⚠️ Invalid phone number:', to);
@@ -176,8 +243,23 @@ class WhatsAppService {
         // Try Official Meta API
         if (this.isOfficialEnabled) {
             try {
-                console.log(`[WA-OFFICIAL] Sending message to ${phone} (type: ${type})`);
-                const responseData = await this.sendOfficialMessage(phone, message);
+                /* Prefer an approved template when one is configured for this
+                 * type and the caller supplied its parameters. That is the only
+                 * form Meta will deliver outside the 24-hour service window,
+                 * which is where every order notification falls. With nothing
+                 * configured this is exactly the free-form send it always was. */
+                const template = templateParams ? this.templateFor(type) : null;
+
+                let responseData;
+                if (template) {
+                    console.log(`[WA-OFFICIAL] Sending template "${template.name}" to ${phone} (type: ${type})`);
+                    responseData = await this.sendOfficialTemplate(
+                        phone, template.name, template.language, templateParams
+                    );
+                } else {
+                    console.log(`[WA-OFFICIAL] Sending message to ${phone} (type: ${type})`);
+                    responseData = await this.sendOfficialMessage(phone, message);
+                }
                 console.log(`[WA-OFFICIAL] ✅ Message sent successfully. Meta Msg ID: ${responseData.messages?.[0]?.id}`);
                 
                 // Save to database queue as 'sent' for log tracking
@@ -510,7 +592,22 @@ We will notify you when your order ships.
 📄 عرض الإيصال: ${receiptUrl}
 📍 تتبع الطلب: ${trackUrl}`;
 
-        const result = await this.sendMessage(phone, message, 'customer_new_order', order._id);
+        /* Parameters for the approved template, in the order its {{1}}…{{4}}
+         * placeholders expect. Used only when WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER
+         * names one; otherwise the composed text above is sent as before.
+         * Submit the template with a body along the lines of:
+         *   "Hello {{1}}, your ARTÉVA order {{2}} is confirmed. Total {{3}}.
+         *    Track it here: {{4}}"  */
+        const templateParams = [
+            name,
+            order.orderNumber,
+            `${order.total} ${order.currency}`,
+            trackUrl,
+        ];
+
+        const result = await this.sendMessage(
+            phone, message, 'customer_new_order', order._id, templateParams
+        );
         console.log(`[WA-CUSTOMER] Result for ${order.orderNumber}: ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
         return result;
     }
