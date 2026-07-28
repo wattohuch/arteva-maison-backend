@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, admin } = require('../middleware/auth');
 const {
     getCatalogFeed,
+    getProductPreview,
     verifyWhatsAppWebhook,
     handleWhatsAppWebhook,
     getMetaStatus,
@@ -11,6 +12,10 @@ const {
 // Product feed for Commerce Manager. Public by necessity — Meta's crawler
 // carries no credentials, and every field is already public on the storefront.
 router.get('/catalog.xml', getCatalogFeed);
+
+// Link preview for shared product URLs. Vercel sends only crawler traffic here
+// (see vercel.json) — real visitors go on getting the SPA from the CDN.
+router.get('/og/product/:slug', getProductPreview);
 
 // WhatsApp Cloud API webhook. GET is Meta's one-time verification handshake;
 // POST carries inbound messages and delivery receipts, and is authenticated by

@@ -97,6 +97,86 @@ ${entries.join('\n')}
 });
 
 /**
+ * Link preview for a single product.
+ *
+ * The storefront is client-rendered, so every URL returns the same HTML shell
+ * with one fixed title and description. Crawlers do not run JavaScript, which
+ * means every product link shared to Instagram, WhatsApp or Facebook previewed
+ * as the generic site card — no product name, no price, no photograph.
+ *
+ * Vercel rewrites crawler traffic for /product/:slug here (see vercel.json).
+ * Real visitors never reach this route: they get the SPA from the CDN exactly
+ * as before, so nothing about the site's behaviour or speed changes.
+ *
+ * The response is a complete document rather than tags alone, because that is
+ * what a crawler expects to parse. It carries a redirect for the rare human who
+ * lands here — a crawler ignores it, a browser follows it to the real page.
+ *
+ * @route GET /api/meta/og/product/:slug
+ * @access Public
+ */
+const getProductPreview = asyncHandler(async (req, res) => {
+    const { slug } = req.params;
+    const canonical = `${FRONTEND}/product/${encodeURIComponent(slug)}`;
+
+    const product = await Product.findOne({ slug, isActive: true })
+        .select('name nameAr description descriptionAr price currency images slug')
+        .lean();
+
+    // Unknown slug still gets a valid card — a broken preview is worse than a
+    // generic one, and the crawler must not see a 404 for a live share.
+    const title = product
+        ? `${product.name} — ARTÉVA Maison`
+        : 'ARTÉVA Maison | Luxury Home Décor';
+
+    const description = product
+        ? (product.description || `${product.name}. Handcrafted home décor, delivered across Kuwait.`).slice(0, 200)
+        : 'Luxury home décor, handcrafted glassware and artisan collections.';
+
+    const image = product?.images?.length
+        ? (product.images.find(i => i.isPrimary) || product.images[0]).url
+        : `${FRONTEND}/assets/images/favicon.svg`;
+
+    const price = product ? Number(product.price).toFixed(3) : '';
+    const currency = product?.currency || 'KWD';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>${xmlEscape(title)}</title>
+<meta name="description" content="${xmlEscape(description)}" />
+<link rel="canonical" href="${xmlEscape(canonical)}" />
+
+<meta property="og:type" content="${product ? 'product' : 'website'}" />
+<meta property="og:site_name" content="ARTÉVA Maison" />
+<meta property="og:title" content="${xmlEscape(title)}" />
+<meta property="og:description" content="${xmlEscape(description)}" />
+<meta property="og:url" content="${xmlEscape(canonical)}" />
+<meta property="og:image" content="${xmlEscape(image)}" />
+<meta property="og:image:alt" content="${xmlEscape(product?.name || 'ARTÉVA Maison')}" />
+${product ? `<meta property="product:price:amount" content="${price}" />
+<meta property="product:price:currency" content="${xmlEscape(currency)}" />` : ''}
+
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${xmlEscape(title)}" />
+<meta name="twitter:description" content="${xmlEscape(description)}" />
+<meta name="twitter:image" content="${xmlEscape(image)}" />
+
+<meta http-equiv="refresh" content="0; url=${xmlEscape(canonical)}" />
+</head>
+<body>
+<p><a href="${xmlEscape(canonical)}">${xmlEscape(title)}</a></p>
+</body>
+</html>`;
+
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    // Crawlers re-scrape often; an hour spares the database a query per scrape.
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.send(html);
+});
+
+/**
  * Webhook verification.
  *
  * Meta calls this once when the webhook is saved and expects the challenge
@@ -198,6 +278,7 @@ const getMetaStatus = asyncHandler(async (req, res) => {
 
 module.exports = {
     getCatalogFeed,
+    getProductPreview,
     verifyWhatsAppWebhook,
     handleWhatsAppWebhook,
     getMetaStatus,
