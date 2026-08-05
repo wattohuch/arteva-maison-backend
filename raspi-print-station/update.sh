@@ -129,6 +129,27 @@ main() {
     echo ""
   fi
 
+  # ── 5b. Warn when the systemd units / watchdog are older than the code ──
+  # This script intentionally does not touch systemd or cron — that is setup.sh's
+  # job, and it does apt installs and swap setup that should not run on every
+  # update. But a Pi that only ever runs update.sh keeps stale unit files, so say
+  # so rather than letting it pass unnoticed.
+  WA_UNIT=/etc/systemd/system/arteva-whatsapp.service
+  NEEDS_SETUP=0
+  if [ -f "$WA_UNIT" ] && grep -q '^Restart=always' "$WA_UNIT" 2>/dev/null; then
+    NEEDS_SETUP=1
+  fi
+  if ! sudo crontab -l 2>/dev/null | grep -q "watchdog.sh"; then
+    NEEDS_SETUP=1
+  fi
+  if [ "$NEEDS_SETUP" -eq 1 ]; then
+    echo ""
+    echo "  ⚠️  The service definitions and/or watchdog on this Pi are out of date."
+    echo "     Code was updated, but systemd units and cron are installed by"
+    echo "     setup.sh. Run it once (safe to re-run):"
+    echo "       bash setup.sh"
+  fi
+
   # ── 6. Restart ──
   echo ""
   echo "🔄 Restarting services..."

@@ -119,10 +119,27 @@ for svc in arteva-print arteva-whatsapp; do
     else
       warn "$svc is installed but NOT running — sudo systemctl start $svc"
     fi
+    # Running now and starting after a power cut are different things:
+    # is-active is the former, is-enabled is the latter.
+    if systemctl is-enabled --quiet "$svc" 2>/dev/null; then
+      ok "$svc starts automatically on boot"
+    else
+      bad "$svc will NOT start after a reboot or power cut — sudo systemctl enable $svc"
+    fi
   else
     bad "$svc not installed — run: bash setup.sh"
   fi
 done
+
+# A stale unit file is invisible otherwise: update.sh copies code but does not
+# rewrite systemd units, so a Pi updated without re-running setup.sh keeps the
+# old Restart=always. With it, the agent exiting because WhatsApp logged it out
+# is restarted every few seconds forever, burying the line that says a QR scan
+# is needed.
+WA_UNIT=/etc/systemd/system/arteva-whatsapp.service
+if [ -f "$WA_UNIT" ] && grep -q '^Restart=always' "$WA_UNIT" 2>/dev/null; then
+  warn "arteva-whatsapp unit is out of date (Restart=always → crash-loops when logged out). Re-run: bash setup.sh"
+fi
 
 # ── 5. Watchdog must be able to act ──
 echo ""
