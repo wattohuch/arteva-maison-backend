@@ -1,0 +1,130 @@
+#!/bin/bash
+# ── ARTÉVA MAISON — Update the Pi from GitHub (no git needed) ──
+#
+# Downloads the latest raspi-print-station folder straight from GitHub as a
+# tarball, keeps everything local to this Pi, and restarts the services.
+#
+#     bash update.sh
+#
+# Kept intact, never overwritten:
+#     .env                  your configuration
+#     auth_info_baileys/    the paired WhatsApp session
+#     queue/                receipts not yet printed
+#     logs/                 history
+#     greeted-state.json    greeting cooldowns
+#
+# The whole body is wrapped in main() on purpose: bash must parse to the final
+# line before it runs anything, so this script replacing itself mid-update
+# cannot corrupt the run.
+set -u
+
+REPO="${REPO:-wattohuch/arteva-maison-backend}"
+BRANCH="${BRANCH:-main}"
+SUBDIR="raspi-print-station"
+
+main() {
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+
+  echo ""
+  echo "  ╔════════════════════════════════════════════════════╗"
+  echo "  ║  ARTÉVA — Update Print Station                     ║"
+  echo "  ╚════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  Source: github.com/$REPO ($BRANCH)"
+  echo "  Target: $SCRIPT_DIR"
+  echo ""
+
+  # ── 1. Download ──
+  echo "⬇️  Downloading..."
+  URL="https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH"
+  if ! curl -fsSL "$URL" -o "$TMP/src.tar.gz"; then
+    echo "  ❌ Download failed."
+    echo "     Check the Pi's internet, and that github.com/$REPO is reachable."
+    exit 1
+  fi
+
+  # Pull out only the folder we care about.
+  REPO_NAME="${REPO##*/}"
+  if ! tar -xzf "$TMP/src.tar.gz" -C "$TMP" "$REPO_NAME-$BRANCH/$SUBDIR" 2>/dev/null; then
+    echo "  ❌ Could not extract $SUBDIR from the archive."
+    exit 1
+  fi
+  NEW="$TMP/$REPO_NAME-$BRANCH/$SUBDIR"
+  echo "  ✅ Downloaded"
+
+  # ── 2. Refuse to install anything that does not parse ──
+  echo ""
+  echo "🔍 Checking the downloaded scripts..."
+  BAD=0
+  for f in "$NEW"/*.js; do
+    [ -f "$f" ] || continue
+    if ! node --check "$f" 2>/dev/null; then
+      echo "  ❌ Syntax error in $(basename "$f")"
+      BAD=1
+    fi
+  done
+  if [ "$BAD" -eq 1 ]; then
+    echo "  Aborting — nothing was changed."
+    exit 1
+  fi
+  echo "  ✅ All scripts parse"
+
+  # ── 3. Copy code only ──
+  echo ""
+  echo "📦 Installing..."
+  for f in "$NEW"/*.js "$NEW"/*.sh "$NEW"/package.json "$NEW"/.env.example \
+           "$NEW"/.gitignore "$NEW"/.gitattributes "$NEW"/README.md "$NEW"/logo.png; do
+    [ -f "$f" ] && cp -f "$f" "$SCRIPT_DIR/"
+  done
+  # CRLF in a shebang makes a script unrunnable on Linux.
+  sed -i 's/\r$//' "$SCRIPT_DIR"/*.sh 2>/dev/null || true
+  chmod +x "$SCRIPT_DIR"/*.sh 2>/dev/null || true
+  echo "  ✅ Files updated (.env, session, queue and logs untouched)"
+
+  # ── 4. First run needs a config ──
+  if [ ! -f "$SCRIPT_DIR/.env" ]; then
+    cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+    echo ""
+    echo "  ⚠️  No .env existed — created one from the example."
+    echo "     Set PRINT_KEY and PRINTER_NAME before this will work:"
+    echo "       nano $SCRIPT_DIR/.env"
+  fi
+
+  # ── 5. Dependencies ──
+  echo ""
+  echo "📚 Installing dependencies..."
+  (cd "$SCRIPT_DIR" && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -4)
+
+  # ── 6. Restart ──
+  echo ""
+  echo "🔄 Restarting services..."
+  if sudo systemctl restart arteva-print 2>/dev/null; then
+    echo "  ✅ arteva-print"
+  else
+    echo "  ℹ️  arteva-print not installed yet — run: bash setup.sh"
+  fi
+
+  # Do not restart into a logged-out WhatsApp; it would just churn.
+  if [ -f "$SCRIPT_DIR/NEEDS_QR_SCAN" ]; then
+    echo "  ⚠️  WhatsApp is logged out — not restarting it."
+    echo "     Run: bash wa-reset.sh"
+  elif sudo systemctl restart arteva-whatsapp 2>/dev/null; then
+    echo "  ✅ arteva-whatsapp"
+  else
+    echo "  ℹ️  arteva-whatsapp not installed yet — run: bash setup.sh"
+  fi
+
+  # ── 7. Verify ──
+  echo ""
+  echo "🩺 Health check..."
+  sleep 4
+  bash "$SCRIPT_DIR/doctor.sh" || true
+
+  echo ""
+  echo "  Update complete."
+  echo ""
+}
+
+main "$@"

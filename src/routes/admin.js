@@ -278,9 +278,14 @@ router.get('/whatsapp-queue/poll', async (req, res) => {
     }
     try {
         const WhatsAppQueue = require('../models/WhatsAppQueue');
-        // Fetch up to 10 pending messages
+        /* Priority first, then oldest.
+           Every message carries a priority the service works out per type —
+           customer order confirmations at 1-2, owner notifications at 5, tests
+           at 10 — and this sorted purely by createdAt, so the field was
+           computed, stored, and then ignored. A backlog of owner notifications
+           delayed the confirmations customers are actually waiting on. */
         const messages = await WhatsAppQueue.find({ status: 'pending' })
-            .sort({ createdAt: 1 })
+            .sort({ priority: 1, createdAt: 1 })
             .limit(10)
             .lean();
 

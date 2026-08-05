@@ -36,6 +36,22 @@ function getLogoBase64() {
   return _logoCache || null;
 }
 
+/* Webfonts are OFF for printing.
+ *
+ * The template's font <link> points at fonts.googleapis.com, and a stylesheet
+ * in <head> blocks both rendering and DOMContentLoaded until it resolves. On a
+ * Pi with no internet the request does not fail fast — it hangs — so every
+ * receipt stalled until the navigation timeout and then printed NOTHING. A
+ * print station cannot depend on the internet being up.
+ *
+ * Rendering from locally installed fonts is instant and deterministic.
+ * setup.sh installs Noto Sans Arabic, so Arabic still renders correctly; the
+ * Latin faces fall back to the serif/sans stacks already declared in the
+ * template. Set RECEIPT_WEB_FONTS=true to opt back in if this Pi has reliable
+ * internet and you want exact typeface parity with the website.
+ */
+const USE_WEB_FONTS = process.env.RECEIPT_WEB_FONTS === 'true';
+
 // Build receipt HTML — delegates to shared template
 async function buildReceiptHTML(order) {
   if (!order) throw new Error('buildReceiptHTML: order is null');
@@ -44,7 +60,9 @@ async function buildReceiptHTML(order) {
   const whatsappQR = await generateQR('https://wa.me/96550683207');
   const logoB64 = getLogoBase64();
 
-  return buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64: logoB64 });
+  return buildReceiptHTMLFromData(order, {
+    receiptQR, whatsappQR, logoBase64: logoB64, webFonts: USE_WEB_FONTS,
+  });
 }
 
 // Build shipping label HTML — all user data escaped

@@ -1,12 +1,15 @@
 {
   "name": "arteva-print-station",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "description": "Arteva Maison – Production-Hardened Raspberry Pi Print + WhatsApp Station",
   "main": "print-station.js",
   "scripts": {
     "start": "node --max-old-space-size=256 --expose-gc print-station.js",
     "start:wa": "node --max-old-space-size=128 whatsapp-agent.js",
     "test-print": "TEST_MODE=true node --max-old-space-size=256 print-station.js",
+    "doctor": "bash doctor.sh",
+    "wa:reset": "bash wa-reset.sh",
+    "wa:test": "node wa-test.js",
     "check-printer": "node -e \"const {execSync}=require('child_process'); console.log('CUPS printers:'); console.log(execSync('lpstat -p -d').toString());\"",
     "check-health": "node -e \"const http=require('http'); http.get('http://localhost:3100/health', r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>console.log(JSON.parse(d)))}).on('error',e=>console.log('Not running:',e.message))\"",
     "check-wa-health": "node -e \"const http=require('http'); http.get('http://localhost:3101/health', r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>console.log(JSON.parse(d)))}).on('error',e=>console.log('Not running:',e.message))\"",
@@ -15,7 +18,7 @@
     "status": "echo '=== Print Station ===' && systemctl status arteva-print --no-pager 2>/dev/null || echo 'not installed' && echo '=== WhatsApp Agent ===' && systemctl status arteva-whatsapp --no-pager 2>/dev/null || echo 'not installed'"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.0",
+    "@whiskeysockets/baileys": "6.7.24",
     "axios": "^1.7.0",
     "dotenv": "^16.4.0",
     "pino": "^9.0.0",

@@ -283,12 +283,80 @@ class WhatsAppService {
             } catch (err) {
                 const errMsg = err.response?.data?.error?.message || err.message;
                 console.error(`[WA-OFFICIAL] ❌ Meta Cloud API failed: ${errMsg}`);
+
+                const queued = await this._enqueueForPiAgent({
+                    phone, message, type, orderId, priority,
+                    reason: `Official API failed: ${errMsg}`,
+                });
+                if (queued) return { success: true, queued: true, via: 'pi-agent' };
+
                 return { success: false, error: `Official failed: ${errMsg}` };
             }
         }
 
         console.warn(`[WA-OFFICIAL] ❌ WhatsApp Cloud API is not configured.`);
+
+        const queued = await this._enqueueForPiAgent({
+            phone, message, type, orderId, priority,
+            reason: 'Cloud API not configured',
+        });
+        if (queued) return { success: true, queued: true, via: 'pi-agent' };
+
         return { success: false, error: 'WhatsApp API not configured' };
+    }
+
+    /**
+     * Hand a message to the Raspberry Pi agent's queue.
+     *
+     * ── Why this is opt-in ──
+     * This class has always advertised a "Green API / Baileys Print Station
+     * Queue (Fallback)", but no such fallback existed: the only WhatsAppQueue
+     * document ever written was a `status: 'sent'` audit row AFTER the Cloud
+     * API had already delivered. Nothing wrote `pending`, and `pending` is
+     * exactly what the Pi polls for — so the Pi agent could never deliver
+     * anything, and whenever the Cloud API was unconfigured or failing, order
+     * confirmations were dropped silently. This restores the missing path.
+     *
+     * It defaults to OFF because the Pi channel is only as trustworthy as its
+     * WhatsApp session. A Baileys session with corrupted encryption keys still
+     * "sends" successfully while every recipient sees "Waiting for this
+     * message" — so silently rerouting customer order confirmations onto a
+     * broken Pi is worse than not sending them. Enable it only once
+     * `npm run wa:test` on the Pi shows a readable message arriving:
+     *
+     *     WHATSAPP_PI_FALLBACK=true
+     *
+     * Note on duplicates: Meta returns a message id on acceptance, so a thrown
+     * error means it did not accept the message and re-sending is correct. A
+     * request that times out is the one ambiguous case and could produce two
+     * messages; that is preferred over a customer never being told their order
+     * was confirmed.
+     */
+    async _enqueueForPiAgent({ phone, message, type, orderId, priority, reason }) {
+        if (process.env.WHATSAPP_PI_FALLBACK !== 'true') {
+            console.warn(`[WA-FALLBACK] Pi queue disabled — message to ${phone} NOT sent (${reason}). ` +
+                `Set WHATSAPP_PI_FALLBACK=true once the Pi's WhatsApp session is verified.`);
+            return false;
+        }
+
+        try {
+            const WhatsAppQueue = require('../models/WhatsAppQueue');
+            await WhatsAppQueue.create({
+                phone,
+                message,
+                type,
+                order: orderId,
+                priority,
+                status: 'pending',
+                attempts: 0,
+                errorLog: `Queued for Pi agent — ${reason}`,
+            });
+            console.log(`[WA-FALLBACK] 📥 Queued for Pi agent: ${phone} (type: ${type}, priority: ${priority})`);
+            return true;
+        } catch (dbErr) {
+            console.error(`[WA-FALLBACK] ❌ Could not queue message for Pi agent: ${dbErr.message}`);
+            return false;
+        }
     }
 
     /**

@@ -81,6 +81,20 @@ const HEALTH_PORT   = parseInt(process.env.HEALTH_PORT) || 3100;
 const MAX_RETRIES   = parseInt(process.env.MAX_RETRIES) || 5;
 const HEALTH_TOKEN  = process.env.HEALTH_TOKEN || '';  // Optional auth for health endpoint
 
+/* How long to let webfonts load before printing anyway. Online they arrive in
+   well under a second; offline this is the ceiling on the delay rather than a
+   reason to fail the receipt. */
+const FONT_WAIT_MS  = parseInt(process.env.FONT_WAIT_MS) || 4000;
+
+/* Bound on how long a single job waits for a missing printer. The job is
+   already on disk, so giving up here just returns it to the queue — the
+   printer health check flushes it the moment the printer reappears. */
+const PRINTER_WAIT_ATTEMPTS = parseInt(process.env.PRINTER_WAIT_ATTEMPTS) || 12; // ~1 min
+
+/* Refuse to accept new work below this much free space. Receipts are written
+   to disk before printing, so a full SD card means silently losing them. */
+const MIN_FREE_DISK_MB = parseInt(process.env.MIN_FREE_DISK_MB) || 50;
+
 // ── Directories ─────────────────────────────────────────────
 const BASE_DIR      = __dirname;
 const QUEUE_DIR     = path.join(BASE_DIR, 'queue');
@@ -208,6 +222,83 @@ function addProcessed(id) {
 // Track orders currently being processed to prevent double-queue
 const activeJobs = new Set();
 
+/**
+ * Order ids that already have a job file in pending/ or failed/.
+ *
+ * Without this, an order that fails to print spawns a NEW pending file on
+ * every poll: `processed` was only populated on success, the backend still
+ * reports the order (printedAt unset), so each 30s cycle wrote another job.
+ * Each copy carried retries: 0, so MAX_RETRIES was never reached either — an
+ * unprintable order queued itself forever and filled the SD card.
+ */
+const queuedOrderIds = new Set();
+
+/**
+ * Orders printed on paper but not yet acknowledged to the API.
+ *
+ * The failure this prevents: receipt prints, moveToCompleted succeeds,
+ * markPrinted fails (Render unreachable), process restarts. The in-memory
+ * `processed` set is gone, the backend still lists the order as unprinted, and
+ * the customer's receipt prints a second time.
+ *
+ * Persisted, so a restart still knows. Entries are removed once the API
+ * confirms, which is what keeps a deliberate admin re-print working: the
+ * backend clears printedAt only after we have acknowledged, so by then the id
+ * is no longer here to block it.
+ */
+const UNACKED_FILE = path.join(QUEUE_DIR, 'unacked-prints.json');
+let unackedPrints = new Set();
+
+function loadUnacked() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(UNACKED_FILE, 'utf8'));
+    if (Array.isArray(arr)) unackedPrints = new Set(arr);
+  } catch (_) {
+    unackedPrints = new Set();
+  }
+}
+
+function saveUnacked() {
+  try {
+    const tmp = UNACKED_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify([...unackedPrints]));
+    fs.renameSync(tmp, UNACKED_FILE);
+  } catch (e) {
+    log(`⚠ Could not persist unacked print list: ${e.message}`, 'warn');
+  }
+}
+
+/** Build the queued-id index from what is actually on disk at startup. */
+async function indexQueuedOrders() {
+  queuedOrderIds.clear();
+  for (const dir of [PENDING_DIR, FAILED_DIR]) {
+    let files = [];
+    try { files = await fsp.readdir(dir); } catch (_) { continue; }
+    for (const f of files.filter(f => f.endsWith('.json'))) {
+      try {
+        const job = JSON.parse(await fsp.readFile(path.join(dir, f), 'utf8'));
+        if (job.id) queuedOrderIds.add(String(job.id));
+      } catch (_) { /* corrupt file — loadPendingQueue handles it */ }
+    }
+  }
+  if (queuedOrderIds.size) {
+    log(`📇 Indexed ${queuedOrderIds.size} order(s) already queued or failed on disk`);
+  }
+}
+
+/** Retry acknowledging prints the API never confirmed. */
+async function retryUnackedPrints() {
+  if (unackedPrints.size === 0) return;
+  log(`🔁 Retrying API acknowledgement for ${unackedPrints.size} printed order(s)...`);
+  for (const id of [...unackedPrints]) {
+    if (await markPrinted(id)) {
+      unackedPrints.delete(id);
+      log(`  ✓ Acknowledged ${id}`);
+    }
+  }
+  saveUnacked();
+}
+
 // ── Watchdog Heartbeat ──────────────────────────────────────
 function startWatchdog() {
   const hbPath = path.join(TEMP_DIR, 'heartbeat');
@@ -269,10 +360,22 @@ async function checkPrinterReady(name) {
   }
 }
 
-async function waitForPrinter() {
+/**
+ * Wait for a ready printer, for a bounded number of attempts.
+ *
+ * This used to loop forever. It is called from inside a print job, and that
+ * job runs under a Promise.race against PRINT_TIMEOUT_MS — but losing the race
+ * does not cancel the loser, so a timed-out job left this loop spinning for
+ * the life of the process. Every subsequent job that hit an offline printer
+ * added another immortal loop, each polling lpstat every 5s and writing a log
+ * line. Returning null instead hands the job back to the queue, which is where
+ * it is already safely stored.
+ *
+ * @returns {Promise<string|null>} printer name, or null if it never appeared
+ */
+async function waitForPrinter(maxAttempts = PRINTER_WAIT_ATTEMPTS) {
   log('🔍 Detecting printer...');
-  let attempts = 0;
-  while (true) {
+  for (let attempts = 1; attempts <= maxAttempts; attempts++) {
     const name = await detectPrinter();
     if (name) {
       const ready = await checkPrinterReady(name);
@@ -282,12 +385,52 @@ async function waitForPrinter() {
         log(`✅ Printer ready: ${name}`);
         return name;
       }
-      log(`⏳ Printer "${name}" found but not ready. Retrying... (${++attempts})`);
+      log(`⏳ Printer "${name}" found but not ready. Retrying... (${attempts}/${maxAttempts})`);
     } else {
-      log(`⏳ No printer detected. Retrying... (${++attempts})`);
+      log(`⏳ No printer detected. Retrying... (${attempts}/${maxAttempts})`);
     }
     await new Promise(r => setTimeout(r, 5000));
   }
+  printerReady = false;
+  log(`⚠ Printer still unavailable after ${maxAttempts} attempts — leaving job queued`, 'warn');
+  return null;
+}
+
+// ── Disk Space Guard ────────────────────────────────────────
+/**
+ * Free megabytes on the volume holding the queue, or null if unknown.
+ *
+ * Receipts are written to disk before they print, so a full SD card means an
+ * order silently vanishes. Better to shout about it while there is still room
+ * to write the log line saying so.
+ */
+async function getFreeDiskMB() {
+  try {
+    const { stdout } = await execFileAsync('df', ['-Pm', QUEUE_DIR], { timeout: 5000 });
+    const line = stdout.trim().split('\n')[1];
+    if (!line) return null;
+    const cols = line.split(/\s+/);
+    const available = parseInt(cols[3], 10);
+    return Number.isFinite(available) ? available : null;
+  } catch (_) {
+    return null; // df missing or unreadable — do not block printing over it
+  }
+}
+
+let lastDiskWarnAt = 0;
+async function checkDiskSpace() {
+  const freeMB = await getFreeDiskMB();
+  if (freeMB === null) return true;
+  if (freeMB < MIN_FREE_DISK_MB) {
+    // Rate-limit: this runs every poll, and the log itself consumes disk.
+    if (Date.now() - lastDiskWarnAt > 300000) {
+      lastDiskWarnAt = Date.now();
+      log(`🚨 LOW DISK: only ${freeMB}MB free (need ${MIN_FREE_DISK_MB}MB). ` +
+          `Clear logs/ and queue/completed/ — receipts cannot be saved reliably.`, 'error');
+    }
+    return false;
+  }
+  return true;
 }
 
 // Non-blocking printer check — returns name or null
@@ -326,22 +469,34 @@ async function initBrowser() {
     try { await browser.close(); } catch (_) {}
     browser = null;
   }
+  /* CHROMIUM_PATH wins when set. The list below covers the usual Raspberry Pi
+     OS locations, but the package name has moved between releases and there
+     was previously no way to point this at a different build without editing
+     the source. */
   const chromePaths = [
+    process.env.CHROMIUM_PATH,
     '/usr/bin/chromium-browser', '/usr/bin/chromium',
-    '/usr/bin/google-chrome', '/snap/bin/chromium',
-  ];
+    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+    '/snap/bin/chromium',
+  ].filter(Boolean);
   let chromePath = null;
   for (const p of chromePaths) {
     if (fs.existsSync(p)) { chromePath = p; break; }
   }
   if (!chromePath) {
     try {
-      const { stdout } = await execAsync('which chromium-browser || which chromium');
-      chromePath = stdout.trim();
+      const { stdout } = await execAsync('which chromium-browser || which chromium || which google-chrome');
+      chromePath = stdout.trim() || null;
     } catch (_) {}
   }
+  if (!chromePath) {
+    throw new Error(
+      'Chromium not found. Install it (sudo apt install chromium) or set ' +
+      'CHROMIUM_PATH in .env to its full path.'
+    );
+  }
   browser = await puppeteer.launch({
-    executablePath: chromePath || '/usr/bin/chromium-browser',
+    executablePath: chromePath,
     headless: 'new',
     args: [
       '--no-sandbox', '--disable-setuid-sandbox',
@@ -405,7 +560,9 @@ async function saveToQueue(order) {
   }
   
   await fsp.rename(tmpPath, finalPath);
-  
+
+  if (order._id) queuedOrderIds.add(String(order._id));
+
   log(`📥 Queued to disk: ${job.orderNumber} → ${filename}`);
   return filename;
 }
@@ -562,61 +719,86 @@ async function htmlToPrint(html, filename, printerName) {
 
   await fsp.writeFile(htmlPath, html, 'utf8');
 
-  // Ensure browser is alive (auto-restart if crashed)
-  await ensureBrowser();
-
-  let page = null;
+  /* Every temp file is removed in the finally below, whatever happens.
+     Cleanup used to sit after the lpr call, so any printer error leaked the
+     .html and .pdf — on an SD card, indefinitely. */
   try {
-    page = await browser.newPage();
-    // Standard viewport (deviceScaleFactor: 1 prevents OOM crashes on Raspberry Pi)
-    await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
-    // Use networkidle0 — wait for Google Fonts (Noto Sans Arabic) to load
-    await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 60000 });
-    await new Promise(r => setTimeout(r, 2000)); // Render settle (font loading)
-    await page.pdf({
-      path: pdfPath, format: PAPER, printBackground: true,
-      margin: { top: '8mm', right: '10mm', bottom: '8mm', left: '10mm' },
-      preferCSSPageSize: true,
-      scale: 1,
-    });
-  } finally {
-    // Always close page even if goto/pdf throws — prevents browser page leak
-    if (page) {
-      try { await page.close(); } catch (_) {}
+    // Ensure browser is alive (auto-restart if crashed)
+    await ensureBrowser();
+
+    let page = null;
+    try {
+      page = await browser.newPage();
+      // Standard viewport (deviceScaleFactor: 1 prevents OOM crashes on Raspberry Pi)
+      await page.setViewport({ width: 1024, height: 768, deviceScaleFactor: 1 });
+
+      /* A print station has to work with the internet down.
+         This used to wait for `networkidle0` while the receipt template linked
+         fonts from fonts.googleapis.com, so with no connectivity every receipt
+         sat here until the 60s timeout and then failed outright, printing
+         nothing. templates.js now renders with locally installed fonts and no
+         external <link> at all (RECEIPT_WEB_FONTS=true opts back in), which is
+         what makes this deterministic — switching the wait condition alone was
+         NOT enough, because a stylesheet in <head> blocks DOMContentLoaded too.
+
+         The bounded font wait below still matters for the opt-in case: it caps
+         how long a slow CDN can hold up a receipt instead of failing it. */
+      await page.goto(`file://${htmlPath}`, { waitUntil: 'load', timeout: 30000 });
+
+      await page.evaluate(async (waitMs) => {
+        await Promise.race([
+          document.fonts.ready,
+          new Promise(resolve => setTimeout(resolve, waitMs)),
+        ]);
+      }, FONT_WAIT_MS).catch(() => { /* fonts are a nicety, never a blocker */ });
+
+      await new Promise(r => setTimeout(r, 400)); // Brief layout settle
+
+      await page.pdf({
+        path: pdfPath, format: PAPER, printBackground: true,
+        margin: { top: '8mm', right: '10mm', bottom: '8mm', left: '10mm' },
+        preferCSSPageSize: true,
+        scale: 1,
+      });
+    } finally {
+      // Always close page even if goto/pdf throws — prevents browser page leak
+      if (page) {
+        try { await page.close(); } catch (_) {}
+      }
     }
-  }
 
-  // Verify printer before sending
-  const ready = await checkPrinterReady(printerName);
-  if (!ready) {
-    log(`⏳ Printer not ready. Waiting...`, 'warn');
-    await waitForPrinter();
-    printerName = currentPrinter;
-  }
+    // Verify printer before sending
+    const ready = await checkPrinterReady(printerName);
+    if (!ready) {
+      log(`⏳ Printer not ready. Waiting...`, 'warn');
+      const back = await waitForPrinter();
+      if (!back) throw new Error('Printer did not come back — job stays queued');
+      printerName = currentPrinter;
+    }
 
-  // Send to printer — using execFile (no shell) to prevent command injection
-  if (!validatePrinterName(printerName)) {
-    throw new Error(`Invalid printer name: "${printerName}"`);
-  }
-  
-  const lprArgs = [];
-  if (printerName) {
-    lprArgs.push('-P', printerName);
-  }
-  lprArgs.push(
-    '-o', 'cupsPrintQuality=Best',
-    '-o', 'ColorModel=Color',
-    '-o', `PageSize=${PAPER}`,
-    pdfPath
-  );
-  await execFileAsync('lpr', lprArgs);
+    // Send to printer — using execFile (no shell) to prevent command injection
+    if (!validatePrinterName(printerName)) {
+      throw new Error(`Invalid printer name: "${printerName}"`);
+    }
 
-  // Printer buffer flush delay
-  await new Promise(r => setTimeout(r, 500));
+    const lprArgs = [];
+    if (printerName) {
+      lprArgs.push('-P', printerName);
+    }
+    lprArgs.push(
+      '-o', 'cupsPrintQuality=Best',
+      '-o', 'ColorModel=Color',
+      '-o', `PageSize=${PAPER}`,
+      pdfPath
+    );
+    await execFileAsync('lpr', lprArgs);
 
-  // Immediate cleanup (don't rely on setTimeout which won't fire on restart)
-  try { await fsp.unlink(htmlPath); } catch (_) {}
-  try { await fsp.unlink(pdfPath);  } catch (_) {}
+    // Printer buffer flush delay
+    await new Promise(r => setTimeout(r, 500));
+  } finally {
+    try { await fsp.unlink(htmlPath); } catch (_) {}
+    try { await fsp.unlink(pdfPath);  } catch (_) {}
+  }
 }
 
 // ── Print a single job (with mutex + timeout) ──────────────
@@ -679,13 +861,18 @@ async function _doPrintJob(order, filename, printerName, num) {
 
   // Move to completed FIRST (prevents re-print even if markPrinted fails)
   await moveToCompleted(filename);
-  
+  queuedOrderIds.delete(String(order._id));
+
   // Mark printed in API (best-effort — local queue state is authoritative)
   const marked = await markPrinted(order._id);
   if (!marked) {
-    log(`⚠ Order ${num} printed locally but API mark failed — will not re-print (local queue is authoritative)`, 'warn');
+    /* Recorded on disk, not just in memory. A restart used to forget this and
+       print the customer's receipt a second time. */
+    unackedPrints.add(String(order._id));
+    saveUnacked();
+    log(`⚠ Order ${num} printed but API mark failed — recorded locally so it cannot re-print; will retry the acknowledgement`, 'warn');
   }
-  
+
   addProcessed(order._id);
   printedCount++;
   lastPrintTime = new Date().toISOString();
@@ -733,6 +920,13 @@ let consecutiveFailures = 0;
 async function pollLoop() {
   while (true) {
     try {
+      await checkDiskSpace();
+
+      /* Clear the backlog of prints the API never confirmed. Until an order is
+         acknowledged the backend keeps handing it back, so this both settles
+         the record and stops the same order cycling through every poll. */
+      await retryUnackedPrints();
+
       const orders = await pollOrders();
       if (consecutiveFailures > 0) {
         log(`🟢 API reconnected after ${consecutiveFailures} failed attempts!`);
@@ -742,9 +936,26 @@ async function pollLoop() {
       if (orders.length > 0) {
         log(`🔔 Found ${orders.length} new order(s) to print!`);
         for (const order of orders) {
+          const oid = String(order._id);
+
           // Dedup: skip if already processed OR already actively being printed
           if (processed.has(order._id) || activeJobs.has(order._id)) continue;
-          
+
+          /* Already printed but the API never confirmed — printing again
+             would hand the customer a second copy of the same receipt. */
+          if (unackedPrints.has(oid)) {
+            log(`⏭ ${order.orderNumber} already printed (awaiting API ack) — not printing again`, 'debug');
+            continue;
+          }
+
+          /* Already sitting in pending/ or failed/. Re-saving would create a
+             duplicate job file with retries reset to 0 — the loop that used to
+             fill the SD card one file per poll. The queue processor owns it. */
+          if (queuedOrderIds.has(oid)) {
+            log(`⏭ ${order.orderNumber} already queued on disk — leaving it to the queue processor`, 'debug');
+            continue;
+          }
+
           // Save to disk FIRST (never lose a receipt)
           const filename = await saveToQueue(order);
           try {
@@ -989,6 +1200,26 @@ async function main() {
   await cleanupTempDir();
   await cleanupCompletedQueue();
 
+  /* Completed jobs used to be trimmed only here, at startup. This process is
+     meant to run for months, so on a busy shop the directory grew without
+     bound between reboots. */
+  setInterval(() => { cleanupCompletedQueue().catch(() => {}); }, 6 * 60 * 60 * 1000);
+
+  // 0b. Restore dedup state before anything can print
+  loadUnacked();
+  await indexQueuedOrders();
+  if (unackedPrints.size) {
+    log(`📌 ${unackedPrints.size} order(s) printed but unacknowledged — they will not re-print`);
+  }
+
+  const freeMB = await getFreeDiskMB();
+  if (freeMB !== null) {
+    log(`Disk:     ${freeMB}MB free (minimum ${MIN_FREE_DISK_MB}MB)`);
+    if (freeMB < MIN_FREE_DISK_MB) {
+      log(`🚨 Free disk is below the minimum — clear logs/ and queue/completed/`, 'error');
+    }
+  }
+
   // 1. Load pending queue from disk
   const pendingJobs = await loadPendingQueue();
   log(`📋 Pending jobs from disk: ${pendingJobs.length}`);
@@ -1047,7 +1278,11 @@ async function main() {
 }
 
 // ── Graceful shutdown ───────────────────────────────────────
+let isShuttingDown = false;
 async function shutdown(sig) {
+  if (isShuttingDown) return; // A second SIGTERM must not re-enter this
+  isShuttingDown = true;
+
   log(`⏹ Received ${sig}, shutting down...`);
   if (browser) await browser.close().catch(() => {});
   const uptime = Math.floor((Date.now() - startTime) / 60000);
@@ -1059,7 +1294,15 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('uncaughtException', (err) => {
   log(`UNCAUGHT: ${err.message}\n${err.stack}`, 'error');
-  // Don't exit — let systemd handle restart if needed
+  /* Exit so systemd restarts us.
+     This used to deliberately NOT exit, with the comment "let systemd handle
+     restart if needed" — but systemd only restarts a process that has ended.
+     Staying alive after an uncaught exception left the station running in an
+     undefined state: heartbeat still ticking (so the watchdog saw nothing
+     wrong), poll loop possibly dead, receipts silently not printing until a
+     human noticed. Ending the process is what actually gets it recovered. */
+  log('💀 Exiting in 3s so systemd can restart cleanly...', 'error');
+  setTimeout(() => process.exit(1), 3000);
 });
 process.on('unhandledRejection', (reason) => {
   log(`UNHANDLED REJECTION: ${reason}`, 'error');

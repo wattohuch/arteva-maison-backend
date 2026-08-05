@@ -1,0 +1,20 @@
+# Pi-local runtime state — must never be committed or copied between machines.
+
+# The paired WhatsApp session. Copying this to a second machine (or running two
+# agents against one copy) desynchronises the encryption keys and every message
+# the account sends arrives as "Waiting for this message".
+auth_info_baileys/
+auth_broken-*/
+
+# Local config and secrets
+.env
+
+# Runtime state
+queue/
+logs/
+greeted-state.json
+whatsapp-agent.lock
+NEEDS_QR_SCAN
+
+node_modules/
+*.log

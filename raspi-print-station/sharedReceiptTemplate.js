@@ -39,9 +39,15 @@ function safeFixed(val, digits = 3) {
  * @param {string} options.receiptQR - Base64 data URL for receipt QR code (required)
  * @param {string} options.whatsappQR - Base64 data URL for WhatsApp QR code (required)
  * @param {string|null} options.logoBase64 - Base64 data URL for logo image (optional)
+ * @param {boolean} options.webFonts - Link the Google-hosted fonts. Default true
+ *        (what the website and admin preview want). The Raspberry Pi passes
+ *        false: a <link> in <head> blocks rendering until it resolves, so with
+ *        no internet the printer produced nothing at all. Rendering from
+ *        locally installed fonts instead makes printing independent of the
+ *        network — see raspi-print-station/templates.js.
  * @returns {string} Complete HTML document string
  */
-function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = null } = {}) {
+function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = null, webFonts = true } = {}) {
   if (!order) throw new Error('buildReceiptHTMLFromData: order is null');
 
   const logoB64 = logoBase64;
@@ -137,9 +143,9 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
+${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&family=Noto+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&family=Noto+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">` : '<!-- webFonts disabled: rendering from locally installed fonts so this never depends on the network -->'}
 <style>
   :root {
     --color-text: #2c241b;
@@ -282,7 +288,14 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
   </div>
   <div class="meta-group">
     <h3>Shipping Address <span class="ar-label">عنوان الشحن</span></h3>
-    <p style="white-space:pre-line;line-height:1.4;font-weight:400;font-size:11px">${addressParts.join('\\n')}</p>
+    <!-- Joined with <br>, not "\n".
+         This was join('\\n') inside a template literal, which produces a
+         literal backslash-n rather than a newline — so every receipt, printed
+         and on the website, showed the address as
+         "Salem St\nSalmiya\nHawally\nKuwait" on a single line. <br> is used
+         instead of a real newline because it does not depend on the
+         white-space:pre-line rule surviving future CSS edits. -->
+    <p style="white-space:pre-line;line-height:1.4;font-weight:400;font-size:11px">${addressParts.join('<br>')}</p>
   </div>
 </div>
 

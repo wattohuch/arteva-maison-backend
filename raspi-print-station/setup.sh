@@ -18,8 +18,20 @@ sudo apt update -qq
 sudo apt install -y cups || true
 sudo apt install -y chromium 2>/dev/null || sudo apt install -y chromium-browser 2>/dev/null || echo "⚠ Chromium not found — install manually"
 sudo apt install -y printer-driver-hpcups 2>/dev/null || sudo apt install -y hplip 2>/dev/null || echo "⚠ HP drivers not found"
-sudo apt install -y fonts-noto-core fonts-noto 2>/dev/null || echo "⚠ Noto fonts not found — Arabic may not render correctly"
-echo "  ✅ Arabic fonts (Noto Sans Arabic) installed for receipt rendering"
+# Fonts are installed LOCALLY on purpose: receipts render with no network
+# access (see templates.js), so whatever is needed has to be on this machine.
+# Noto covers Arabic; the Latin faces below are the closest packaged matches to
+# the website's Cormorant Garamond / Montserrat, and the template already
+# declares serif/sans fallbacks if they are unavailable.
+sudo apt install -y fonts-noto-core 2>/dev/null || sudo apt install -y fonts-noto 2>/dev/null || echo "⚠ Noto fonts not found — Arabic may not render correctly"
+sudo apt install -y fonts-montserrat 2>/dev/null || true
+sudo apt install -y fonts-ebgaramond 2>/dev/null || true
+if fc-list 2>/dev/null | grep -qi "noto.*arabic"; then
+    echo "  ✅ Arabic font present (Noto Sans Arabic) — receipts render offline"
+else
+    echo "  ⚠ No Arabic font detected! Arabic will print as boxes."
+    echo "    Try: sudo apt install fonts-noto-core"
+fi
 
 # 2. Add user to lpadmin group
 echo "👤 Adding $USER to printer group..."
@@ -83,12 +95,31 @@ sudo sysctl vm.swappiness=10
 # ═══════════════════════════════════════════════════
 echo "🔌 Disabling USB power management..."
 # Prevent USB autosuspend (causes printer mid-print disconnects)
-if ! grep -q "usbcore.autosuspend=-1" /boot/cmdline.txt 2>/dev/null; then
-    sudo sed -i 's/$/ usbcore.autosuspend=-1/' /boot/cmdline.txt
-    echo "  Added usbcore.autosuspend=-1 to /boot/cmdline.txt"
+#
+# The path moved: Raspberry Pi OS Bookworm and later use
+# /boot/firmware/cmdline.txt, older releases /boot/cmdline.txt. This script
+# only knew the old one, so on a current Pi the grep failed, `sed -i` was
+# handed a file that does not exist, and `set -e` aborted the whole setup part
+# way through — after the services were written but before the watchdog and log
+# rotation existed. Find the real file, and never let this step kill setup.
+CMDLINE=""
+for candidate in /boot/firmware/cmdline.txt /boot/cmdline.txt; do
+    if [ -f "$candidate" ]; then CMDLINE="$candidate"; break; fi
+done
+
+if [ -n "$CMDLINE" ]; then
+    if grep -q "usbcore.autosuspend=-1" "$CMDLINE"; then
+        echo "  Already set in $CMDLINE"
+    elif sudo sed -i 's/$/ usbcore.autosuspend=-1/' "$CMDLINE"; then
+        echo "  Added usbcore.autosuspend=-1 to $CMDLINE (takes effect after reboot)"
+    else
+        echo "  ⚠ Could not edit $CMDLINE — add 'usbcore.autosuspend=-1' by hand"
+    fi
+else
+    echo "  ⚠ No cmdline.txt found (not a Raspberry Pi OS image?) — skipping"
 fi
 # Also set at runtime
-echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend 2>/dev/null || true
+echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend > /dev/null 2>&1 || true
 
 # ═══════════════════════════════════════════════════
 # 9. SYSTEMD SERVICE — Print Station
@@ -136,8 +167,13 @@ Type=simple
 User=$USER
 WorkingDirectory=$SCRIPT_DIR
 ExecStart=/usr/bin/node --max-old-space-size=128 $SCRIPT_DIR/whatsapp-agent.js
-Restart=always
-RestartSec=5
+# on-failure, not always: the agent exits 0 when WhatsApp has logged this
+# device out, which no restart can fix — it needs a human to scan a QR code.
+# Under Restart=always that turned into a crash loop every 5 seconds that
+# buried the one log line explaining what was actually required. Crashes still
+# exit non-zero and are still restarted.
+Restart=on-failure
+RestartSec=10
 StartLimitIntervalSec=0
 Environment=NODE_ENV=production
 StandardOutput=append:$SCRIPT_DIR/logs/wa-output.log
@@ -158,8 +194,26 @@ sudo systemctl enable arteva-whatsapp.service
 # ═══════════════════════════════════════════════════
 echo "🐕 Installing watchdog..."
 chmod +x "$SCRIPT_DIR/watchdog.sh"
-# Remove old cron entry if exists, then add new one
-(crontab -l 2>/dev/null | grep -v "watchdog.sh" ; echo "* * * * * $SCRIPT_DIR/watchdog.sh >> $SCRIPT_DIR/logs/watchdog.log 2>&1") | crontab -
+chmod +x "$SCRIPT_DIR/wa-reset.sh" 2>/dev/null || true
+chmod +x "$SCRIPT_DIR/doctor.sh" 2>/dev/null || true
+
+# Installed into ROOT's crontab, not the calling user's.
+#
+# It used to go into the user crontab, where every corrective action it takes
+# needs privileges it does not have: `systemctl restart arteva-print` prompts
+# for authentication and fails, and `echo 3 > /proc/sys/vm/drop_caches` is
+# permission-denied. The watchdog ran every minute for months and could never
+# actually restart anything — the safety net was decorative. Root's crontab can
+# do what the script is asking for.
+(sudo crontab -l 2>/dev/null | grep -v "watchdog.sh" ; \
+ echo "* * * * * $SCRIPT_DIR/watchdog.sh >> $SCRIPT_DIR/logs/watchdog.log 2>&1") | sudo crontab -
+
+# Remove the old powerless entry from the user crontab if it is still there
+if crontab -l 2>/dev/null | grep -q "watchdog.sh"; then
+    echo "  Removing old (unprivileged) watchdog entry from $USER's crontab..."
+    crontab -l 2>/dev/null | grep -v "watchdog.sh" | crontab - || true
+fi
+echo "  ✅ Watchdog installed in root's crontab (can actually restart services)"
 
 # ═══════════════════════════════════════════════════
 # 12. LOG ROTATION (prevent SD card from filling up)
