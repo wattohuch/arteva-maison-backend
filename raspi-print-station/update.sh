@@ -56,20 +56,29 @@ main() {
 
   # ── 2. Refuse to install anything that does not parse ──
   echo ""
-  echo "🔍 Checking the downloaded scripts..."
-  BAD=0
-  for f in "$NEW"/*.js; do
-    [ -f "$f" ] || continue
-    if ! node --check "$f" 2>/dev/null; then
-      echo "  ❌ Syntax error in $(basename "$f")"
-      BAD=1
+  # Only meaningful if node is present. Without this guard a Pi that has not
+  # installed Node yet gets "Syntax error" for every file, which points at
+  # entirely the wrong problem.
+  if ! command -v node > /dev/null 2>&1; then
+    echo "⚠️  Node.js is not installed — skipping the syntax check."
+    echo "    Install it before starting the services:"
+    echo "      sudo apt install -y nodejs npm"
+  else
+    echo "🔍 Checking the downloaded scripts..."
+    BAD=0
+    for f in "$NEW"/*.js; do
+      [ -f "$f" ] || continue
+      if ! node --check "$f" 2>/dev/null; then
+        echo "  ❌ Syntax error in $(basename "$f")"
+        BAD=1
+      fi
+    done
+    if [ "$BAD" -eq 1 ]; then
+      echo "  Aborting — nothing was changed."
+      exit 1
     fi
-  done
-  if [ "$BAD" -eq 1 ]; then
-    echo "  Aborting — nothing was changed."
-    exit 1
+    echo "  ✅ All scripts parse"
   fi
-  echo "  ✅ All scripts parse"
 
   # ── 3. Copy code only ──
   echo ""
