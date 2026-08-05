@@ -22,7 +22,17 @@ echo ""
 echo "── Environment ──"
 if command -v node > /dev/null 2>&1; then
   NODE_MAJOR=$(node -v | sed 's/v\([0-9]*\).*/\1/')
-  if [ "$NODE_MAJOR" -ge 18 ]; then ok "Node $(node -v)"; else bad "Node $(node -v) — needs >= 18"; fi
+  # Node 20 is a hard floor, not a preference: every Baileys release that
+  # patches the message-spoofing advisory (6.7.22+) declares node >= 20. The
+  # only build that runs on Node 18 is the deprecated, vulnerable 6.17.x. Node
+  # 18 is also past end-of-life.
+  if [ "$NODE_MAJOR" -ge 20 ]; then
+    ok "Node $(node -v)"
+  else
+    bad "Node $(node -v) is too old — Baileys needs >= 20 (and Node 18 is EOL)."
+    echo "     Upgrade:  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs"
+    echo "     Then:     npm install --omit=dev && sudo systemctl restart arteva-whatsapp"
+  fi
 else
   bad "Node.js not installed"
 fi
