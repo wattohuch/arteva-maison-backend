@@ -48,7 +48,20 @@ if [ -d "$SCRIPT_DIR/node_modules" ]; then
     if [ "$BAILEYS_VER" = "$EXPECTED" ]; then
       ok "Baileys $BAILEYS_VER (matches package.json)"
     else
-      warn "Baileys $BAILEYS_VER installed but package.json wants $EXPECTED — run: npm install"
+      # The 6.17.x line is DEPRECATED by the Baileys maintainers for a zero-day
+      # that allows message spoofing; their advisory says use 6.7.22+. A higher
+      # version number is misleading here, so name it explicitly rather than
+      # reporting a bland version mismatch.
+      case "$BAILEYS_VER" in
+        6.17.*|6.1[0-9].*)
+          bad "Baileys $BAILEYS_VER is DEPRECATED — zero-day message-spoofing advisory (GHSA-qvv5-jq5g-4cgg)."
+          echo "     Despite the higher number, $EXPECTED is the patched line. Run:"
+          echo "       npm install --omit=dev"
+          ;;
+        *)
+          warn "Baileys $BAILEYS_VER installed but package.json wants $EXPECTED — run: npm install"
+          ;;
+      esac
     fi
   fi
 else

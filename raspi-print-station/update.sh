@@ -104,7 +104,30 @@ main() {
   # ── 5. Dependencies ──
   echo ""
   echo "📚 Installing dependencies..."
-  (cd "$SCRIPT_DIR" && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -4)
+  # Show the real error on failure. This used to pipe through `tail -4`, which
+  # cut npm's actual message and left only "a complete log can be found in…" —
+  # useless, and it hid a failure that left a KNOWN-VULNERABLE Baileys in place.
+  NPM_LOG="$TMP/npm-install.log"
+  if (cd "$SCRIPT_DIR" && npm install --omit=dev --no-audit --no-fund) > "$NPM_LOG" 2>&1; then
+    tail -3 "$NPM_LOG"
+    echo "  ✅ Dependencies installed"
+  else
+    echo "  ❌ npm install FAILED — the error follows:"
+    echo "  ─────────────────────────────────────────────"
+    grep -iE "npm (error|ERR!)" "$NPM_LOG" | head -20 || tail -25 "$NPM_LOG"
+    echo "  ─────────────────────────────────────────────"
+    echo ""
+    echo "  ⚠️  The services were NOT left in a known-good dependency state."
+    echo "     This matters: package.json pins a Baileys version that patches a"
+    echo "     message-spoofing advisory, and a failed install leaves whatever"
+    echo "     was here before. Fix the error above, then re-run:"
+    echo "       cd $SCRIPT_DIR && npm install --omit=dev"
+    echo ""
+    # Keep a copy that outlives the temp dir so it can be read afterwards.
+    cp "$NPM_LOG" "$SCRIPT_DIR/logs/npm-install-failed.log" 2>/dev/null && \
+      echo "     Full log: $SCRIPT_DIR/logs/npm-install-failed.log"
+    echo ""
+  fi
 
   # ── 6. Restart ──
   echo ""
