@@ -1,7 +1,7 @@
 # Connecting ARTÉVA Maison to Meta
 
 Everything below is already built. What remains is creating the accounts on
-Meta's side and pasting four sets of credentials into environment variables.
+Meta's side and pasting the credentials into environment variables.
 Nothing switches on until its variable is set — an unset key means that feature
 renders and behaves as if it does not exist, so you can do these one at a time
 and in any order.
@@ -209,38 +209,17 @@ pre-approved templates. Order notifications are exactly that case.
 
 ---
 
-## 4. Facebook Login
+## 4. Taking the app live
 
-1. Same app as above → **Add product → Facebook Login → Set up → Web**.
-2. **Site URL:** `https://www.artevamaisonkw.com`
-3. **Facebook Login → Settings**, set **Valid OAuth Redirect URIs**:
-   ```
-   https://www.artevamaisonkw.com/
-   https://www.artevamaisonkw.com/account
-   ```
-4. Leave **Login with the JavaScript SDK** enabled.
-5. **Settings → Basic**, add `artevamaisonkw.com` to **App domains**.
-6. Copy the **App ID** and **App secret**.
+1. App dashboard → toggle **App Mode** from Development to **Live**.
+2. This requires a **Privacy Policy URL** and a **Data Deletion** URL or
+   instructions. Meta will not let the app go live without them, and in
+   Development mode only accounts listed as app testers can use it.
 
-**Vercel (frontend)**
-```
-VITE_FACEBOOK_APP_ID=<app id>
-```
-
-**Render (backend)**
-```
-FACEBOOK_APP_ID=<app id>
-FACEBOOK_APP_SECRET=<app secret>
-```
-
-The button appears on the account page only once `VITE_FACEBOOK_APP_ID` is set.
-
-### Going live
-
-7. App dashboard → toggle **App Mode** from Development to **Live**.
-8. This requires a **Privacy Policy URL** and a **Data Deletion** URL or
-   instructions. Meta will not let the app go live without them, and until it
-   is live only accounts listed as app testers can sign in.
+> Sign in with Facebook was removed from the site. There is no
+> `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` to set, and nothing to configure
+> under **Add product → Facebook Login**. If those variables are still set on
+> Render or Vercel from the earlier setup, they are unused and can be deleted.
 
 ---
 
@@ -252,7 +231,7 @@ With the backend deployed, as an admin:
 GET https://arteva-maison-backend-gy1x.onrender.com/api/meta/status
 ```
 
-It reports which of the four integrations are configured, how many products the
+It reports which of the integrations are configured, how many products the
 catalogue feed will publish, and whether webhook signature checking is active.
 
 For email delivery there is a **Check email delivery** button in

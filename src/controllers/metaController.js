@@ -269,9 +269,6 @@ const getMetaStatus = asyncHandler(async (req, res) => {
                 webhookVerifyTokenSet: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
                 signatureCheckEnabled: Boolean(process.env.META_APP_SECRET),
             },
-            facebookLogin: {
-                configured: Boolean(process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET),
-            },
         },
     });
 });

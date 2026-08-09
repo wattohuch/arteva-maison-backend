@@ -1,113 +1,8 @@
 const crypto = require('crypto');
-const axios = require('axios');
 const User = require('../models/User');
 const { generateToken } = require('../utils/helpers');
 const { asyncHandler } = require('../middleware/error');
 const { sendWelcomeEmail, sendOTPEmail } = require('../services/emailService');
-
-// @desc    Sign in with Facebook
-// @route   POST /api/auth/facebook
-// @access  Public
-//
-// The client sends the short-lived access token Meta's JS SDK handed it. That
-// token is evidence of nothing on its own: anyone can obtain one from any
-// Facebook app and post it here. So it is checked against Meta twice —
-//
-//   1. debug_token, to confirm the token was issued for OUR app and is still
-//      valid. Without this check a token minted by an unrelated app would be
-//      accepted and could be used to sign in as anyone.
-//   2. /me, to read the profile, using the token itself rather than trusting
-//      any identity the client claimed in the request body.
-//
-// Only then is one of our own JWTs issued.
-const facebookLogin = asyncHandler(async (req, res) => {
-    const { accessToken } = req.body;
-
-    const appId = process.env.FACEBOOK_APP_ID;
-    const appSecret = process.env.FACEBOOK_APP_SECRET;
-
-    if (!appId || !appSecret) {
-        res.status(503);
-        throw new Error('Facebook login is not configured on this server');
-    }
-    if (!accessToken) {
-        res.status(400);
-        throw new Error('Missing Facebook access token');
-    }
-
-    let profile;
-    try {
-        const debug = await axios.get('https://graph.facebook.com/debug_token', {
-            params: {
-                input_token: accessToken,
-                access_token: `${appId}|${appSecret}`,
-            },
-            timeout: 8000,
-        });
-
-        const info = debug.data?.data;
-        if (!info?.is_valid || String(info.app_id) !== String(appId)) {
-            res.status(401);
-            throw new Error('That Facebook token is not valid for this application');
-        }
-
-        const me = await axios.get('https://graph.facebook.com/v21.0/me', {
-            params: { fields: 'id,name,email', access_token: accessToken },
-            timeout: 8000,
-        });
-        profile = me.data;
-    } catch (err) {
-        if (res.statusCode >= 400) throw err;
-        res.status(401);
-        throw new Error('Could not verify that Facebook account');
-    }
-
-    if (!profile?.id) {
-        res.status(401);
-        throw new Error('Facebook returned no account id');
-    }
-
-    // Someone can decline to share their email, and Meta then omits it.
-    // A placeholder keeps the unique index satisfied without inventing an
-    // address that might belong to a real person.
-    const email = profile.email
-        ? String(profile.email).toLowerCase()
-        : `fb_${profile.id}@facebook.local`;
-
-    let user = await User.findOne({ facebookId: profile.id }).select('+facebookId');
-
-    if (!user) {
-        // Link to an existing account when the email already exists, rather
-        // than creating a second account for the same person.
-        user = await User.findOne({ email });
-
-        if (user) {
-            user.facebookId = profile.id;
-            await user.save();
-        } else {
-            user = await User.create({
-                name: profile.name || 'Facebook User',
-                email,
-                facebookId: profile.id,
-            });
-
-            sendWelcomeEmail(user).catch(() => { /* welcome mail is optional */ });
-        }
-    }
-
-    res.json({
-        success: true,
-        data: {
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            currency: user.currency,
-            language: user.language,
-            token: generateToken(user._id),
-        },
-    });
-});
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -410,7 +305,6 @@ const verifyPassword = asyncHandler(async (req, res) => {
 module.exports = {
     register,
     login,
-    facebookLogin,
     getMe,
     updateProfile,
     addAddress,
