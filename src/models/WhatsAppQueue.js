@@ -21,7 +21,10 @@ const whatsappQueueSchema = new mongoose.Schema({
     },
     type: {
         type: String,
-        enum: ['owner_new_order', 'customer_new_order', 'status_update', 'welcome', 'refund_return', 'contact_auto_reply', 'delivery_proof', 'test'],
+        // `inbound_forward` = a customer's WhatsApp message relayed to the owners.
+        // An unlisted value fails validation, so the row is never written and the
+        // send is lost — every type passed to sendMessage() must appear here.
+        enum: ['owner_new_order', 'customer_new_order', 'status_update', 'welcome', 'refund_return', 'contact_auto_reply', 'delivery_proof', 'inbound_forward', 'test'],
         default: 'test'
     },
     priority: {

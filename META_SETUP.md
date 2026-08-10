@@ -50,18 +50,27 @@ and measured. This is the piece with the clearest commercial return.
 
 ### Set the variables
 
+Your pixel is **`1029535353325764`**.
+
 **Vercel (frontend)**
 ```
-VITE_META_PIXEL_ID=<your pixel id>
+VITE_META_PIXEL_ID=1029535353325764
 ```
 
 **Render (backend)**
 ```
-META_PIXEL_ID=<the same pixel id>
+META_PIXEL_ID=1029535353325764
 META_CAPI_ACCESS_TOKEN=<the token from step 8>
 ```
 
 Redeploy both.
+
+> **Do not paste the `<script>` snippet Events Manager gives you into
+> `index.html`.** The site already loads the pixel from
+> `src/utils/metaPixel.js`, using the id above. Adding the snippet as well
+> initialises the pixel twice and every event — including every Purchase — is
+> counted twice. The snippet is only for sites that have no pixel code, and
+> the same applies to installing it through Google Tag Manager.
 
 ### Verify it works
 
@@ -137,6 +146,32 @@ items as `preorder`.
 The code for this has existed for a while and has never had credentials, which
 is why order notifications do not send.
 
+> ### ⚠️ Read this before registering the number
+>
+> **A phone number can be on the Cloud API *or* on WhatsApp / WhatsApp Business
+> — never both.** The moment `+965 5068 3207` is registered to the Cloud API,
+> the Raspberry Pi can no longer connect to it. That is not a bug and it is not
+> reversible without re-pairing: it is how Meta owns a number.
+>
+> So this is a decision, not just a configuration step:
+>
+> | | Cloud API takes the number *(recommended)* | Keep the Pi on the number |
+> |---|---|---|
+> | Outbound order notifications | Official API, no session to maintain | Baileys, needs the Pi online |
+> | Customer greeting + owner forwarding | Handled by the webhook (built, see below) | Handled by the Pi |
+> | QR pairing | Never again | Occasionally, by hand |
+> | Templates | Required outside 24h — and supported | Not required |
+> | Pi's remaining job | **Printing only** | Printing + WhatsApp |
+>
+> The left column is the one that matches "I want it to work automatically" —
+> it removes the whole class of problem we spent today fixing. The greeting and
+> owner-forwarding you have on the Pi are already reimplemented against the
+> Cloud API webhook, so nothing is lost in the move.
+>
+> If you would rather keep the Pi on `5068 3207`, then register a **different**
+> number with the Cloud API — but customers then see two numbers, so I would
+> not.
+
 ### Create the app
 
 1. **https://developers.facebook.com/apps/** → **Create app**.
@@ -177,7 +212,13 @@ META_APP_SECRET=<App dashboard → Settings → Basic → App secret → Show>
 ```
 
 `META_APP_SECRET` is what lets the server prove an incoming webhook really came
-from Meta. Without it the endpoint accepts anything posted to it.
+from Meta. **It is required in production** — the webhook is a public,
+unauthenticated URL and the signature is its only authentication. Without the
+secret the server now answers `403` and refuses the payload rather than trusting
+it, because otherwise anyone who learned the URL could post a fabricated
+"customer message" and make the business number send WhatsApps to any phone
+they chose. If the webhook verifies but no messages arrive, check this variable
+first.
 
 ### Connect the webhook
 
@@ -199,13 +240,50 @@ pre-approved templates. Order notifications are exactly that case.
 20. **https://business.facebook.com/wa/manage/message-templates/**
 21. **Create template** → category **Utility** (not Marketing — Utility is
     approved faster and costs less) → language English, then add Arabic.
-22. Create one per notification the site sends: order confirmed, order packed,
-    out for delivery, delivered.
-23. Approval usually takes minutes to a few hours.
+22. Approval usually takes minutes to a few hours.
 
-> Tell me the template names once approved — the current service sends free-form
-> text, which only works inside the 24-hour window. Wiring it to named templates
-> is a small change, but it needs the exact names and variable order.
+**This is already wired.** Create the templates with the bodies below, then name
+each one in an environment variable. Until a variable is set that notification
+keeps sending free-form text exactly as it does now — so you can add them one at
+a time.
+
+| Env var | Suggested body | Sent when |
+|---|---|---|
+| `WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER` | `Hello {{1}}, your ARTÉVA order {{2}} is confirmed. Total {{3}}. Track it: {{4}}` | order placed |
+| `WHATSAPP_TEMPLATE_STATUS_UPDATE` | `Hello {{1}}, your ARTÉVA order {{2}} is now {{3}}. Track it: {{4}}` | packed / out for delivery / … |
+| `WHATSAPP_TEMPLATE_DELIVERY_PROOF` | `Hello {{1}}, your ARTÉVA order {{2}} has been delivered. Proof: {{3}}` | delivered |
+| `WHATSAPP_TEMPLATE_WELCOME` | `Welcome to ARTÉVA Maison, {{1}}.` | registration |
+| `WHATSAPP_TEMPLATE_REFUND_RETURN` | `Hello {{1}}, we received your return request for order {{2}}.` | refund requested |
+| `WHATSAPP_TEMPLATE_OWNER_NEW_ORDER` | `New order {{1}} from {{2}}. Total {{3}}. Items: {{4}}.` | to you, per order |
+| `WHATSAPP_TEMPLATE_INBOUND_FORWARD` | `Message from {{1}}: {{2}}` | customer messages you |
+
+The `{{n}}` placeholders must appear in that order — the code fills them
+positionally. Add `_LANG` to any of them (e.g.
+`WHATSAPP_TEMPLATE_STATUS_UPDATE_LANG=ar`) to send the Arabic version, or set
+`WHATSAPP_TEMPLATE_LANG` once for all of them. Default is `en`.
+
+**Which ones you actually need:** every message in that table except the
+greeting is sent *proactively*, outside the 24-hour window, so without a
+template Meta refuses it. The customer greeting is the sole exception — it is a
+reply to the customer's own message, so free-form is allowed and it needs no
+template.
+
+### Customer greeting and owner forwarding
+
+Already built, and on by default once the webhook is connected. A customer who
+messages the business number gets one bilingual acknowledgement, and the message
+is forwarded to every owner phone.
+
+```
+WHATSAPP_AUTO_GREET=false           # to turn the greeting off
+WHATSAPP_FORWARD_INBOUND=false      # to stop forwarding to owners
+WHATSAPP_GREET_COOLDOWN_HOURS=2     # default: one greeting per customer per 2h
+```
+
+The cooldown is read from the message log rather than held in memory, so it is
+not reset by a Render restart or spin-down — a customer in a conversation will
+not be greeted repeatedly. Forwarding is deliberately *not* rate-limited: you
+see every message, not only the first.
 
 ---
 

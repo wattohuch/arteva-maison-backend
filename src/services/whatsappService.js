@@ -463,11 +463,24 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
 
         const ownerPhones = await this.getOwnerPhones();
         console.log(`[WA-OWNER] Sending new order notification to ${ownerPhones.length} phone(s): ${ownerPhones.join(', ')}`);
+
+        /* Owner alerts are permanently outside the 24-hour window — the owner is
+         * never the one who messaged us — so on the Cloud API they need an
+         * approved template or they will not deliver at all.
+         * Suggested body: "New order {{1}} from {{2}}. Total {{3}}. Items: {{4}}."
+         * Configure with WHATSAPP_TEMPLATE_OWNER_NEW_ORDER. */
+        const templateParams = [
+            order.orderNumber,
+            user.name || 'Customer',
+            `${order.total} ${order.currency}`,
+            String(order.items?.length ?? 0),
+        ];
+
         const results = [];
         for (let i = 0; i < ownerPhones.length; i++) {
             const phone = ownerPhones[i];
             try {
-                const result = await this.sendMessage(phone, message, 'owner_new_order', order._id);
+                const result = await this.sendMessage(phone, message, 'owner_new_order', order._id, templateParams);
                 results.push(result);
                 console.log(`[WA-OWNER] Phone ${i+1}/${ownerPhones.length} (${phone}): ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
             } catch (err) {
@@ -771,7 +784,24 @@ ${status.ar}
 
 ${linksAr}`;
 
-        const result = await this.sendMessage(phone, message, 'status_update', order._id);
+        /* A status update is the clearest case of a message Meta will not accept
+         * as free-form text: it is sent days after the order, long outside the
+         * 24-hour window that only a customer's own message can open. Without a
+         * template these are accepted by our code and refused by Meta.
+         *
+         * Suggested approved body:
+         *   "Hello {{1}}, your ARTÉVA order {{2}} is now {{3}}. Track it: {{4}}"
+         * Configure with WHATSAPP_TEMPLATE_STATUS_UPDATE. */
+        const templateParams = [
+            name,
+            order.orderNumber,
+            newStatus.replace(/_/g, ' '),
+            trackUrl,
+        ];
+
+        const result = await this.sendMessage(
+            phone, message, 'status_update', order._id, templateParams
+        );
         console.log(`[WA-CUSTOMER] Status change result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
@@ -814,7 +844,17 @@ Thank you for shopping with ARTÉVA Maison! ✨
 
 شكراً لتسوقكم مع ARTÉVA Maison! ✨`;
 
-        const result = await this.sendMessage(phone, message, 'status_update', order._id);
+        /* Suggested approved body:
+         *   "Hello {{1}}, your ARTÉVA order {{2}} has been delivered. Proof: {{3}}"
+         * Configure with WHATSAPP_TEMPLATE_DELIVERY_PROOF. Note the type below is
+         * `delivery_proof`, not `status_update`: it was sharing the status-update
+         * type, so the two could never be given different templates even though
+         * their wording and parameters differ. */
+        const templateParams = [name, order.orderNumber, fullProofUrl];
+
+        const result = await this.sendMessage(
+            phone, message, 'delivery_proof', order._id, templateParams
+        );
         console.log(`[WA-CUSTOMER] Delivery result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
@@ -915,7 +955,12 @@ We're delighted to have you with us.
 Our team is always here to assist you and ensure you have a seamless shopping experience.`;
         }
 
-        const result = await this.sendMessage(rawPhone, message, 'welcome');
+        /* Suggested approved body: "Welcome to ARTÉVA Maison, {{1}}."
+         * Configure with WHATSAPP_TEMPLATE_WELCOME. Registering is not a message
+         * to us, so this too falls outside the 24-hour window. */
+        const result = await this.sendMessage(
+            rawPhone, message, 'welcome', null, [user.name || 'there']
+        );
         console.log(`[WA-WELCOME] Result for ${user.name || user.email}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
@@ -957,10 +1002,98 @@ Thank you for your trust 🤍
 Arteva Maison`;
         }
 
-        const result = await this.sendMessage(rawPhone, message, 'refund_return', order._id);
+        /* Suggested approved body:
+         *   "Hello {{1}}, we received your return request for order {{2}}."
+         * Configure with WHATSAPP_TEMPLATE_REFUND_RETURN. */
+        const result = await this.sendMessage(
+            rawPhone, message, 'refund_return', order._id, [name, order.orderNumber]
+        );
         console.log(`[WA-REFUND] Result for ${order.orderNumber}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
         return result;
     }
+    /**
+     * A customer messaged the business number on WhatsApp.
+     *
+     * This is the Cloud API counterpart of the auto-greeting that runs on the
+     * Raspberry Pi. It has to live here as well, because a phone number can be
+     * registered to the Cloud API *or* to WhatsApp Business/Baileys, never both:
+     * the moment the business number is moved to the Cloud API the Pi's agent
+     * can no longer connect to it, and the greeting would silently disappear.
+     *
+     * Two things happen, and they are deliberately independent — a failure to
+     * reach the owners must not cost the customer their acknowledgement:
+     *   1. the customer gets one greeting, at most once per COOLDOWN window;
+     *   2. the message is forwarded to the owners so a human can reply.
+     *
+     * @param {string} from    sender's phone, digits only, as Meta sends it
+     * @param {string} text    message body ('' for media-only messages)
+     */
+    async handleInboundMessage(from, text) {
+        if (!from) return { success: false, error: 'No sender' };
+
+        const phone = this.formatPhone(from);
+        const owners = await this.getOwnerPhones();
+
+        // Owners handle support from these numbers; greeting them is noise.
+        if (owners.map(p => this.formatPhone(p)).includes(phone)) {
+            console.log(`[WA-INBOUND] From owner ${phone} — no auto-reply`);
+            return { success: true, skipped: 'owner' };
+        }
+
+        console.log(`[WA-INBOUND] From ${phone}: "${String(text).slice(0, 80)}"`);
+
+        // ── 1. Greet, unless we already did recently ──
+        if (process.env.WHATSAPP_AUTO_GREET !== 'false') {
+            /* The cooldown is read from the message log rather than kept in
+             * memory. Render restarts and spins this process down freely, and an
+             * in-memory Map would forget every cooldown each time — meaning a
+             * customer in a back-and-forth conversation gets greeted again and
+             * again. The log already records every send, so it is the honest
+             * source of truth and it survives restarts. */
+            const COOLDOWN_MS = (parseInt(process.env.WHATSAPP_GREET_COOLDOWN_HOURS) || 2) * 3600000;
+            let greetedRecently = false;
+            try {
+                const WhatsAppQueue = require('../models/WhatsAppQueue');
+                greetedRecently = Boolean(await WhatsAppQueue.exists({
+                    phone,
+                    type: 'contact_auto_reply',
+                    createdAt: { $gte: new Date(Date.now() - COOLDOWN_MS) },
+                }));
+            } catch (e) {
+                // Can't tell → stay silent. Repeating a greeting is worse than
+                // missing one; the forward below still alerts a human.
+                console.error(`[WA-INBOUND] Cooldown lookup failed: ${e.message}`);
+                greetedRecently = true;
+            }
+
+            if (greetedRecently) {
+                console.log(`[WA-INBOUND] Already greeted ${phone} recently — staying silent`);
+            } else {
+                // Replying to their own message is inside the 24-hour window, so
+                // free-form text is allowed here and needs no template.
+                await this.sendContactAutoReply(phone)
+                    .catch(err => console.error(`[WA-INBOUND] Greeting failed: ${err.message}`));
+            }
+        }
+
+        // ── 2. Forward to the owners ──
+        if (process.env.WHATSAPP_FORWARD_INBOUND !== 'false') {
+            const body = String(text || '').trim() || '[media message]';
+            const forward = `📩 *New customer message*\n\n📱 +${phone}\n💬 ${body}\n\n↩️ Reply to them directly on WhatsApp.`;
+
+            /* Not rate-limited, on purpose: the owner needs to see every message,
+             * not just the first of a conversation.
+             * Suggested template body: "Message from {{1}}: {{2}}"
+             * Configure with WHATSAPP_TEMPLATE_INBOUND_FORWARD. */
+            for (const owner of owners) {
+                await this.sendMessage(owner, forward, 'inbound_forward', null, [`+${phone}`, body])
+                    .catch(err => console.error(`[WA-INBOUND] Forward to ${owner} failed: ${err.message}`));
+            }
+        }
+
+        return { success: true };
+    }
+
     /**
      * Send contact form auto-reply via WhatsApp (BILINGUAL)
      * Sends an acknowledgment to the customer when they submit the contact form

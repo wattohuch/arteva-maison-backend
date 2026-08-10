@@ -10,6 +10,7 @@
 const crypto = require('crypto');
 const Product = require('../models/Product');
 const { asyncHandler } = require('../middleware/error');
+const whatsappService = require('../services/whatsappService');
 
 const FRONTEND = (process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com').replace(/\/$/, '');
 
@@ -226,6 +227,15 @@ const handleWhatsAppWebhook = (req, res) => {
             console.warn('[META-WA] Rejected webhook with a bad signature');
             return res.sendStatus(401);
         }
+    } else if (process.env.NODE_ENV === 'production') {
+        /* Fail closed. This endpoint is public and unauthenticated by design —
+         * the signature IS its authentication. Without a secret to check
+         * against, anything posted here would be treated as a genuine customer
+         * message, which means a stranger could trigger WhatsApp sends from the
+         * business number to any phone they name. Refusing is the safe answer;
+         * local development still runs unsigned so the handler can be tested.  */
+        console.error('[META-WA] Refusing webhook: META_APP_SECRET is not set, so its authenticity cannot be verified');
+        return res.sendStatus(403);
     }
 
     res.sendStatus(200);
@@ -243,8 +253,15 @@ const handleWhatsAppWebhook = (req, res) => {
 
                 for (const message of value.messages || []) {
                     const from = message.from;
-                    const text = message.text?.body || `[${message.type}]`;
-                    console.log(`[META-WA] Inbound from ${from}: ${text}`);
+                    const text = message.text?.body || '';
+
+                    /* Acknowledge the customer and alert the owners. Deliberately
+                     * not awaited: the 200 has already been sent, and Meta resends
+                     * anything it considers slow, which would double-greet. Errors
+                     * are handled inside; this catch is the last resort so a
+                     * rejection can never become an unhandled rejection. */
+                    whatsappService.handleInboundMessage(from, text)
+                        .catch(err => console.error(`[META-WA] Inbound handling failed: ${err.message}`));
                 }
             }
         }
