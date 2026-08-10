@@ -42,11 +42,45 @@ and measured. This is the piece with the clearest commercial return.
 4. Choose **Meta Pixel + Conversions API**.
 5. Copy the **Pixel ID** (15–16 digits).
 
-### Generate the server access token
+### Generate the server access token — *optional, do it later if you like*
 
-6. Still in Events Manager, open your pixel → **Settings**.
-7. Scroll to **Conversions API** → **Generate access token**.
-8. Copy it immediately — Meta shows it once. It does not expire.
+**Skip this and the pixel still works.** Everything the browser can see is
+already tracked without it. The server half is gated on this token, and with it
+unset those sends are skipped silently — nothing errors, nothing half-works. It
+is worth adding eventually, not worth blocking a launch on.
+
+What it adds: the browser pixel is the lossy half of Meta tracking. Ad blockers,
+Safari's tracking prevention and iOS App Tracking Transparency all drop events,
+and a customer who pays then closes the tab before the success page renders is
+never counted at all. The server reports the same conversions, where none of
+that applies. On mobile-heavy traffic that is a meaningful share of purchases.
+Both halves carry the same `event_id`, so Meta keeps one and discards the twin —
+adding it will not double-count.
+
+**Route A — Events Manager (if you can find it)**
+
+6. Events Manager → your pixel → **Settings**.
+7. Scroll to the **Conversions API** section → **Generate access token**
+   (a small text link, easy to miss).
+8. Copy it immediately — Meta shows it once.
+
+That link is not always present. It depends on how the data source was created
+and needs Business admin rights, which is why it may simply not be there.
+
+**Route B — System user (more reliable, and the better one for production)**
+
+This is the same place you generate the WhatsApp token in §3, so if you are
+doing that anyway, do both at once.
+
+6. **https://business.facebook.com/settings/system-users**
+7. **Add** → name `ARTEVA API` → role **Admin** → **Create**.
+8. **Assign assets** → **Pixels** → your pixel → **Full control**.
+9. **Generate new token** → pick your app → tick **`ads_management`** →
+   expiry **Never** → **Generate**.
+10. Copy it now; it is shown once.
+
+A system-user token is not tied to anyone's personal login, so it does not break
+when a person leaves the business or changes their password.
 
 ### Set the variables
 
@@ -57,13 +91,15 @@ Your pixel is **`1029535353325764`**.
 VITE_META_PIXEL_ID=1029535353325764
 ```
 
-**Render (backend)**
+**Render (backend)** — only needed for the optional server half
 ```
 META_PIXEL_ID=1029535353325764
-META_CAPI_ACCESS_TOKEN=<the token from step 8>
+META_CAPI_ACCESS_TOKEN=<the token, if you got one>
 ```
 
-Redeploy both.
+Redeploy both. If you only set the Vercel variable, the pixel is live and
+tracking; the Render ones can be added any time afterwards without changing
+anything else.
 
 > **Do not paste the `<script>` snippet Events Manager gives you into
 > `index.html`.** The site already loads the pixel from
