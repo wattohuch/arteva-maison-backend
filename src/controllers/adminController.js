@@ -551,6 +551,13 @@ const updateUserRole = asyncHandler(async (req, res) => {
         throw new Error('User not found');
     }
 
+    if (!User.schema.path('role').enumValues.includes(role)) {
+        res.status(400);
+        throw new Error('Unknown role');
+    }
+
+    const isSelf = String(user._id) === String(req.user._id);
+
     // Role change restrictions
     // Only owner/superuser can assign owner role
     if (role === 'owner' && req.user.role !== 'owner' && req.user.role !== 'superuser') {
@@ -582,8 +589,39 @@ const updateUserRole = asyncHandler(async (req, res) => {
         throw new Error('Admins can only assign admin, driver, or user roles');
     }
 
+    /* Stepping down from your own account is allowed — handing the shop over to
+       its real owner requires it — but not all the way out of the dashboard.
+       A role below admin cannot reopen this screen to undo itself, so it would
+       be a one-way lockout performed by a single mis-click. */
+    if (isSelf && !['admin', 'owner', 'superuser'].includes(role)) {
+        res.status(400);
+        throw new Error('You cannot remove your own dashboard access. Ask another admin to change your role.');
+    }
+
+    /* The shop must keep an owner. `owner` is the only role that can open
+       revenue, and only an owner or superuser can appoint one — demote the last
+       one and the takings become unreachable from the dashboard, recoverable
+       only by editing the database directly. */
+    if (user.role === 'owner' && role !== 'owner') {
+        const otherOwners = await User.countDocuments({ role: 'owner', _id: { $ne: user._id } });
+        if (otherOwners === 0) {
+            res.status(400);
+            throw new Error('This is the only owner account. Appoint another owner before changing this one.');
+        }
+    }
+
+    const previousRole = user.role;
     user.role = role;
     await user.save();
+
+    // Mail addressed to "the owner" is resolved from the owner account, so the
+    // cached answer is wrong the moment ownership moves.
+    if (previousRole === 'owner' || role === 'owner') {
+        require('../utils/ownerContact').clearOwnerEmailCache();
+    }
+
+    console.log(`[USERS] ${req.user.email} set role of ${user.email} to ${role}`);
+
     res.json({ success: true, data: user });
 });
 
@@ -1151,14 +1189,21 @@ const requestRevenueOTP = asyncHandler(async (req, res) => {
         </div>
     `;
 
+    /* The OTP goes to whoever is asking for it — the owner account's own
+       address, read from the account. It used to be posted to one address
+       written into this file, so the code only worked while the owner kept
+       that mailbox: change the email on the account, or hand the shop to
+       someone else, and the OTP silently left for the previous owner. */
     await sendEmail({
-        to: 'mohammadalawaji2@gmail.com',
+        to: user.email,
         subject: 'Revenue Access OTP - ARTEVA Maison',
         html: emailHtml
     });
 
-    // TODO: Integrate SMS service for +96550683207
-    console.log(`[REVENUE OTP] Generated OTP ${otp} for user ${user.email}`);
+    // TODO: send the same OTP by SMS to the owner's own number (user.phone).
+    // The OTP itself is deliberately not logged — the server log is not a
+    // second delivery channel for it.
+    console.log(`[REVENUE OTP] Generated OTP for user ${user.email}`);
 
     res.json({
         success: true,
@@ -2053,6 +2098,45 @@ function describeUserAgent(ua = '') {
     return { browser, os, device, bot };
 }
 
+/** The one photo that stands for a product in a list. */
+function primaryProductImage(product) {
+    if (!product || !Array.isArray(product.images) || product.images.length === 0) return '';
+    const primary = product.images.find(img => img && img.isPrimary) || product.images[0];
+    return primary?.url || '';
+}
+
+// How many thumbnails a single IP is allowed to carry back. A curious visitor
+// can open dozens of products; the row shows the most recent handful and the
+// count covers the rest, which keeps the response small.
+const MAX_PRODUCTS_PER_VISITOR = 24;
+
+/**
+ * Add one product view to `bucket[key]`, merging repeat views of the same
+ * product into a single entry with a count and the latest timestamp.
+ */
+function recordProductView(bucket, key, view, product) {
+    if (!bucket.has(key)) bucket.set(key, new Map());
+    const seen = bucket.get(key);
+    const id = String(product._id);
+    const existing = seen.get(id);
+
+    if (existing) {
+        existing.views += 1;
+        if (view.createdAt > existing.lastViewedAt) existing.lastViewedAt = view.createdAt;
+        return;
+    }
+
+    seen.set(id, {
+        id,
+        name: product.name || '',
+        nameAr: product.nameAr || '',
+        slug: product.slug || '',
+        image: primaryProductImage(product),
+        views: 1,
+        lastViewedAt: view.createdAt,
+    });
+}
+
 // @desc    Visitor log: who has been on the site, by IP
 // @route   GET /api/admin/analytics/visitor-log
 // @access  Private/Admin
@@ -2128,6 +2212,13 @@ const getIPVisitorLog = asyncHandler(async (req, res) => {
 
         // Fold in product interest where we have it. Absence is normal — a
         // visitor who never opened a product page simply has none.
+        //
+        // The photos come back with it: "which products did this IP look at"
+        // is answered far faster by a row of thumbnails than by a count and a
+        // single product name, which is all this used to return.
+        const productsByIp = new Map();      // ip        -> Map(productId -> entry)
+        const productsByIpDate = new Map();  // ip|date   -> Map(productId -> entry)
+
         try {
             const ips = [...byIpMap.keys()];
             if (ips.length) {
@@ -2135,18 +2226,47 @@ const getIPVisitorLog = asyncHandler(async (req, res) => {
                 if (dateFilter) productQuery.date = dateFilter;
 
                 const views = await ProductView.find(productQuery)
-                    .populate('product', 'name')
+                    .populate('product', 'name nameAr slug images')
+                    .sort({ createdAt: -1 })
                     .lean();
 
                 for (const view of views) {
                     const row = byIpMap.get(view.ip);
                     if (!row) continue;
                     row.productViews += 1;
-                    if (!row.lastProduct && view.product?.name) row.lastProduct = view.product.name;
+
+                    const product = view.product;
+                    // A view whose product has since been deleted still counts
+                    // as interest, but there is nothing left to show for it.
+                    if (!product) continue;
+
+                    // The same view is counted twice on purpose: once for the
+                    // IP's whole history, once for the day it happened on, so
+                    // the by-IP table and the daily accordion each get theirs.
+                    recordProductView(productsByIp, view.ip, view, product);
+                    recordProductView(productsByIpDate, `${view.ip}|${view.date}`, view, product);
                 }
             }
         } catch (viewErr) {
             console.error('[ANALYTICS] Product view join failed:', viewErr.message);
+        }
+
+        // Most recently viewed first: the top of the strip is what the visitor
+        // was looking at last, which is the part worth reading.
+        const orderProducts = (seen) => [...seen.values()]
+            .sort((a, b) => new Date(b.lastViewedAt) - new Date(a.lastViewedAt));
+
+        for (const row of byIpMap.values()) {
+            const ordered = orderProducts(productsByIp.get(row.ip) || new Map());
+            row.productCount = ordered.length;
+            row.products = ordered.slice(0, MAX_PRODUCTS_PER_VISITOR);
+            row.lastProduct = ordered[0]?.name || undefined;
+        }
+
+        for (const entry of log) {
+            const ordered = orderProducts(productsByIpDate.get(`${entry.ip}|${entry.date}`) || new Map());
+            entry.productCount = ordered.length;
+            entry.products = ordered.slice(0, MAX_PRODUCTS_PER_VISITOR);
         }
 
         const byIp = [...byIpMap.values()].sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));

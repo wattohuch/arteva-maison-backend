@@ -302,6 +302,79 @@ const check = (name, cond, detail = '') => {
     const huge = await req('/orders?limit=99999999', {}, tok(customer));
     check('GET /orders?limit=99999999 -> 400', huge.status === 400, String(huge.status));
 
+    // ── 14. Visitor log carries the products each IP looked at ──
+    // The page shows them as thumbnails, so the photo has to come back with
+    // the row — a count alone does not answer "what were they looking at".
+    const SiteVisit = require('../src/models/SiteVisit');
+    const ProductView = require('../src/models/ProductView');
+    const visitDay = new Date().toISOString().split('T')[0];
+
+    await Product.updateOne(
+        { _id: product._id },
+        { $set: { images: [{ url: '/img/vase-a.png', isPrimary: true }, { url: '/img/vase-b.png' }] } },
+    );
+    const secondProduct = await Product.create({
+        name: 'Smoke Lamp', price: 30, category: cat._id, stock: 5, sku: 'SL1',
+        images: [{ url: '/img/lamp.png', isPrimary: true }],
+    });
+
+    await SiteVisit.create({ ip: '203.0.113.9', date: visitDay, page: '/', userAgent: 'Mozilla/5.0' });
+    await ProductView.create({ product: product._id, ip: '203.0.113.9', date: visitDay });
+    await ProductView.create({ product: secondProduct._id, ip: '203.0.113.9', date: visitDay });
+
+    const vlog = await req('/admin/analytics/visitor-log', {}, tok(admin));
+    check('GET /admin/analytics/visitor-log -> 200', vlog.status === 200, String(vlog.status));
+
+    const ipRow = (vlog.body?.data?.byIp || []).find(r => r.ip === '203.0.113.9');
+    check('  rolls the IP up', !!ipRow, JSON.stringify(vlog.body?.data?.byIp));
+    check('  lists both products viewed', ipRow?.products?.length === 2 && ipRow.productCount === 2,
+        JSON.stringify(ipRow?.products));
+    check('  each product carries its primary photo',
+        (ipRow?.products || []).every(p => p.image && p.name),
+        JSON.stringify(ipRow?.products));
+
+    const logRow = (vlog.body?.data?.log || []).find(r => r.ip === '203.0.113.9');
+    check('  the day entry carries them too', logRow?.products?.length === 2, JSON.stringify(logRow?.products));
+
+    // ── 15. Role changes cannot orphan the shop ──
+    // `owner` is the only role that opens revenue, and this is the screen that
+    // hands it over, so both directions of the handover have to work.
+    // An admin cannot touch the owner at all — that guard comes first.
+    const adminTouchesOwner = await req(`/admin/users/${owner._id}`, {
+        method: 'PUT', body: JSON.stringify({ role: 'admin' }),
+    }, tok(admin));
+    check('PUT /admin/users owner row, as admin -> 403', adminTouchesOwner.status === 403, String(adminTouchesOwner.status));
+
+    // The owner may, but not while they are the only one.
+    const soleOwner = await req(`/admin/users/${owner._id}`, {
+        method: 'PUT', body: JSON.stringify({ role: 'admin' }),
+    }, tok(owner));
+    check('PUT /admin/users demoting the only owner -> 400', soleOwner.status === 400, String(soleOwner.status));
+
+    const selfLockout = await req(`/admin/users/${admin._id}`, {
+        method: 'PUT', body: JSON.stringify({ role: 'user' }),
+    }, tok(admin));
+    check('PUT /admin/users removing your own access -> 400', selfLockout.status === 400, String(selfLockout.status));
+
+    const bogusRole = await req(`/admin/users/${customer._id}`, {
+        method: 'PUT', body: JSON.stringify({ role: 'ceo' }),
+    }, tok(admin));
+    check('PUT /admin/users unknown role -> 400', bogusRole.status === 400, String(bogusRole.status));
+
+    // With a second owner appointed, the first can step down — the handover
+    // the Users screen exists to perform.
+    const newOwner = await User.create({ name: 'Real Owner', email: 'real@x.com', password: 'password123', role: 'admin' });
+    const appoint = await req(`/admin/users/${newOwner._id}`, {
+        method: 'PUT', body: JSON.stringify({ role: 'owner' }),
+    }, tok(owner));
+    check('PUT /admin/users appointing a second owner -> 200', appoint.status === 200, String(appoint.status));
+
+    const stepDown = await req(`/admin/users/${owner._id}`, {
+        method: 'PUT', body: JSON.stringify({ role: 'admin' }),
+    }, tok(owner));
+    check('  the outgoing owner can then step down', stepDown.status === 200, JSON.stringify(stepDown.body).slice(0, 160));
+    check('  and no longer holds owner', (await User.findById(owner._id)).role === 'admin');
+
     await mongoose.disconnect();
     await mongod.stop();
     console.log(`\n${pass} passed, ${fail} failed`);

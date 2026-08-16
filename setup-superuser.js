@@ -1,11 +1,19 @@
 /**
  * Setup Superuser Script
- * Creates or updates a user with superuser role and revenue password
+ *
+ *   node setup-superuser.js <email> [phone]
+ *
+ * Promotes an existing account to `superuser` and sets a revenue password on
+ * it. The email is an argument rather than a constant in this file: which
+ * account belongs to the developer is not a fact about the codebase, and the
+ * address it used to name is the shop owner's, who is not the superuser.
  *
  * NOTE: `superuser` is the developer account and no longer has access to
  * revenue — that belongs to the `owner` role alone. The revenue password this
  * script sets is therefore inert on a superuser. The owner sets their own
  * revenue password from the admin dashboard the first time they open Revenue.
+ *
+ * To change any other role, use `node src/set-role.js <email> <role>`.
  */
 
 require('dotenv').config();
@@ -16,8 +24,12 @@ const mongoose = require('mongoose');
 const User = require('./src/models/User');
 const bcrypt = require('bcryptjs');
 
-const SUPERUSER_EMAIL = 'mohammadalawaji2@gmail.com';
-const SUPERUSER_PHONE = '+96550683207';
+const [SUPERUSER_EMAIL, SUPERUSER_PHONE] = process.argv.slice(2);
+
+if (!SUPERUSER_EMAIL) {
+    console.error('Usage: node setup-superuser.js <email> [phone]');
+    process.exit(1);
+}
 
 async function setupSuperuser() {
     try {
@@ -45,7 +57,7 @@ async function setupSuperuser() {
         console.log('✅ Connected to MongoDB');
 
         // Find user by email
-        let user = await User.findOne({ email: SUPERUSER_EMAIL });
+        let user = await User.findOne({ email: SUPERUSER_EMAIL.toLowerCase().trim() });
 
         if (!user) {
             console.log('❌ User not found. Please create an account first.');
@@ -61,8 +73,8 @@ async function setupSuperuser() {
         // Update role to superuser
         user.role = 'superuser';
         
-        // Update phone if not set
-        if (!user.phone) {
+        // Update phone if not set and one was supplied
+        if (!user.phone && SUPERUSER_PHONE) {
             user.phone = SUPERUSER_PHONE;
             console.log(`\n📞 Phone number set to: ${SUPERUSER_PHONE}`);
         }

@@ -9,7 +9,7 @@
  *   2. Upload ALL product images to Cloudinary (persistent CDN)
  *   3. Update all product image URLs to Cloudinary
  *   4. Update order item images to Cloudinary
- *   5. Update user roles (admin@arteva.com → owner, mohammadalawaji2 → owner)
+ *   5. Make sure the shop has an owner (OWNER_EMAIL → owner)
  *   6. Add missing Arabic descriptions to products
  *   7. Add missing SKUs to products
  * 
@@ -318,31 +318,46 @@ async function main() {
     log('INFO', '');
     log('INFO', '═══ STEP 5: Update user roles ═══');
 
-    // admin@arteva.com → owner
-    const adminUser = await User.findOne({ email: 'admin@arteva.com' }).select('+password');
-    if (adminUser) {
-        if (adminUser.role !== 'owner') {
-            // Use updateOne to avoid triggering pre('save') password re-hash
-            await User.updateOne({ email: 'admin@arteva.com' }, { $set: { role: 'owner' } });
-            log('INFO', '  ✅ admin@arteva.com: role changed admin → owner');
-        } else {
-            log('INFO', '  ✅ admin@arteva.com: already owner');
-        }
-    } else {
-        log('WARN', '  ⚠️  admin@arteva.com not found');
-    }
+    /* One owner, named by OWNER_EMAIL.
+     *
+     * This step used to promote two hardcoded addresses to `owner` — the shop
+     * owner's and the developer's shared admin login. Two owners is not what
+     * the role means: `owner` is the only role that can open Revenue, so the
+     * second one handed the takings to whoever was signed in as it, and the
+     * revenue password prompt appeared for an account that should never have
+     * been asked to set one. Only the shop owner gets it, and which address
+     * that is belongs in the environment, not in this file.
+     *
+     * Roles are changed from /admin/users, or with `node src/set-role.js`.
+     * This step exists only so a freshly restored database has an owner at all.
+     */
+    const ownerEmail = process.env.OWNER_EMAIL?.toLowerCase().trim();
 
-    // mohammadalawaji2@gmail.com → owner
-    const ownerUser = await User.findOne({ email: 'mohammadalawaji2@gmail.com' });
-    if (ownerUser) {
-        if (ownerUser.role !== 'owner') {
-            await User.updateOne({ email: 'mohammadalawaji2@gmail.com' }, { $set: { role: 'owner' } });
-            log('INFO', '  ✅ mohammadalawaji2@gmail.com: role changed admin → owner');
-        } else {
-            log('INFO', '  ✅ mohammadalawaji2@gmail.com: already owner');
-        }
+    if (!ownerEmail) {
+        log('WARN', '  ⚠️  OWNER_EMAIL not set — leaving roles alone.');
+        log('WARN', '      Set the owner with: node src/set-role.js <email> owner');
     } else {
-        log('WARN', '  ⚠️  mohammadalawaji2@gmail.com not found');
+        const ownerUser = await User.findOne({ email: ownerEmail });
+        if (!ownerUser) {
+            log('WARN', `  ⚠️  ${ownerEmail} not found — no owner assigned`);
+        } else if (ownerUser.role === 'owner') {
+            log('INFO', `  ✅ ${ownerEmail}: already owner`);
+        } else {
+            // updateOne, not save(), so pre('save') does not re-hash the password.
+            await User.updateOne({ _id: ownerUser._id }, { $set: { role: 'owner' } });
+            log('INFO', `  ✅ ${ownerEmail}: role changed ${ownerUser.role} → owner`);
+        }
+
+        // Anyone else left holding `owner` from the old two-owner arrangement
+        // is reported, not demoted — this script should not silently take
+        // access away from an account it cannot identify.
+        const extraOwners = await User.find({ role: 'owner', email: { $ne: ownerEmail } })
+            .select('email')
+            .lean();
+        for (const extra of extraOwners) {
+            log('WARN', `  ⚠️  ${extra.email} also holds "owner" — revenue is open to it too.`);
+            log('WARN', `      Demote with: node src/set-role.js ${extra.email} admin`);
+        }
     }
 
     // ── STEP 6: Add SKUs and Arabic descriptions ─────────────

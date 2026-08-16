@@ -1,5 +1,6 @@
 const { asyncHandler } = require('../middleware/error');
 const { sendEmail } = require('../services/emailService');
+const { getOwnerEmail } = require('../utils/ownerContact');
 
 // Escape HTML to prevent XSS in email templates
 function escapeHtml(str) {
@@ -31,8 +32,17 @@ const sendContactMessage = asyncHandler(async (req, res) => {
         throw new Error('Please provide a valid email address');
     }
 
-    // Recipient email address
-    const recipientEmail = 'princewalson68@gmail.com';
+    /* Customer messages go to the shop owner, read from the owner account —
+       they were being delivered to one address written into this file, which
+       meant the shop's own inquiries never reached the shop. CONTACT_EMAIL
+       overrides it if these should land somewhere else. */
+    const recipientEmail = process.env.CONTACT_EMAIL?.trim() || await getOwnerEmail();
+
+    if (!recipientEmail) {
+        console.error('[CONTACT] No owner account and no CONTACT_EMAIL — message has nowhere to go.');
+        res.status(500);
+        throw new Error('Failed to send email. Please try again later.');
+    }
 
     // Create email HTML content (escape user input to prevent XSS)
     const safeName = `${escapeHtml(firstName)} ${escapeHtml(lastName)}`;
