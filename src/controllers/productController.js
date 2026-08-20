@@ -8,11 +8,39 @@ const { paginate, buildSortQuery } = require('../utils/helpers');
 // @route   GET /api/products
 // @access  Public
 const getProducts = asyncHandler(async (req, res) => {
-    const { category, search, sort, minPrice, maxPrice, featured, isNew } = req.query;
+    const { category, search, sort, minPrice, maxPrice, featured, isNew, ids } = req.query;
     const { skip, limit, page } = paginate(req.query.page, req.query.limit);
 
     // Build filter query
     let filter = { isActive: true };
+
+    /* `?ids=a,b,c` — fetch a known set of products in one request.
+     *
+     * Added for the basket, which needs current stock for the handful of
+     * products already in it. Without this the client either fires one request
+     * per line or trusts a stock figure captured when the item was added, and
+     * that figure goes stale while the basket sits open — which is how a
+     * shopper reaches checkout holding more than exists.
+     *
+     * An extension of this endpoint rather than a new one: same guards, same
+     * shape, and nothing else has to learn about it. Capped so the id list
+     * cannot be used to pull the catalogue in one unpaginated call.
+     */
+    if (ids) {
+        const requested = String(ids)
+            .split(',')
+            .map(id => id.trim())
+            .filter(id => mongoose.Types.ObjectId.isValid(id))
+            .slice(0, 100);
+
+        // An `ids` parameter that resolves to nothing must return nothing,
+        // never the whole catalogue.
+        if (!requested.length) {
+            return res.json({ success: true, data: [], pagination: { page, limit, total: 0, pages: 0 } });
+        }
+
+        filter._id = { $in: requested };
+    }
 
     if (category) {
         // Support both ObjectId and slug-based category filtering

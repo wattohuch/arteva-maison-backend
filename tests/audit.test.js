@@ -438,6 +438,25 @@ const section = (title) => console.log(`\n── ${title} ──`);
     check('refunding a NEW online order restores stock',
         refundNew.status === 200 && await stockOf(scarce._id) === 2, String(await stockOf(scarce._id)));
 
+    // ── Bulk product lookup, used by the basket to re-read stock ──
+    const bulkA = await mkProduct('Bulk One', 4);
+    const bulkB = await mkProduct('Bulk Two', 9);
+
+    const byIds = await req(`/products?ids=${bulkA._id},${bulkB._id}&limit=2`);
+    check('GET /products?ids= returns just those products',
+        byIds.status === 200 && byIds.body?.data?.length === 2, JSON.stringify(byIds.body?.data?.length));
+    check('  and carries current stock',
+        byIds.body.data.every(p => typeof p.stock === 'number'),
+        JSON.stringify(byIds.body.data.map(p => p.stock)));
+
+    const badIds = await req('/products?ids=not-an-id');
+    check('  an unusable id list returns nothing, NOT the whole catalogue',
+        badIds.body?.data?.length === 0, String(badIds.body?.data?.length));
+
+    const mixedIds = await req(`/products?ids=not-an-id,${bulkA._id}`);
+    check('  a partly-valid list returns only the valid ones',
+        mixedIds.body?.data?.length === 1, String(mixedIds.body?.data?.length));
+
     // ═══════════════════════════════════════════════════════════
     section('5. Visitors page — product clicks');
     // ═══════════════════════════════════════════════════════════
