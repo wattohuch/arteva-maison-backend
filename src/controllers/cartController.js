@@ -37,10 +37,7 @@ const addToCart = asyncHandler(async (req, res) => {
         throw new Error('Product not found');
     }
 
-    if (product.stock < quantity) {
-        res.status(400);
-        throw new Error('Insufficient stock');
-    }
+    const wanted = Math.max(1, parseInt(quantity, 10) || 1);
 
     let cart = await Cart.findOne({ user: req.user._id });
 
@@ -49,11 +46,41 @@ const addToCart = asyncHandler(async (req, res) => {
     }
 
     const existingItemIndex = cart.items.findIndex(item => item.product.toString() === productId);
+    const alreadyInCart = existingItemIndex > -1
+        ? (cart.items[existingItemIndex].quantity || 0)
+        : 0;
+
+    /* Check the RESULTING quantity, not the increment.
+     *
+     * This compared `product.stock < quantity`, which only ever looked at the
+     * units being added this time. With 2 in stock and 2 already in the basket,
+     * "add 1" was checked as 2 < 1 — false — and the cart happily went to 3.
+     * Checkout then tried to deduct 3 units that did not exist.
+     */
+    const resulting = alreadyInCart + wanted;
+
+    if (product.stock < resulting) {
+        // `available` and `inCart` let the storefront say "only 2 left, and you
+        // already have 2" rather than a bare "Insufficient stock".
+        return res.status(400).json({
+            success: false,
+            code: 'INSUFFICIENT_STOCK',
+            message: product.stock === 0
+                ? `${product.name} is out of stock.`
+                : `Only ${product.stock} left in stock for ${product.name}.`,
+            details: {
+                productId: String(product._id),
+                available: product.stock,
+                inCart: alreadyInCart,
+                requested: resulting,
+            },
+        });
+    }
 
     if (existingItemIndex > -1) {
-        cart.items[existingItemIndex].quantity += quantity;
+        cart.items[existingItemIndex].quantity = resulting;
     } else {
-        cart.items.push({ product: productId, quantity });
+        cart.items.push({ product: productId, quantity: wanted });
     }
 
     await cart.save();
@@ -77,8 +104,18 @@ const updateCartItem = asyncHandler(async (req, res) => {
 
     const product = await Product.findById(productId);
     if (product && product.stock < quantity) {
-        res.status(400);
-        throw new Error('Insufficient stock');
+        return res.status(400).json({
+            success: false,
+            code: 'INSUFFICIENT_STOCK',
+            message: product.stock === 0
+                ? `${product.name} is out of stock.`
+                : `Only ${product.stock} left in stock for ${product.name}.`,
+            details: {
+                productId: String(product._id),
+                available: product.stock,
+                requested: quantity,
+            },
+        });
     }
 
     let cart = await Cart.findOne({ user: req.user._id });

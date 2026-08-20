@@ -1,15 +1,26 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const { asyncHandler } = require('../middleware/error'); // Fix import destructuring
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const stockService = require('../services/stockService');
+const { withTransaction } = require('../utils/transaction');
 const promoService = require('../services/promoService');
 const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
 
 // How long a revenue unlock lasts before the owner has to re-enter the
 // password. Short enough that walking away from the dashboard closes it.
 const REVENUE_SESSION_MINUTES = 30;
+
+/** Wrong revenue passwords tolerated before the section locks itself. */
+const REVENUE_MAX_ATTEMPTS = 5;
+
+/** How long that lockout lasts. */
+const REVENUE_LOCKOUT_MINUTES = 15;
+
+/** How long a revenue-reset ticket, bought with an emailed OTP, stays usable. */
+const REVENUE_RESET_MINUTES = 10;
 
 // Helper function to parse boolean values consistently
 // Handles: boolean, string ('true'/'false'), number (1/0), undefined
@@ -84,13 +95,30 @@ const getRevenueTotal = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/products
 // @access  Private/Admin
 const getAdminProducts = asyncHandler(async (req, res) => {
+    /* Counter staff get a deliberately thin catalogue.
+     *
+     * A cashier needs this endpoint to put lines on an invoice, so it is one of
+     * the few they can reach — but "can list products in order to sell them" is
+     * not "can read the whole product record". The full document carries
+     * supplier-facing and merchandising fields that are none of a cashier's
+     * business, and a narrowed projection is the difference between granting
+     * the capability and granting the data.
+     *
+     * Enforced here rather than by the client asking nicely for fewer fields:
+     * a direct API call gets the same narrow answer. */
+    const isCashier = req.user.role === 'cashier';
+
+    const query = isCashier
+        ? Product.find({ isActive: true }).select('name nameAr sku price stock images')
+        : Product.find({}).populate('category', 'name');
+
     // .lean() — this is a read-only table. Without it Mongoose hydrates a full
     // document, with getters, setters and change tracking, for every product in
     // the catalogue on every load of the products screen.
-    const products = await Product.find({})
+    const products = await query
         .sort({ sortOrder: 1, createdAt: -1 })
-        .populate('category', 'name')
         .lean();
+
     res.json({ success: true, data: products });
 });
 
@@ -435,13 +463,51 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     }
 
     const oldStatus = order.orderStatus;
+
+    /* ── Inventory ──
+     *
+     * This endpoint moved no stock at all. Cancelling an order from the admin
+     * Orders page therefore left its units deducted forever: the goods were
+     * back on the shelf physically but the database still counted them as sold,
+     * and the shop slowly ran out of stock it actually had.
+     *
+     * Reconciled rather than incremented, so setting an already-cancelled order
+     * to cancelled again moves nothing.
+     */
+    const wasCancelled = oldStatus === 'cancelled';
+    const nowCancelled = status === 'cancelled';
+
     order.updateStatus(status, 'Status updated by admin', req.user._id);
 
     if (status === 'paid' || status === 'delivered') {
         order.paymentStatus = 'paid';
     }
 
-    await order.save();
+    const stockSnapshot = stockService.snapshotItems(order);
+
+    if (nowCancelled && !wasCancelled) {
+        await stockService.releaseOrderStock(order);
+    } else if (wasCancelled && !nowCancelled) {
+        // Reviving a cancelled order has to take its stock back out. Throws
+        // INSUFFICIENT_STOCK if those units have since been sold, which is the
+        // truthful answer.
+        await stockService.reclaimOrderStock(order);
+    }
+
+    try {
+        await order.save();
+    } catch (err) {
+        // The stock already moved; walk it back so inventory never reflects a
+        // status change that was not persisted.
+        await stockService.reconcile(
+            stockService.buildTargets(order.items, stockSnapshot, i => Number(i.stockHeld) || 0)
+        ).catch(rollbackErr => {
+            console.error(
+                `[STOCK] Rollback failed for order ${order.orderNumber}: ${rollbackErr.message}`
+            );
+        });
+        throw err;
+    }
 
     // Send WhatsApp notification to CUSTOMER about status change (owner only gets new orders)
     try {
@@ -583,16 +649,22 @@ const updateUserRole = asyncHandler(async (req, res) => {
         throw new Error('Cannot change superuser role');
     }
 
-    // Admin can only assign admin, driver, or user roles
-    if (req.user.role === 'admin' && !['admin', 'driver', 'user'].includes(role)) {
+    /* Admins may appoint staff at or below their own level, which now includes
+       `cashier`. Counter staff turn over — the role has to be grantable and
+       revocable from this screen by whoever runs the shop that week, not
+       wired to a particular person anywhere in the codebase. */
+    const ADMIN_ASSIGNABLE = ['admin', 'cashier', 'driver', 'user'];
+    if (req.user.role === 'admin' && !ADMIN_ASSIGNABLE.includes(role)) {
         res.status(403);
-        throw new Error('Admins can only assign admin, driver, or user roles');
+        throw new Error(`Admins can only assign ${ADMIN_ASSIGNABLE.join(', ')} roles`);
     }
 
     /* Stepping down from your own account is allowed — handing the shop over to
        its real owner requires it — but not all the way out of the dashboard.
        A role below admin cannot reopen this screen to undo itself, so it would
        be a one-way lockout performed by a single mis-click. */
+    // `cashier` is excluded here too: it cannot reopen the Users screen, so
+    // demoting yourself to it is the same one-way lockout.
     if (isSelf && !['admin', 'owner', 'superuser'].includes(role)) {
         res.status(400);
         throw new Error('You cannot remove your own dashboard access. Ask another admin to change your role.');
@@ -1099,18 +1171,35 @@ const getRevenueAccessStatus = asyncHandler(async (req, res) => {
         return res.json({ success: true, isOwner: false, hasPassword: false });
     }
 
-    const user = await User.findById(req.user._id).select('+revenuePassword');
+    const user = await User.findById(req.user._id)
+        .select('+revenuePassword +revenueLockedUntil');
+
+    const lockedUntil = user?.revenueLockedUntil && user.revenueLockedUntil > new Date()
+        ? user.revenueLockedUntil
+        : null;
 
     res.json({
         success: true,
         isOwner: true,
-        hasPassword: Boolean(user?.revenuePassword)
+        hasPassword: Boolean(user?.revenuePassword),
+        // So the prompt can say "locked for 12 more minutes" instead of
+        // silently refusing every attempt.
+        lockedUntil,
     });
 });
 
 // @desc    Authenticate revenue access with password
 // @route   POST /api/admin/revenue-auth
 // @access  Private/Owner
+//
+// Every failure here answers 4xx WITHOUT a SESSION_* code, and never 401.
+//
+// It used to answer 401 on a wrong password, and the API client signs the user
+// out of the whole dashboard on any 401. So one mistyped revenue password
+// deleted the owner's login token: the screen still looked signed in, but every
+// request after it failed with "Not Authorized" until they reloaded and logged
+// back in. That single status code is the origin of both the revenue-password
+// complaint and most of the random logouts.
 const authenticateRevenueAccess = asyncHandler(async (req, res) => {
     const { revenuePassword } = req.body;
 
@@ -1119,11 +1208,32 @@ const authenticateRevenueAccess = asyncHandler(async (req, res) => {
         throw new Error('Access denied. Revenue is restricted to the owner account.');
     }
 
-    const user = await User.findById(req.user._id).select('+revenuePassword');
+    if (!revenuePassword || typeof revenuePassword !== 'string') {
+        res.status(400);
+        throw new Error('Enter your revenue password.');
+    }
+
+    const user = await User.findById(req.user._id)
+        .select('+revenuePassword +revenueAttempts +revenueLockedUntil');
 
     if (!user.revenuePassword) {
         res.status(400);
         throw new Error('Revenue password not set. Please set one first.');
+    }
+
+    // ── Lockout ──
+    // The login limiter never sees these attempts: the caller is already
+    // authenticated and this is not an auth route. Without a counter of its
+    // own, an open owner session is an unlimited guessing oracle against a
+    // short secret guarding the shop's takings.
+    if (user.revenueLockedUntil && user.revenueLockedUntil > new Date()) {
+        const seconds = Math.ceil((user.revenueLockedUntil - Date.now()) / 1000);
+        return res.status(429).json({
+            success: false,
+            code: 'REVENUE_LOCKED_OUT',
+            message: `Too many attempts. Try again in ${seconds} second(s).`,
+            details: { retryAfterSeconds: seconds, attemptsRemaining: 0 },
+        });
     }
 
     // Compare directly against revenuePassword (not the login password)
@@ -1131,8 +1241,49 @@ const authenticateRevenueAccess = asyncHandler(async (req, res) => {
     const isMatch = await bcrypt.compare(revenuePassword, user.revenuePassword);
 
     if (!isMatch) {
-        res.status(401);
-        throw new Error('Invalid revenue password');
+        const attempts = (user.revenueAttempts || 0) + 1;
+        const locked = attempts >= REVENUE_MAX_ATTEMPTS;
+
+        await User.updateOne(
+            { _id: user._id },
+            locked
+                ? {
+                    $set: {
+                        revenueAttempts: 0,
+                        revenueLockedUntil: new Date(Date.now() + REVENUE_LOCKOUT_MINUTES * 60000),
+                    },
+                }
+                : { $set: { revenueAttempts: attempts } }
+        );
+
+        console.warn(
+            `[REVENUE] Failed unlock for ${user.email} (${attempts}/${REVENUE_MAX_ATTEMPTS})` +
+            (locked ? ` - locked for ${REVENUE_LOCKOUT_MINUTES}m` : '')
+        );
+
+        return res.status(locked ? 429 : 403).json({
+            success: false,
+            code: locked ? 'REVENUE_LOCKED_OUT' : 'REVENUE_PASSWORD_INVALID',
+            message: locked
+                ? `Too many attempts. Revenue is locked for ${REVENUE_LOCKOUT_MINUTES} minutes.`
+                : 'Invalid revenue password.',
+            // Under `details` because that is the field the API client lifts
+            // onto ApiError; a top-level key here would be dropped and the
+            // prompt could not warn before the lockout hit.
+            details: {
+                attemptsRemaining: locked ? 0 : REVENUE_MAX_ATTEMPTS - attempts,
+                lockoutMinutes: locked ? REVENUE_LOCKOUT_MINUTES : 0,
+            },
+        });
+    }
+
+    // A correct password clears the counter, so an owner who fumbles twice and
+    // then succeeds does not carry those attempts into tomorrow.
+    if (user.revenueAttempts || user.revenueLockedUntil) {
+        await User.updateOne(
+            { _id: user._id },
+            { $set: { revenueAttempts: 0, revenueLockedUntil: null } }
+        );
     }
 
     // Short-lived and separately scoped, so the ordinary login JWT can never
@@ -1234,19 +1385,49 @@ const verifyRevenueOTP = asyncHandler(async (req, res) => {
         throw new Error('OTP has expired. Please request a new OTP.');
     }
 
-    if (user.revenueOTP !== otp) {
-        res.status(401);
+    // Constant-time compare: a plain !== exits at the first differing digit,
+    // which is a timing oracle against a six-digit secret.
+    const supplied = Buffer.from(String(otp));
+    const expected = Buffer.from(String(user.revenueOTP));
+    const otpMatches = supplied.length === expected.length &&
+        crypto.timingSafeEqual(supplied, expected);
+
+    if (!otpMatches) {
+        // 403, not 401 - see authenticateRevenueAccess. A wrong OTP is not a
+        // dead login session.
+        res.status(403);
         throw new Error('Invalid OTP');
     }
 
     // Clear OTP after successful verification
     user.revenueOTP = null;
     user.revenueOTPExpiry = null;
+    // Proving control of the account's mailbox also clears any lockout - that
+    // is the way out for an owner who locked themselves out guessing.
+    user.revenueAttempts = 0;
+    user.revenueLockedUntil = null;
     await user.save();
+
+    /* This used to return nothing but a success message.
+     *
+     * setRevenuePassword refuses to overwrite an existing password and tells
+     * the owner to "use forgot password to reset" - but the OTP flow it points
+     * at granted no reset, so an owner who forgot their revenue password had no
+     * way back in short of a database edit. The OTP now buys a scoped,
+     * short-lived ticket that setRevenuePassword accepts as authority to
+     * replace the password. */
+    const jwt = require('jsonwebtoken');
+    const resetToken = jwt.sign(
+        { id: user._id, scope: 'revenue_reset' },
+        process.env.JWT_SECRET,
+        { expiresIn: REVENUE_RESET_MINUTES + 'm' }
+    );
 
     res.json({
         success: true,
-        message: 'OTP verified successfully'
+        message: 'OTP verified. You can now set a new revenue password.',
+        resetToken,
+        expiresInMinutes: REVENUE_RESET_MINUTES
     });
 });
 
@@ -1254,8 +1435,9 @@ const verifyRevenueOTP = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/receipt/:orderId
 // @access  Private/Admin (admin, owner, superuser)
 const generateReceipt = asyncHandler(async (req, res) => {
-    // Allow admin, owner, and superuser to generate receipts
-    if (!['admin', 'owner', 'superuser'].includes(req.user.role)) {
+    const isCashier = req.user.role === 'cashier';
+
+    if (!isCashier && !['admin', 'owner', 'superuser'].includes(req.user.role)) {
         res.status(403);
         throw new Error('Access denied. Admin privileges required to generate receipts.');
     }
@@ -1265,6 +1447,21 @@ const generateReceipt = asyncHandler(async (req, res) => {
         .lean();
 
     if (!order) {
+        res.status(404);
+        throw new Error('Order not found');
+    }
+
+    /* A cashier can print the invoice they just rang up, and nothing else.
+     *
+     * Handing them the receipt for an arbitrary order id would be a way around
+     * the "no access to old orders" rule: the receipt carries the customer's
+     * name, phone, address and what they paid. Scoped to orders this account
+     * created, which is the whole of a cashier's legitimate need — they have to
+     * be able to hand the customer their receipt.
+     *
+     * 404 rather than 403 on purpose: confirming that an order id exists is
+     * itself more than a cashier should be able to learn by probing. */
+    if (isCashier && String(order.createdByAdmin || '') !== String(req.user._id)) {
         res.status(404);
         throw new Error('Order not found');
     }
@@ -1331,18 +1528,49 @@ const setRevenuePassword = asyncHandler(async (req, res) => {
         throw new Error('Revenue password must be at least 6 characters');
     }
 
-    const user = await User.findById(req.user._id).select('+revenuePassword');
+    const user = await User.findById(req.user._id)
+        .select('+revenuePassword +revenueAttempts +revenueLockedUntil');
 
-    // Only allow setting if not already set
+    /* Replacing an existing password needs proof beyond being signed in.
+     *
+     * Either the current revenue password, or a reset ticket bought with the
+     * emailed OTP. Without one of the two, an unattended open owner session
+     * could simply overwrite the password and read the takings - which would
+     * make the whole second factor decorative. */
     if (user.revenuePassword) {
-        res.status(400);
-        throw new Error('Revenue password already set. Use forgot password to reset.');
+        const bcrypt = require('bcryptjs');
+        const { currentPassword, resetToken } = req.body;
+        let authorised = false;
+
+        if (resetToken) {
+            try {
+                const jwt = require('jsonwebtoken');
+                const decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+                authorised = decoded.scope === 'revenue_reset' &&
+                    String(decoded.id) === String(user._id);
+            } catch {
+                authorised = false;
+            }
+        }
+
+        if (!authorised && currentPassword) {
+            authorised = await bcrypt.compare(currentPassword, user.revenuePassword);
+        }
+
+        if (!authorised) {
+            res.status(403);
+            throw new Error(
+                'Enter your current revenue password, or verify the emailed code, to change it.'
+            );
+        }
     }
 
     // Hash and save revenue password
     const bcrypt = require('bcryptjs');
     const salt = await bcrypt.genSalt(10);
     user.revenuePassword = await bcrypt.hash(revenuePassword, salt);
+    user.revenueAttempts = 0;
+    user.revenueLockedUntil = null;
     await user.save();
 
     console.log(`[REVENUE] Revenue password set for owner: ${user.email}`);
@@ -1645,15 +1873,15 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         }
     }
 
-    // Snapshot the lines as they stand so the stock reconcile below knows what
-    // this order is currently holding. Taken before any mutation.
-    const previousItems = order.items.map(i => ({
-        product: i.product,
-        name: i.name,
-        quantity: i.quantity,
-        isRefunded: i.isRefunded,
-        stockHeld: i.stockHeld,
-    }));
+    /* Snapshot the lines as they stand so the stock reconcile below knows what
+     * this order is currently holding. Taken before any mutation.
+     *
+     * `snapshotItems` rather than a hand-rolled map: for an order written
+     * before stock holdings were recorded, the stored `stockHeld` is a schema
+     * default of 0 and reconciling against it would restore nothing when a line
+     * is removed. It reads those orders' real holdings off their quantities
+     * instead. */
+    const previousItems = stockService.snapshotItems(order);
 
     // Update items if provided
     if (items && Array.isArray(items)) {
@@ -1706,33 +1934,34 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         order.notes = notes;
     }
 
-    // ── Inventory ──
-    // Adding a line to a receipt takes stock out; reducing a quantity or
-    // removing a line puts it back. Runs before save so an over-sell is
-    // rejected with the order untouched.
-    await stockService.syncOrderStock(order, { previousItems });
-
     // Recalculate subtotal, refundAmount and total
     order.subtotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     order.refundAmount = order.items.reduce((sum, item) => sum + (item.isRefunded ? (item.price * item.quantity) : 0), 0);
     order.total = order.subtotal + (order.shippingCost || 0) - (order.discount || 0) - (order.refundAmount || 0);
     if (order.total < 0) order.total = 0;
 
-    try {
-        await order.save();
-    } catch (err) {
-        // The stock movement already landed. Walk it back to the pre-edit
-        // holdings so a failed save cannot leave inventory reflecting an order
-        // state that was never persisted.
+    /* ── Inventory ──
+     *
+     * Adding a line to a receipt takes stock out; reducing a quantity, removing
+     * a line, or flagging one refunded puts it back. The reconcile runs before
+     * the save inside the same transaction, so an over-sell is rejected with
+     * both the order and the shelf untouched. */
+    await withTransaction(async (session) => {
+        await stockService.syncOrderStock(order, { previousItems, session });
+        await order.save({ session });
+    }).catch(async (err) => {
+        // Only reachable without transactions — inside one, nothing committed.
+        // Walk the stock back to the pre-edit holdings so inventory never
+        // reflects an order state that was not persisted.
         await stockService.reconcile(
             stockService.buildTargets(order.items, previousItems, i => Number(i.stockHeld) || 0)
         ).catch(rollbackErr => {
             console.error(
-                `[STOCK] ⚠️ Rollback failed for order ${order.orderNumber}: ${rollbackErr.message}`
+                `[STOCK] Rollback failed for order ${order.orderNumber}: ${rollbackErr.message}`
             );
         });
         throw err;
-    }
+    });
 
     // Return updated order with user populated
     const updated = await Order.findById(order._id)
@@ -1793,6 +2022,9 @@ const createOrder = asyncHandler(async (req, res) => {
         // storefront checkout. The Orders page and revenue reports split on it.
         orderSource: 'manual',
         createdByAdmin: req.user._id,
+        // Every line carries a truthful stockHeld once the reconcile below
+        // runs, so refunds and edits on this receipt reconcile against it.
+        stockLedgerVersion: stockService.STOCK_LEDGER_VERSION,
         createdAt: createdAt ? new Date(createdAt) : new Date(),
         orderStatus: orderStatus || 'confirmed',
         paymentStatus: paymentStatus || 'paid',
@@ -1913,15 +2145,14 @@ const processRefund = asyncHandler(async (req, res) => {
     const { type, itemId } = req.body;
     let totalRefundedNow = 0;
 
-    // Baseline for the stock reconcile below — captured before any line is
-    // flagged as refunded.
-    const previousItems = order.items.map(i => ({
-        product: i.product,
-        name: i.name,
-        quantity: i.quantity,
-        isRefunded: i.isRefunded,
-        stockHeld: i.stockHeld,
-    }));
+    /* Baseline for the stock reconcile below — captured before any line is
+     * flagged as refunded.
+     *
+     * Uses `snapshotItems` so a refund on an ONLINE order works. Online orders
+     * were written before holdings were recorded, so every line stored
+     * stockHeld: 0; the reconcile computed 0 - 0 and put nothing back. That is
+     * exactly the reported bug — refunding an order left the stock deducted. */
+    const previousItems = stockService.snapshotItems(order);
 
     if (type === 'full') {
         if (order.refundStatus === 'Full') {
@@ -1979,21 +2210,30 @@ const processRefund = asyncHandler(async (req, res) => {
     order.refundedAt = new Date();
     order.refundedBy = req.user._id;
 
-    // ── Inventory ──
-    // A refunded line is back on the shelf. `heldForLine` returns 0 for
-    // refunded items, so this restores exactly the units that line was holding
-    // and nothing more — refunding the same item twice is already blocked
-    // above, and even if it were not, the reconcile would be a no-op.
-    await stockService.syncOrderStock(order, { previousItems });
-
-    try {
-        await order.save();
-    } catch (err) {
+    /* ── Inventory ──
+     *
+     * A refunded line is back on the shelf. `heldForLine` returns 0 for
+     * refunded items, so this restores exactly the units that line was holding
+     * and nothing more.
+     *
+     * Double-restore is prevented at two levels. The checks above refuse an
+     * already-refunded line, but those are read-then-write and two requests in
+     * flight together both pass them; the reconcile underneath is what actually
+     * makes the second one a no-op, because by then the line's holding is 0.
+     *
+     * Stock movement and the order write share a transaction where the
+     * deployment supports one (Atlas does), so a failure cannot leave the line
+     * flagged as refunded while the units stay deducted. */
+    await withTransaction(async (session) => {
+        await stockService.syncOrderStock(order, { previousItems, session });
+        await order.save({ session });
+    }).catch(async (err) => {
+        // Only reachable without transactions — inside one, nothing committed.
         await stockService.reconcile(
             stockService.buildTargets(order.items, previousItems, i => Number(i.stockHeld) || 0)
         ).catch(() => {});
         throw err;
-    }
+    });
 
     console.log(
         `[REFUND] ↩️ Order ${order.orderNumber} — ${type} refund of ` +
@@ -2384,11 +2624,101 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
             { $sort: { _id: -1 } }
         ]);
 
-        const daily = dailyBreakdown.map(d => ({
-            date: d._id,
-            uniqueVisitors: d.uniqueVisitors.length,
-            totalVisits: d.totalVisits
+        /* ── Product clicks per day ──
+         *
+         * The third figure the shop actually wants on this page: of the people
+         * who came on a given day, how many opened a product, how many distinct
+         * people did it, and WHICH products they opened.
+         *
+         * ProductView holds one document per IP per product per day, so
+         * counting documents gives clicks, `$addToSet` on ip gives the people,
+         * and grouping by product gives the ranking. All three come out of one
+         * pass rather than a query per day.
+         */
+        const ProductView = require('../models/ProductView');
+
+        const viewsByDay = await ProductView.aggregate([
+            { $match: { date: { $gte: ninetyDaysAgoStr } } },
+            {
+                $group: {
+                    _id: { date: '$date', product: '$product' },
+                    clicks: { $sum: 1 },
+                    visitors: { $addToSet: '$ip' },
+                },
+            },
+            {
+                $group: {
+                    _id: '$_id.date',
+                    productClicks: { $sum: '$clicks' },
+                    productVisitors: { $addToSet: '$visitors' },
+                    products: {
+                        $push: {
+                            product: '$_id.product',
+                            clicks: '$clicks',
+                            visitors: { $size: '$visitors' },
+                        },
+                    },
+                },
+            },
+            { $sort: { _id: -1 } },
+        ]);
+
+        // Name and photograph the products, in one query for the whole window.
+        const viewedProductIds = [...new Set(
+            viewsByDay.flatMap(d => d.products.map(p => String(p.product)))
+        )];
+
+        const productsById = new Map(
+            (await Product.find({ _id: { $in: viewedProductIds } })
+                .select('name nameAr slug images')
+                .lean())
+                .map(p => [String(p._id), p])
+        );
+
+        const byDate = new Map(viewsByDay.map(d => {
+            // `productVisitors` is an array of per-product IP arrays; one
+            // person who opened three products is one visitor, not three.
+            const distinct = new Set(d.productVisitors.flat());
+
+            const products = d.products
+                .map(entry => {
+                    const product = productsById.get(String(entry.product));
+                    // A product deleted since it was viewed still counted as
+                    // interest, but there is nothing left to name it with.
+                    if (!product) return null;
+                    return {
+                        id: String(product._id),
+                        name: product.name || '',
+                        nameAr: product.nameAr || '',
+                        slug: product.slug || '',
+                        image: primaryProductImage(product),
+                        clicks: entry.clicks,
+                        visitors: entry.visitors,
+                    };
+                })
+                .filter(Boolean)
+                .sort((a, b) => b.clicks - a.clicks);
+
+            return [d._id, {
+                productClicks: d.productClicks,
+                productVisitors: distinct.size,
+                products,
+            }];
         }));
+
+        const daily = dailyBreakdown.map(d => {
+            const views = byDate.get(d._id);
+            return {
+                date: d._id,
+                uniqueVisitors: d.uniqueVisitors.length,
+                totalVisits: d.totalVisits,
+                // The third total on each day's row: product clicks, how many
+                // people made them, and what they opened.
+                productClicks: views?.productClicks || 0,
+                productVisitors: views?.productVisitors || 0,
+                products: views?.products || [],
+            };
+        });
 
         /* Today's figure is read out of the same breakdown the table below it
            renders, rather than counted by a separate query. Two queries meant
@@ -2403,6 +2733,11 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
         const last30 = daily.filter(d => d.date >= thirtyDaysAgoStr);
         const last30UniqueTotal = last30.reduce((sum, d) => sum + d.uniqueVisitors, 0);
 
+        // Headline product-click figures, summed from the same per-day numbers
+        // the table renders so the card and the rows beneath it cannot disagree.
+        const totalProductClicks = daily.reduce((sum, d) => sum + d.productClicks, 0);
+        const todayProductClicks = daily.find(d => d.date === today)?.productClicks || 0;
+
         res.json({
             success: true,
             data: {
@@ -2410,6 +2745,8 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
                 totalUniqueVisitors,
                 todayVisitors,
                 last30DaysVisitors: last30UniqueTotal,
+                totalProductClicks,
+                todayProductClicks,
                 dailyBreakdown: daily
             }
         });
@@ -2422,6 +2759,8 @@ const getSiteVisitStats = asyncHandler(async (req, res) => {
                 totalUniqueVisitors: 0,
                 todayVisitors: 0,
                 last30DaysVisitors: 0,
+                totalProductClicks: 0,
+                todayProductClicks: 0,
                 dailyBreakdown: []
             }
         });

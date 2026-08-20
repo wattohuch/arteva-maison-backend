@@ -1,11 +1,13 @@
-const jwt = require('jsonwebtoken');
+/**
+ * Generate a login token.
+ *
+ * Kept as a thin re-export so callers that only need "a token for this user"
+ * do not have to know about the access/refresh split. The real minting — and
+ * the short expiry that goes with it — lives in services/tokenService.js.
+ */
+const { generateAccessToken } = require('../services/tokenService');
 
-// Generate JWT token
-const generateToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-    });
-};
+const generateToken = (id) => generateAccessToken(id);
 
 // Format price for display
 const formatPrice = (price, currency = 'KWD') => {

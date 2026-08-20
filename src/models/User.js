@@ -32,13 +32,65 @@ const userSchema = new mongoose.Schema({
         type: String,
         trim: true
     },
+    /**
+     * What this account may do.
+     *
+     *   user       shopper
+     *   driver     delivery pilot — the driver app only
+     *   cashier    counter staff. May create an invoice and nothing else: no
+     *              order history, no revenue, no customers, no settings. The
+     *              restriction is enforced on every route (see
+     *              middleware/auth.js), not by hiding buttons.
+     *   admin      runs the shop day to day
+     *   owner      the person who owns the business. The only role revenue is
+     *              ever shown to.
+     *   superuser  the developer account. Administers everything except the
+     *              takings, which are deliberately none of its business.
+     */
     role: {
         type: String,
-        enum: ['user', 'admin', 'driver', 'owner', 'superuser'],
+        enum: ['user', 'cashier', 'admin', 'driver', 'owner', 'superuser'],
         default: 'user'
     },
     revenuePassword: {
         type: String,
+        select: false
+    },
+    /**
+     * Failed revenue-password attempts, and the time the lockout lifts.
+     *
+     * The revenue password is a short secret guarding the shop's takings and
+     * it sits behind an already-authenticated session, so the ordinary login
+     * rate limiter never sees these attempts. Without a counter of its own an
+     * open owner session is an offline-speed oracle against it.
+     */
+    revenueAttempts: {
+        type: Number,
+        default: 0,
+        select: false
+    },
+    revenueLockedUntil: {
+        type: Date,
+        default: null,
+        select: false
+    },
+    /**
+     * Live refresh-token sessions, one entry per signed-in device.
+     *
+     * Only the SHA-256 hash of each token is kept, so this array is not a set
+     * of usable credentials. `select: false` keeps it off every ordinary user
+     * read — it is session bookkeeping, not profile data.
+     */
+    refreshTokens: {
+        type: [{
+            jti: { type: String, required: true },
+            tokenHash: { type: String, required: true },
+            expiresAt: { type: Date, required: true },
+            createdAt: { type: Date, default: Date.now },
+            userAgent: { type: String, default: '' },
+            _id: false
+        }],
+        default: [],
         select: false
     },
     addresses: [{
@@ -100,6 +152,17 @@ userSchema.pre('save', async function () {
     }
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
+
+    // Changing the password ends every other session.
+    //
+    // Without this a password reset — the thing you do precisely because you
+    // believe someone else has your credentials — left all their refresh
+    // tokens working for another month. `isNew` is excluded because a fresh
+    // account has no sessions to drop and assigning here would only add a
+    // pointless write.
+    if (!this.isNew) {
+        this.refreshTokens = [];
+    }
 });
 
 // Compare password method

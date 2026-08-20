@@ -216,6 +216,30 @@ const orderSchema = new mongoose.Schema({
     deemaChargeId: String,
     // Legacy Stripe field (deprecated)
     stripeSessionId: String,
+    /**
+     * Which generation of stock accounting this order was written under.
+     *
+     *   0 (or absent) — legacy. Stock was deducted at checkout by a
+     *     read-modify-write that never recorded how much each line took, so
+     *     `items.stockHeld` on these orders is a schema default of 0 and says
+     *     nothing about reality. Refunding one restored nothing, because the
+     *     reconcile computed a delta of 0 - 0. That is the "refund does not
+     *     restore stock" bug.
+     *
+     *   1 — every line carries a truthful `stockHeld`, so refunds, edits and
+     *     cancellations reconcile against it and are idempotent.
+     *
+     * Orders created from now on are stamped 1 at creation. Legacy orders are
+     * upgraded in place the first time stock is touched (see
+     * stockService.currentHoldings) and by scripts/backfill-stock-ledger.js,
+     * so neither a migration run nor its absence can leave the two paths
+     * disagreeing.
+     */
+    stockLedgerVersion: {
+        type: Number,
+        default: 0,
+        index: true
+    },
     notes: String,
     deliveryProof: String,  // Path to delivery proof photo
     trackingToken: {

@@ -66,8 +66,10 @@ const deleteReview = asyncHandler(async (req, res) => {
     }
 
     // Check ownership or admin
+    // 403: authenticated, just not the author. A 401 would tell the client its
+    // session had died and log the user out of the site.
     if (review.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
-        res.status(401);
+        res.status(403);
         throw new Error('Not authorized to delete this review');
     }
 

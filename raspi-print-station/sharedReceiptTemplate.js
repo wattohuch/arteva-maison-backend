@@ -143,6 +143,12 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- Without this, iOS Safari lays the receipt out in a 980px viewport and then
+     zooms out to fit the phone. Everything looked microscopic on screen, and
+     Safari's print preview inherited that layout viewport, which is why
+     printing from an iPhone produced an unreadable, badly-positioned page.
+     Harmless to the Raspberry Pi renderer, which prints at a fixed page size. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&family=Noto+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">` : '<!-- webFonts disabled: rendering from locally installed fonts so this never depends on the network -->'}
@@ -157,18 +163,41 @@ ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
     --font-arabic: 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
   }
 
+  * { box-sizing: border-box; }
+
   body {
     font-family: var(--font-body);
     color: var(--color-text);
     background: #fff;
     padding: 20px;
-    max-width: 800px;
+    /* 190mm is the printable width of A4 inside the 10mm side margins declared
+       in @page below. It used to be 800px, which is about 212mm — WIDER than
+       the sheet it was being printed onto, so the right-hand edge of every
+       receipt was clipped or pushed onto a second page.
+       The px cap keeps it from stretching on a wide desktop screen. */
+    max-width: min(190mm, 800px);
     margin: 0 auto;
     font-size: 13px;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
     text-rendering: geometricPrecision;
     -webkit-font-smoothing: subpixel-antialiased;
+  }
+
+  /* The element the fit-to-page scaler transforms. Transforming <body> itself
+     confuses Safari's pagination — it prints the untransformed box and clips. */
+  #receipt-root { transform-origin: top center; }
+
+  /* Phones. The receipt is a fixed-geometry document, so rather than reflow it
+     into a single column — which would no longer resemble what prints — the
+     table is allowed to scroll sideways and the padding tightens. */
+  @media screen and (max-width: 640px) {
+    body { padding: 12px; font-size: 12px; }
+    .order-meta { flex-wrap: wrap; gap: 10px; }
+    .info-grid { grid-template-columns: 1fr; gap: 10px; }
+    .qr-section { gap: 16px; }
+    .total-section { width: 100%; }
+    .items-table { display: block; overflow-x: auto; }
   }
 
   .header {
@@ -227,9 +256,13 @@ ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
   .footer .ar-footer { font-family: var(--font-arabic); direction: rtl; margin-top: 4px; }
 
   /* Print — exact match of receipt.html @media print */
-  @page { size: A4; margin: 8mm 10mm; }
+  @page { size: A4 portrait; margin: 8mm 10mm; }
   @media print {
+    html, body { width: 190mm; max-width: 190mm; margin: 0; }
     body { padding: 0; font-size: 11px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Anything the host page injected around the receipt — a print button, a
+       toolbar — is not part of the document being printed. */
+    .no-print, .btn-print { display: none !important; }
     .info-grid { background: #fafaf8 !important; border: 1px solid #ddd; }
     .return-policy { background: #fffbeb !important; }
     .qr-section { background: #fafaf8 !important; }
@@ -257,6 +290,7 @@ ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
 </style>
 </head>
 <body>
+<div id="receipt-root">
 
 <div class="header">
   ${logoB64 ? '<img src="' + logoB64 + '" class="header-logo" alt="ARTÉVA MAISON">' : '<div class="logo-text"><span class="main">ARTÉVA</span><span class="sub">MAISON</span></div>'}
@@ -373,20 +407,76 @@ ${order.notes && order.notes.trim() ? `
   <p>artevamaison@gmail.com • www.artevamaisonkw.com</p>
 </div>
 
-</div>
+</div><!-- /#receipt-root — the wrapper the fit-to-page scaler transforms -->
 
 <script>
-// Dynamic single-page scaler: shrinks content if it overflows A4 height
-(function() {
-  var A4_HEIGHT_PX = 1045; // ~277mm printable at 96dpi minus margins
-  var body = document.body;
-  var h = body.scrollHeight;
-  if (h > A4_HEIGHT_PX) {
-    var scale = Math.max(0.72, A4_HEIGHT_PX / h);
-    body.style.transform = 'scale(' + scale + ')';
-    body.style.transformOrigin = 'top left';
-    body.style.width = (100 / scale) + '%';
+/* Fit-to-one-page scaler.
+ *
+ * Three things were wrong with the previous version, and together they meant it
+ * usually did nothing and occasionally made matters worse:
+ *
+ *   1. It ran at parse time, before the web fonts and the two QR images had
+ *      loaded, so it measured a document shorter than the one that would print
+ *      and concluded no scaling was needed.
+ *   2. It transformed <body>. Safari paginates the untransformed body box, so
+ *      a scaled body printed clipped rather than shrunk — the iPhone symptom.
+ *   3. It only ran on screen dimensions. A receipt that fits a phone viewport
+ *      can still overflow A4.
+ *
+ * It now waits for fonts and images, measures the wrapper, and scales THAT.
+ */
+(function () {
+  var A4_CONTENT_HEIGHT_PX = 1045;   // 297mm less 8mm margins, at 96dpi
+  var MIN_SCALE = 0.65;              // below this it stops being readable
+
+  function fit() {
+    var root = document.getElementById('receipt-root');
+    if (!root) return;
+
+    // Reset before measuring, so re-running is idempotent — the print dialog
+    // can be opened more than once on the same document.
+    root.style.transform = '';
+
+    var height = root.getBoundingClientRect().height;
+    if (height <= A4_CONTENT_HEIGHT_PX) return;
+
+    var scale = Math.max(MIN_SCALE, A4_CONTENT_HEIGHT_PX / height);
+    root.style.transform = 'scale(' + scale + ')';
+    // Reserve the post-scale height, or the page keeps the pre-scale one and
+    // the browser still believes it needs a second sheet.
+    root.style.height = (height * scale) + 'px';
   }
+
+  function whenReady(run) {
+    var waits = [];
+
+    if (document.fonts && document.fonts.ready) waits.push(document.fonts.ready);
+
+    Array.prototype.forEach.call(document.images, function (img) {
+      if (img.complete) return;
+      waits.push(new Promise(function (resolve) {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+      }));
+    });
+
+    // Never block on a slow asset: print a slightly imperfect receipt rather
+    // than none at all.
+    var guard = new Promise(function (resolve) { setTimeout(resolve, 2500); });
+    Promise.race([Promise.all(waits), guard]).then(run, run);
+  }
+
+  whenReady(fit);
+
+  // Safari can raise the print sheet before the measurement above has settled.
+  if (window.matchMedia) {
+    try {
+      window.matchMedia('print').addEventListener('change', function (e) {
+        if (e.matches) fit();
+      });
+    } catch (err) { /* older Safari: the whenReady pass above stands */ }
+  }
+  window.addEventListener('beforeprint', fit);
 })();
 </script>
 

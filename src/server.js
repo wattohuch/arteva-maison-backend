@@ -187,7 +187,24 @@ app.use((req, res, next) => {
 // API ROUTES
 // ============================================
 
-// Auth routes with stricter rate limiting
+/* Auth routes with stricter rate limiting.
+ *
+ * /refresh is exempt. It is not an attack surface the way /login is — the
+ * refresh token IS the credential, so there is nothing to guess — and it fires
+ * on a schedule the user does not control. A shop where several staff share an
+ * outbound IP would otherwise burn the 30-per-15-minutes budget on routine
+ * session renewals and lock everyone out of the dashboard, which is the exact
+ * symptom this work is meant to remove. It gets its own, looser limit. */
+const refreshLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    skip: skipRateLimit,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many refresh attempts, please try again shortly.' }
+});
+
+app.use('/api/auth/refresh', refreshLimiter, require('./routes/auth'));
 app.use('/api/auth', authLimiter, require('./routes/auth'));
 
 // Standard API routes

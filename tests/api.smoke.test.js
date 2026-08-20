@@ -191,7 +191,19 @@ const check = (name, cond, detail = '') => {
         method: 'POST',
         body: JSON.stringify({ revenuePassword: 'wrong-password' }),
     }, tok(owner));
-    check('POST revenue-auth with wrong password -> 401', badPw.status === 401, String(badPw.status));
+    /* 403, deliberately NOT 401.
+     *
+     * The API client signs the user out of the dashboard on any 401. When this
+     * answered 401, one mistyped revenue password deleted the owner's login
+     * token and every request afterwards failed with "Not Authorized" until
+     * they logged back in. A wrong password in a form on an authenticated page
+     * is a refusal, not a dead session. */
+    check('POST revenue-auth with wrong password -> 403', badPw.status === 403, String(badPw.status));
+    check('  code is REVENUE_PASSWORD_INVALID', badPw.body.code === 'REVENUE_PASSWORD_INVALID', JSON.stringify(badPw.body));
+
+    // ...and the login session must still work afterwards.
+    const stillIn = await req('/admin/stats', {}, tok(owner));
+    check('  the owner session survives a wrong revenue password', stillIn.status === 200, String(stillIn.status));
 
     const unlock = await req('/admin/revenue-auth', {
         method: 'POST',
