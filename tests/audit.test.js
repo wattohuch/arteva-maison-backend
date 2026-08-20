@@ -154,16 +154,30 @@ const section = (title) => console.log(`\n── ${title} ──`);
     }, tok(owner));
     check('  but the current password authorises it', withCurrent.status === 200, JSON.stringify(withCurrent.body));
 
-    // OTP recovery actually grants something now.
-    const freshOwner = await User.findById(owner._id);
-    freshOwner.revenueOTP = '123456';
-    freshOwner.revenueOTPExpiry = new Date(Date.now() + 600000);
-    await freshOwner.save();
+    /* OTP recovery, exercised as the OWNER experiences it: ask the real
+     * endpoint for a code, read the code the server actually stored, then
+     * verify it. Seeding revenueOTP by hand — which this used to do — skips
+     * requestRevenueOTP entirely, so it could not have caught a request that
+     * stored the code in a form verify would then reject. */
+    const otpRequest = await req('/admin/revenue-otp/request', { method: 'POST' }, tok(owner));
+    check('requesting a revenue OTP succeeds', otpRequest.status === 200, JSON.stringify(otpRequest.body));
 
+    const stored = await User.findById(owner._id).select('revenueOTP revenueOTPExpiry');
+    check('  the code is stored on the account', /^\d{6}$/.test(stored.revenueOTP || ''), String(stored.revenueOTP));
+    check('  with an expiry in the future', stored.revenueOTPExpiry > new Date(), String(stored.revenueOTPExpiry));
+
+    const wrongOtp = await req('/admin/revenue-otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ otp: '000000' }),
+    }, tok(owner));
+    check('  a wrong code is refused with 403, not 401', wrongOtp.status === 403, String(wrongOtp.status));
+
+    // The code the owner actually receives, verified end to end.
     const otpOk = await req('/admin/revenue-otp/verify', {
         method: 'POST',
-        body: JSON.stringify({ otp: '123456' }),
+        body: JSON.stringify({ otp: stored.revenueOTP }),
     }, tok(owner));
+    check('  the emailed code verifies', otpOk.status === 200, JSON.stringify(otpOk.body));
     check('a verified OTP returns a reset ticket', Boolean(otpOk.body?.resetToken), JSON.stringify(otpOk.body));
 
     const reset = await req('/admin/set-revenue-password', {
