@@ -6,6 +6,7 @@ const { asyncHandler } = require('../middleware/error');
 const { paginate } = require('../utils/helpers');
 const { emitNewOrder } = require('../socketHandler');
 const { WhatsAppService } = require('../services/whatsappService');
+const stockService = require('../services/stockService');
 
 // @desc    Create new order
 // @route   POST /api/orders
@@ -34,10 +35,12 @@ const createOrder = asyncHandler(async (req, res) => {
     for (const item of cart.items) {
         const product = item.product;
 
-        // Check stock
-        if (product.stock < item.quantity) {
+        /* A product deleted between adding to the cart and checking out leaves
+           a null here, and `product.stock` then threw a TypeError that surfaced
+           as a 500 on the customer's checkout. */
+        if (!product) {
             res.status(400);
-            throw new Error(`Insufficient stock for ${product.name}`);
+            throw new Error('An item in your cart is no longer available. Please review your cart.');
         }
 
         orderItems.push({
@@ -47,15 +50,42 @@ const createOrder = asyncHandler(async (req, res) => {
             sku: product.sku || '', // Include product SKU / number
             image: product.images[0]?.url || '',
             price: product.price,
-            quantity: item.quantity
+            quantity: item.quantity,
+            // Filled in by the reconcile below, once the stock has actually
+            // moved. Never assumed.
+            stockHeld: 0
         });
 
         subtotal += product.price * item.quantity;
-
-        // Reduce stock
-        product.stock -= item.quantity;
-        await product.save();
     }
+
+    /* ── Inventory ──
+     *
+     * This used to be `product.stock -= item.quantity; await product.save()`
+     * inside the loop above. Two things were wrong with it, and both were
+     * being paid for in real inventory:
+     *
+     *   1. Read-modify-write. Two customers checking out the last two units at
+     *      the same moment both read stock 2, both wrote 1, and one sale came
+     *      out of thin air. The stock service issues a conditional
+     *      `updateOne({ stock: { $gte: n } }, { $inc: { stock: -n } })`
+     *      instead, which Mongo evaluates atomically.
+     *
+     *   2. It never recorded how much each line had taken. Refunds reconcile
+     *      against `stockHeld`, so an online order — every line reading 0 —
+     *      computed a delta of 0 and restored nothing. THAT is why refunding an
+     *      online order did not put the goods back on the shelf.
+     *
+     * `reconcile` also rolls its own partial work back, so a cart whose third
+     * line oversells leaves the first two untouched rather than half-deducted.
+     */
+    const stockTargets = stockService.buildTargets(
+        [], orderItems, stockService.heldForLine
+    );
+    await stockService.reconcile(stockTargets);
+    orderItems.forEach(i => {
+        i.stockHeld = stockService.isTrackedLine(i) ? stockService.heldForLine(i) : 0;
+    });
 
     // Calculate shipping - Fixed 2 KD for all orders
     const shippingCost = 2.0;
@@ -152,18 +182,33 @@ const createOrder = asyncHandler(async (req, res) => {
 
     const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
 
-    const order = await Order.createWithRetry({
-        user: req.user._id,
-        items: orderItems,
-        shippingAddress,
-        paymentMethod,
-        subtotal,
-        shippingCost,
-        discount: totalDiscount,
-        promoCode: promoData,
-        total,
-        notes
-    });
+    let order;
+    try {
+        order = await Order.createWithRetry({
+            user: req.user._id,
+            items: orderItems,
+            shippingAddress,
+            paymentMethod,
+            subtotal,
+            shippingCost,
+            discount: totalDiscount,
+            promoCode: promoData,
+            total,
+            notes,
+            // Every line above carries a truthful stockHeld, so refunds and
+            // edits on this order can reconcile against it.
+            stockLedgerVersion: stockService.STOCK_LEDGER_VERSION
+        });
+    } catch (err) {
+        // Put the stock back — the order never came into existence, and
+        // holding inventory against it would strand those units forever.
+        await stockService.reconcile(
+            stockService.buildTargets(orderItems, [], () => 0)
+        ).catch(rollbackErr => {
+            console.error('[ORDER] Stock rollback failed after create error:', rollbackErr.message);
+        });
+        throw err;
+    }
 
     // Clear cart after order
     cart.items = [];
@@ -389,21 +434,27 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     }
 
     if (orderStatus) {
+        const wasCancelled = order.orderStatus === 'cancelled';
         order.orderStatus = orderStatus;
         if (orderStatus === 'delivered') {
             order.deliveredAt = Date.now();
         }
-        if (orderStatus === 'cancelled') {
-            order.cancelledAt = Date.now();
 
-            // Restore stock
-            for (const item of order.items) {
-                const product = await Product.findById(item.product);
-                if (product) {
-                    product.stock += item.quantity;
-                    await product.save();
-                }
-            }
+        /* Inventory follows the cancelled flag in both directions.
+         *
+         * This used to be `product.stock += item.quantity` in a loop, which
+         * credited the shelf every time the status was set to `cancelled` —
+         * including when it already was. Setting an order to cancelled twice,
+         * or double-clicking the control, invented stock. `releaseOrderStock`
+         * reconciles against what the order is actually holding, so the second
+         * call moves nothing. */
+        if (orderStatus === 'cancelled' && !wasCancelled) {
+            order.cancelledAt = Date.now();
+            await stockService.releaseOrderStock(order);
+        } else if (wasCancelled && orderStatus !== 'cancelled') {
+            // Un-cancelling has to take the stock back out, or the order ships
+            // goods the shelf has already been credited for.
+            await stockService.reclaimOrderStock(order);
         }
     }
 
@@ -483,14 +534,12 @@ const cancelOrder = asyncHandler(async (req, res) => {
     order.updateStatus('cancelled', reason || 'Cancelled by customer', req.user._id);
     order.cancelledAt = new Date();
 
-    // Restore stock
-    for (const item of order.items) {
-        const product = await Product.findById(item.product);
-        if (product) {
-            product.stock += item.quantity;
-            await product.save();
-        }
-    }
+    /* Restore stock — idempotently.
+     *
+     * The guard above already refuses an order that is `cancelled`, but that is
+     * a read-then-write check: two cancel requests in flight together both pass
+     * it. The reconcile is what actually makes a second restore a no-op. */
+    await stockService.releaseOrderStock(order);
 
     // Update payment status - no automatic refund
     if (order.paymentStatus === 'paid') {

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, updateProfile, addAddress, deleteAddress, forgotPassword, verifyOTP, resetPassword, verifyPassword } = require('../controllers/authController');
+const { register, login, refresh, logout, getMe, updateProfile, addAddress, deleteAddress, forgotPassword, verifyOTP, resetPassword, verifyPassword } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const {
@@ -16,6 +16,11 @@ const { mongoIdParam } = require('../validators/commonValidators');
 
 router.post('/register', validate(registerRules), register);
 router.post('/login', validate(loginRules), login);
+
+// Session lifecycle. Both are public because both have to work when the access
+// token has already expired, which is the only time either is called.
+router.post('/refresh', refresh);
+router.post('/logout', logout);
 router.post('/forgot-password', validate(forgotPasswordRules), forgotPassword);
 router.post('/verify-otp', validate(verifyOtpRules), verifyOTP);
 router.post('/reset-password', validate(resetPasswordRules), resetPassword);

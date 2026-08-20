@@ -39,7 +39,7 @@ const {
     getActiveCarts
 } = require('../controllers/adminController');
 const { getRevenueOverview } = require('../controllers/revenueController');
-const { protect, admin, owner, ownerOnly, revenueUnlocked } = require('../middleware/auth');
+const { protect, admin, cashierOrAdmin, owner, ownerOnly, revenueUnlocked } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 // Site Settings (public GET for frontend, protected PUT for admin)
@@ -73,7 +73,10 @@ router.post('/revenue-otp/verify', protect, ownerOnly, verifyRevenueOTP);
 // Revenue History (owner only)
 router.get('/revenue-history', protect, ownerOnly, revenueUnlocked, getRevenueHistory);
 
-// Receipt generation (superuser only)
+/* Receipt HTML. `protect` only at this level because the controller applies
+ * the finer rule: a cashier gets the receipt for an order they created and a
+ * 404 for anyone else's, so they can hand a customer their invoice without
+ * gaining a window onto the order history. */
 router.get('/receipt/:orderId', protect, generateReceipt);
 
 // Generate print station token
@@ -351,18 +354,34 @@ router.post('/whatsapp-queue/requeue-transient', async (req, res) => {
     }
 });
 
-// Products
+/* ── Products ──
+ *
+ * A cashier can list the catalogue, because an invoice has to have lines on it,
+ * and gets a narrowed projection (see getAdminProducts). Creating, editing and
+ * deleting stay `admin`. */
 router.route('/products')
-    .get(protect, admin, getAdminProducts)
+    .get(protect, cashierOrAdmin, getAdminProducts)
     .post(protect, admin, upload.array('images', 5), createProduct);
 
 router.route('/products/:id')
     .put(protect, admin, upload.array('images', 5), updateProduct)
     .delete(protect, admin, deleteProduct);
 
-// Orders
+/* ── Orders ──
+ *
+ * The cashier boundary lives here, and it is a boundary in the API rather than
+ * in the sidebar. Counter staff may create an invoice; they may not list, read,
+ * edit, re-status, assign or refund one. Hiding the Orders nav item would stop
+ * nobody who can open devtools or curl — these guards are what actually stop
+ * them, so a direct request to any line below answers 403 FORBIDDEN_ROLE.
+ *
+ * `admin` does not include `cashier`. That is the single fact the whole rule
+ * rests on; see middleware/auth.js. */
 router.get('/orders', protect, admin, getAdminOrders);
-router.post('/orders', protect, admin, createOrder);
+
+// The one write a cashier is allowed to make.
+router.post('/orders', protect, cashierOrAdmin, createOrder);
+
 router.put('/orders/:id/status', protect, admin, updateOrderStatus);
 router.put('/orders/:id/assign', protect, admin, assignDriver);
 router.put('/orders/:id/receipt', protect, admin, updateOrderReceipt);
