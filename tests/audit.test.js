@@ -219,6 +219,36 @@ const section = (title) => console.log(`\n── ${title} ──`);
 
     const cashierOrderId = invoice.body?.data?._id;
 
+    /* A counter sale has to land in the books as a counter sale.
+     *
+     * The Orders page filters on orderSource and the revenue reports break down
+     * by it, so an invoice saved without it would either vanish from the manual
+     * tab or be counted as a storefront checkout that never happened. And
+     * createdByAdmin is what ties the sale to whoever rang it up — without it
+     * there is no answer to "who took this money", and the cashier's own
+     * scoping (they may only reopen their own invoices) has nothing to key on.
+     *
+     * Read back from the database rather than trusting the API response, since
+     * it is the stored row the reports actually read. */
+    const storedInvoice = await Order.findById(cashierOrderId).lean();
+    check('  and it is stored as a MANUAL order',
+        storedInvoice?.orderSource === 'manual', String(storedInvoice?.orderSource));
+    check('  attributed to the cashier who rang it up',
+        String(storedInvoice?.createdByAdmin) === String(cashier._id),
+        String(storedInvoice?.createdByAdmin));
+    check('  with the line items persisted',
+        storedInvoice?.items?.length === 1 && storedInvoice.items[0].quantity === 2,
+        JSON.stringify(storedInvoice?.items?.map(i => ({ q: i.quantity, p: i.price }))));
+    check('  and stockHeld recorded, so a later refund can restore it',
+        storedInvoice?.items?.[0]?.stockHeld === 2,
+        String(storedInvoice?.items?.[0]?.stockHeld));
+
+    // And it must actually surface under the manual filter the admin uses.
+    const manualList = await req('/admin/orders?source=manual&limit=100', {}, tok(admin));
+    check('  and appears in the manual-orders list the admin sees',
+        (manualList.body?.data || []).some(o => String(o._id) === String(cashierOrderId)),
+        `${(manualList.body?.data || []).length} manual order(s) returned`);
+
     const ownReceipt = await req(`/admin/receipt/${cashierOrderId}`, {}, till);
     check('cashier can print the invoice they just created', ownReceipt.status === 200, String(ownReceipt.status));
 
