@@ -629,6 +629,49 @@ const section = (title) => console.log(`\n── ${title} ──`);
             method: 'POST', body: JSON.stringify({ refreshToken: loginC.body.data.refreshToken }),
         })).status === 401);
 
+    // -- Print queue health --
+    section('Print queue health');
+
+    // Nothing waiting -> healthy, whatever else is true.
+    await Order.updateMany({}, { $set: { printedAt: new Date() } });
+    const idle = await req('/admin/print-queue/health');
+    check('an empty queue reports ok', idle.status === 200 && idle.body.status === 'ok',
+        JSON.stringify(idle.body));
+
+    // A receipt waiting, but only just -- the agent has 15 minutes to collect it.
+    const freshOrd = await Order.findOne({});
+    await Order.updateOne({ _id: freshOrd._id },
+        { $unset: { printedAt: 1 }, $set: { paymentStatus: 'paid', orderStatus: 'confirmed', createdAt: new Date() } });
+    const recent = await req('/admin/print-queue/health');
+    check('a just-placed order is not yet a stall', recent.status === 200 && recent.body.status === 'ok',
+        JSON.stringify(recent.body));
+    check('  and it is counted as waiting', recent.body.queueDepth === 1, String(recent.body.queueDepth));
+
+    /* The same receipt, two hours old -- the agent has plainly not collected it.
+     * Written through the raw driver on purpose: `timestamps: true` makes
+     * createdAt immutable, so a Mongoose updateOne drops the $set silently and
+     * the order stays new. */
+    await Order.collection.updateOne({ _id: freshOrd._id },
+        { $set: { createdAt: new Date(Date.now() - 120 * 60000) } });
+    const stalledRes = await req('/admin/print-queue/health');
+    check('a queue that has stopped draining reports stalled',
+        stalledRes.body.status === 'stalled', JSON.stringify(stalledRes.body));
+    check('  and answers 503, so a plain HTTP monitor catches it too',
+        stalledRes.status === 503, String(stalledRes.status));
+    check('  and says how long it has been waiting',
+        stalledRes.body.oldestWaitingMinutes >= 119, String(stalledRes.body.oldestWaitingMinutes));
+
+    /* The whole reason this endpoint is unauthenticated. /print-queue/poll
+     * leaked names, emails, phones and addresses to anyone holding a key that
+     * was committed to the repository; this one is public, so it must carry
+     * nothing worth stealing. Asserted against the serialised body so a future
+     * .populate() or an extra field cannot reintroduce it unnoticed. */
+    const exposed = JSON.stringify(stalledRes.body).toLowerCase();
+    for (const leak of ['email', 'phone', 'address', 'name', 'ordernumber', 'total', '@']) {
+        check('  leaks no ' + leak, !exposed.includes(leak), exposed.slice(0, 160));
+    }
+
+
     // ── Report ──
     console.log(`\n${pass} passed, ${fail} failed`);
     if (failures.length) console.log(`Failing: ${failures.join(' | ')}`);

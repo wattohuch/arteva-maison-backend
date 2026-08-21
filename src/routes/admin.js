@@ -248,6 +248,97 @@ router.get('/print-queue/poll', async (req, res) => {
     }
 });
 
+/**
+ * Is the print queue draining?
+ *
+ * The Raspberry Pi agent died and nothing said so. Three orders sat unprinted
+ * for over a day, went out delivered with no receipt, and the first anyone knew
+ * was the owner noticing. The hardware failing is ordinary; not being told is
+ * the actual defect, and this is what fixes it.
+ *
+ * Point an uptime monitor here on a 5-minute interval:
+ *
+ *   · keyword monitors — alert when `"status":"ok"` is absent
+ *   · plain HTTP monitors — a stalled queue answers 503, so they alert too,
+ *     with no keyword configuration at all
+ *
+ * ── Deliberately public, and deliberately empty of customer data ──
+ *
+ * Unauthenticated so any monitor can reach it without a shared secret ending
+ * up in a third party's configuration. That is only safe because it returns
+ * COUNTS AND AGES AND NOTHING ELSE — no names, no emails, no phones, no
+ * addresses, no order numbers, no money.
+ *
+ * The sibling /print-queue/poll returns fully populated customer records, and
+ * with PRINT_AGENT_KEY unset it did so to anyone who had read this repository.
+ * That is the mistake this endpoint must never repeat: if you extend it, add
+ * aggregates, never records.
+ */
+router.get('/print-queue/health', async (req, res) => {
+    /* How long a receipt may legitimately wait. The agent polls every 30s and
+       prints in seconds, so anything still queued after this has not been
+       collected — the queue is not draining. */
+    const stallMinutes = Number(process.env.PRINT_STALL_MINUTES) || 15;
+
+    try {
+        const Order = require('../models/Order');
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+        // Exactly the filter /print-queue/poll offers the agent, so this
+        // measures the real queue rather than an approximation of it. Selecting
+        // only createdAt keeps customer data out of the process entirely.
+        const waiting = await Order.find({
+            paymentStatus: 'paid',
+            orderStatus: { $nin: ['cancelled'] },
+            printedAt: { $exists: false },
+            createdAt: { $gte: sevenDaysAgo }
+        })
+            .select('createdAt')
+            .sort({ createdAt: 1 })
+            .lean();
+
+        const depth = waiting.length;
+        const oldestWaitingMinutes = depth
+            ? Math.floor((Date.now() - new Date(waiting[0].createdAt).getTime()) / 60000)
+            : 0;
+
+        /* When the agent last succeeded at anything. Distinguishes "quiet
+           afternoon, nothing to print" from "the agent has been dead since
+           Tuesday" — a depth of 0 looks identical in both cases. */
+        const lastPrint = await Order.findOne({ printedAt: { $exists: true } })
+            .select('printedAt')
+            .sort({ printedAt: -1 })
+            .lean();
+
+        const minutesSinceLastPrint = lastPrint
+            ? Math.floor((Date.now() - new Date(lastPrint.printedAt).getTime()) / 60000)
+            : null;
+
+        // Only a queue that has something in it can stall. An empty queue is
+        // healthy no matter how long the agent has been idle.
+        const stalled = depth > 0 && oldestWaitingMinutes > stallMinutes;
+
+        res.status(stalled ? 503 : 200).json({
+            status: stalled ? 'stalled' : 'ok',
+            queueDepth: depth,
+            oldestWaitingMinutes,
+            stallThresholdMinutes: stallMinutes,
+            minutesSinceLastPrint,
+            checkedAt: new Date().toISOString(),
+            ...(stalled && {
+                message:
+                    `${depth} receipt(s) waiting, oldest ${oldestWaitingMinutes} minutes. ` +
+                    'The print agent is not collecting them — check it is running.'
+            })
+        });
+    } catch (e) {
+        // A failed check is not a healthy queue. 503 so a monitor treats a
+        // broken health endpoint as an outage rather than silently passing.
+        console.error('[PRINT-HEALTH] check failed:', e.message);
+        res.status(503).json({ status: 'error', message: 'Queue health check failed.' });
+    }
+});
+
 router.post('/print-queue/done/:orderId', async (req, res) => {
     if (!checkAgentKey(req)) {
         return res.status(401).json({ success: false, message: 'Invalid key' });
