@@ -38,7 +38,11 @@ const {
     getSiteVisitStats,
     getActiveCarts
 } = require('../controllers/adminController');
-const { getRevenueOverview } = require('../controllers/revenueController');
+const {
+    getRevenueOverview,
+    setRevenueAdjustment,
+    clearRevenueAdjustment,
+} = require('../controllers/revenueController');
 const { protect, admin, cashierOrAdmin, owner, ownerOnly, revenueUnlocked } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
@@ -483,6 +487,14 @@ router.delete('/orders/:id', protect, owner, deleteOrder);
 
 // Unified revenue model (online orders + manual receipts)
 router.get('/revenue/overview', protect, ownerOnly, revenueUnlocked, getRevenueOverview);
+
+/* Owner corrections to the headline figures.
+ *
+ * Same guard as reading revenue — ownerOnly plus the password unlock. Writing a
+ * correction is strictly more sensitive than reading one, so it can never be
+ * the weaker of the two. */
+router.put('/revenue/adjustments', protect, ownerOnly, revenueUnlocked, setRevenueAdjustment);
+router.delete('/revenue/adjustments/:field', protect, ownerOnly, revenueUnlocked, clearRevenueAdjustment);
 
 // Headline total behind the blurred dashboard tile
 router.get('/revenue/total', protect, ownerOnly, revenueUnlocked, getRevenueTotal);

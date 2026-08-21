@@ -21,6 +21,7 @@
 
 const Order = require('../models/Order');
 const PromoVisit = require('../models/PromoVisit');
+const RevenueAdjustment = require('../models/RevenueAdjustment');
 const { asyncHandler } = require('../middleware/error');
 
 const round3 = (n) => parseFloat((Number(n) || 0).toFixed(3));
@@ -96,6 +97,59 @@ function shape(row = {}) {
         items: row.items || 0,
         averageOrderValue: row.orders ? round3(gross / row.orders) : 0,
     };
+}
+
+
+/**
+ * Identify a window as `YYYY-MM-DD:YYYY-MM-DD`, in Kuwait time.
+ *
+ * Presets are resolved to a range before they reach here, so "today" and an
+ * explicit one-day range produce the same key — an owner who corrects today's
+ * figure and then re-picks the same dates sees their own correction, which is
+ * the only behaviour that would not feel broken.
+ */
+function periodKeyFor(start, end) {
+    const day = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Kuwait' });
+    return `${day(start)}:${day(end)}`;
+}
+
+/** The fields an owner may correct. Mirrors the model's enum. */
+const ADJUSTABLE = ['net', 'gross', 'refunds', 'averageOrderValue', 'onlineGross', 'manualGross'];
+
+/**
+ * Layer the owner's corrections onto the computed figures.
+ *
+ * Returns both numbers for every adjusted field rather than just the result:
+ * the card has to be able to say "38.000 computed, +2.000 yours", and an owner
+ * who cannot see what the system thinks has no way to notice when their own
+ * correction has stopped making sense.
+ */
+function applyAdjustments(totals, bySourceShaped, adjustments) {
+    const byField = new Map(adjustments.map(a => [a.field, a]));
+    const meta = {};
+
+    const adjust = (obj, field, key = field) => {
+        const entry = byField.get(key);
+        if (!entry) return;
+        const computed = obj[field] || 0;
+        obj[field] = round3(computed + entry.delta);
+        meta[key] = {
+            computed: round3(computed),
+            delta: round3(entry.delta),
+            adjusted: obj[field],
+            note: entry.note || '',
+            setAt: entry.updatedAt,
+        };
+    };
+
+    adjust(totals, 'net');
+    adjust(totals, 'gross');
+    adjust(totals, 'refunds');
+    adjust(totals, 'averageOrderValue');
+    adjust(bySourceShaped.online, 'gross', 'onlineGross');
+    adjust(bySourceShaped.manual, 'gross', 'manualGross');
+
+    return meta;
 }
 
 // @desc    Unified revenue overview across online orders and manual receipts
@@ -219,6 +273,10 @@ const getRevenueOverview = asyncHandler(async (req, res) => {
 
     const sourceMap = bySource.reduce((acc, r) => ({ ...acc, [r._id]: r }), {});
 
+    // The owner's corrections for exactly this window.
+    const periodKey = periodKeyFor(start, end);
+    const adjustments = await RevenueAdjustment.find({ periodKey }).lean();
+
     // Promo-driven traffic for the same window, so the owner can see reach as
     // well as redemption.
     const [promoTraffic] = await PromoVisit.aggregate([
@@ -233,15 +291,28 @@ const getRevenueOverview = asyncHandler(async (req, res) => {
         },
     ]);
 
+    const shapedTotals = shape(totals[0]);
+    const shapedBySource = {
+        online: shape(sourceMap.online),
+        manual: shape(sourceMap.manual),
+    };
+
+    /* Corrections are applied to the headline cards only, deliberately.
+     *
+     * The breakdowns below — by day, by product, by payment method — are
+     * evidence about individual orders, and quietly bending them to match a
+     * typed total would turn a correction into a falsified record. The cards
+     * carry the owner's view; the tables keep saying what actually happened. */
+    const adjustmentMeta = applyAdjustments(shapedTotals, shapedBySource, adjustments);
+
     res.json({
         success: true,
         data: {
             range: { from: start, to: end, preset },
-            totals: shape(totals[0]),
-            bySource: {
-                online: shape(sourceMap.online),
-                manual: shape(sourceMap.manual),
-            },
+            periodKey,
+            adjustments: adjustmentMeta,
+            totals: shapedTotals,
+            bySource: shapedBySource,
             byDay: byDay.map(d => ({
                 date: d._id,
                 ...shape(d),
@@ -286,4 +357,130 @@ const getRevenueOverview = asyncHandler(async (req, res) => {
     });
 });
 
-module.exports = { getRevenueOverview, resolveRange, round3 };
+
+// @desc    Correct a revenue figure for a period
+// @route   PUT /api/admin/revenue/adjustments
+// @access  Private/Owner + revenue unlocked
+//
+// Body: { field, value, from, to, preset, note }
+//
+// `value` is what the owner typed. What gets stored is the difference from the
+// computed figure, so the card tracks new orders instead of freezing — see the
+// model for why that distinction is the whole point.
+const setRevenueAdjustment = asyncHandler(async (req, res) => {
+    const { field, value, note } = req.body;
+
+    if (!ADJUSTABLE.includes(field)) {
+        res.status(400);
+        throw new Error(`Cannot adjust "${field}".`);
+    }
+
+    const typed = Number(value);
+    if (!Number.isFinite(typed)) {
+        res.status(400);
+        throw new Error('A revenue figure has to be a number.');
+    }
+
+    const { start, end } = resolveRange(req.query.from || req.body.from ? { ...req.body, ...req.query } : req.body);
+    const periodKey = periodKeyFor(start, end);
+
+    // Recompute the figure being corrected, so the stored delta is measured
+    // against what the system says right now rather than a number the client
+    // told us. A client-supplied baseline would let a stale page write a
+    // correction that is wrong the moment it lands.
+    const computed = await computeFigure(field, start, end);
+
+    const doc = await RevenueAdjustment.findOneAndUpdate(
+        { periodKey, field },
+        {
+            periodKey,
+            field,
+            delta: round3(typed - computed),
+            computedWhenSet: round3(computed),
+            typedValue: round3(typed),
+            note: note || '',
+            setBy: req.user._id,
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    console.log(
+        `[REVENUE] ${req.user.email} corrected ${field} for ${periodKey}: ` +
+        `computed ${computed.toFixed(3)} → ${typed.toFixed(3)} (delta ${doc.delta.toFixed(3)})`
+    );
+
+    res.json({
+        success: true,
+        data: {
+            field, periodKey,
+            computed: round3(computed),
+            delta: doc.delta,
+            adjusted: round3(computed + doc.delta),
+            note: doc.note,
+        },
+    });
+});
+
+// @desc    Drop a correction, returning the figure to what the orders say
+// @route   DELETE /api/admin/revenue/adjustments/:field
+// @access  Private/Owner + revenue unlocked
+const clearRevenueAdjustment = asyncHandler(async (req, res) => {
+    const { field } = req.params;
+
+    if (!ADJUSTABLE.includes(field)) {
+        res.status(400);
+        throw new Error(`Cannot adjust "${field}".`);
+    }
+
+    const { start, end } = resolveRange(req.query);
+    const periodKey = periodKeyFor(start, end);
+
+    const removed = await RevenueAdjustment.findOneAndDelete({ periodKey, field });
+    const computed = await computeFigure(field, start, end);
+
+    console.log(
+        `[REVENUE] ${req.user.email} reset ${field} for ${periodKey} ` +
+        `(was ${removed ? removed.delta.toFixed(3) : '0.000'})`
+    );
+
+    res.json({
+        success: true,
+        data: { field, periodKey, computed: round3(computed), delta: 0, adjusted: round3(computed) },
+    });
+});
+
+/**
+ * The computed value of one adjustable field, server-side.
+ *
+ * Deliberately re-derived here rather than trusted from the request: the delta
+ * is only meaningful relative to what the aggregation actually says, and a page
+ * left open while orders arrived would otherwise write a correction against a
+ * baseline that no longer exists.
+ */
+async function computeFigure(field, start, end) {
+    const base = { ...PAID, createdAt: { $gte: start, $lte: end } };
+
+    const sourceMatch =
+        field === 'onlineGross' ? { ...base, orderSource: { $in: ['online', null] } }
+        : field === 'manualGross' ? { ...base, orderSource: 'manual' }
+        : base;
+
+    const [row] = await Order.aggregate([{ $match: sourceMatch }, { $group: { _id: null, ...MEASURES } }]);
+    const shaped = shape(row);
+
+    switch (field) {
+        case 'onlineGross':
+        case 'manualGross':
+            return shaped.gross;
+        default:
+            return shaped[field] || 0;
+    }
+}
+
+module.exports = {
+    getRevenueOverview,
+    setRevenueAdjustment,
+    clearRevenueAdjustment,
+    resolveRange,
+    round3,
+};

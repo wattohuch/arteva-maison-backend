@@ -702,6 +702,110 @@ const section = (title) => console.log(`\n── ${title} ──`);
     }
 
 
+    // -- Editable revenue --
+    section('Editable revenue (owner corrections)');
+
+    const RevenueAdjustment = require('../src/models/RevenueAdjustment');
+    await RevenueAdjustment.deleteMany({});
+
+    const dayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kuwait' });
+
+    // A clean slate of paid revenue for today.
+    await Order.deleteMany({});
+    const revProduct = await Product.create({
+        name: 'Rev Widget', price: 100, stock: 50, category: cat._id, sku: 'REV-1',
+    });
+    const mkPaidOrder = (total) => Order.create({
+        user: shopper._id,
+        items: [{ product: revProduct._id, name: 'Rev Widget', price: total, quantity: 1, stockHeld: 1 }],
+        shippingAddress: { street: 'x', city: 'y' },
+        subtotal: total, total, paymentStatus: 'paid', orderSource: 'online',
+    });
+    await mkPaidOrder(100);
+
+    const revQ = `?from=${dayStr}&to=${dayStr}`;
+    const ownerTok = tok(owner);
+
+    /* Set a known revenue password directly, and clear the lockout an earlier
+       section deliberately trips. Earlier blocks rotate this password twice and
+       then reset it by OTP, so keying off any of those values would make this
+       block depend on their order rather than on its own subject. */
+    const bcryptLib = require('bcryptjs');
+    await User.updateOne({ _id: owner._id }, {
+        $set: {
+            revenuePassword: await bcryptLib.hash('adjust-pass-1', 10),
+            revenueAttempts: 0,
+        },
+        $unset: { revenueLockedUntil: 1 },
+    });
+
+    const revAuth = await req('/admin/revenue-auth', {
+        method: 'POST', body: JSON.stringify({ revenuePassword: 'adjust-pass-1' }),
+    }, ownerTok);
+    const rTok = revAuth.body?.revenueToken;
+    const revHdr = { 'X-Revenue-Token': rTok };
+
+    const rev_before = await req(`/admin/revenue/overview${revQ}`, { headers: revHdr }, ownerTok);
+    check('revenue computes from orders', rev_before.body?.data?.totals?.net === 100,
+        String(rev_before.body?.data?.totals?.net));
+
+    // The owner types 120 over a computed 100.
+    const rev_setAdj = await req('/admin/revenue/adjustments', {
+        method: 'PUT', headers: revHdr,
+        body: JSON.stringify({ field: 'net', value: 120, from: dayStr, to: dayStr, note: 'cash sale' }),
+    }, ownerTok);
+    check('owner can correct a revenue figure', rev_setAdj.status === 200, JSON.stringify(rev_setAdj.body).slice(0, 140));
+    check('  and it is stored as a DELTA, not the typed number',
+        rev_setAdj.body?.data?.delta === 20, String(rev_setAdj.body?.data?.delta));
+
+    const rev_afterEdit = await req(`/admin/revenue/overview${revQ}`, { headers: revHdr }, ownerTok);
+    check('  the card now shows the corrected figure', rev_afterEdit.body?.data?.totals?.net === 120,
+        String(rev_afterEdit.body?.data?.totals?.net));
+    check('  and still reports what the system computed', rev_afterEdit.body?.data?.adjustments?.net?.computed === 100,
+        JSON.stringify(rev_afterEdit.body?.data?.adjustments?.net));
+
+    /* The whole reason a delta is stored rather than the typed value: a new
+     * sale has to move the corrected figure too. Freeze the number and the
+     * card would still read 120 after this order, which is the failure the
+     * owner explicitly asked to avoid. */
+    await mkPaidOrder(50);
+    const rev_afterNewOrder = await req(`/admin/revenue/overview${revQ}`, { headers: revHdr }, ownerTok);
+    check('a NEW ORDER still moves the corrected figure (150 + 20)',
+        rev_afterNewOrder.body?.data?.totals?.net === 170,
+        String(rev_afterNewOrder.body?.data?.totals?.net));
+
+    // Resetting returns the card to the orders.
+    const rev_cleared = await req(`/admin/revenue/adjustments/net${revQ}`, { method: 'DELETE', headers: revHdr }, ownerTok);
+    check('  a correction can be reset', rev_cleared.status === 200, String(rev_cleared.status));
+    const rev_afterReset = await req(`/admin/revenue/overview${revQ}`, { headers: revHdr }, ownerTok);
+    check('  and the figure returns to what the orders say',
+        rev_afterReset.body?.data?.totals?.net === 150, String(rev_afterReset.body?.data?.totals?.net));
+
+    // Guards: only the owner, only with the revenue unlock, only known fields.
+    check('admin CANNOT correct revenue',
+        (await req('/admin/revenue/adjustments', {
+            method: 'PUT', body: JSON.stringify({ field: 'net', value: 1, from: dayStr, to: dayStr }),
+        }, tok(admin))).status === 403);
+    check('cashier CANNOT correct revenue',
+        (await req('/admin/revenue/adjustments', {
+            method: 'PUT', body: JSON.stringify({ field: 'net', value: 1, from: dayStr, to: dayStr }),
+        }, tok(cashier))).status === 403);
+    check('owner without the revenue unlock CANNOT correct revenue',
+        (await req('/admin/revenue/adjustments', {
+            method: 'PUT', body: JSON.stringify({ field: 'net', value: 1, from: dayStr, to: dayStr }),
+        }, ownerTok)).status === 403);
+    check('an unknown field is refused',
+        (await req('/admin/revenue/adjustments', {
+            method: 'PUT', headers: revHdr,
+            body: JSON.stringify({ field: 'profit', value: 1, from: dayStr, to: dayStr }),
+        }, ownerTok)).status === 400);
+    check('a non-numeric figure is refused',
+        (await req('/admin/revenue/adjustments', {
+            method: 'PUT', headers: revHdr,
+            body: JSON.stringify({ field: 'net', value: 'lots', from: dayStr, to: dayStr }),
+        }, ownerTok)).status === 400);
+
+
     // ── Report ──
     console.log(`\n${pass} passed, ${fail} failed`);
     if (failures.length) console.log(`Failing: ${failures.join(' | ')}`);
