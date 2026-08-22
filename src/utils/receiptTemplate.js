@@ -24,7 +24,14 @@ async function generateReceiptHTML(order) {
     'https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || '') +
     '&token=' + encodeURIComponent(order.trackingToken || '')
   );
-  const whatsappQR = await generateQR('https://wa.me/96550683207');
+  /* The QR points at whichever number the shop is actually reachable on.
+   * Hardcoding it meant a printed receipt kept sending customers to the old
+   * line after the business moved to the WhatsApp API number — and paper,
+   * unlike a web page, cannot be corrected once it is in someone's bag. */
+  const contactNumber = (process.env.WHATSAPP_CONTACT_NUMBER
+    || process.env.WHATSAPP_OWNER_PHONE
+    || '96550683207').split(',')[0].replace(/\D/g, '');
+  const whatsappQR = await generateQR(`https://wa.me/${contactNumber}`);
 
   return buildReceiptHTMLFromData(order, {
     receiptQR,

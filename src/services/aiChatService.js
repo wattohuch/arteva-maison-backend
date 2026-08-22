@@ -6,7 +6,18 @@ const Order = require('../models/Order');
 class AiChatService {
     constructor() {
         this.apiKey = process.env.GEMINI_API_KEY;
-        this.apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+        /* The model is configurable and defaults to a CURRENT one.
+         *
+         * This was pinned to gemini-1.5-flash, which Google has since retired —
+         * every reply would have returned 404 with a valid key, so the bot
+         * would greet the customer and then say nothing, which reads as being
+         * ignored. Naming it in the environment means the next retirement is a
+         * config change rather than a code change — which matters, because
+         * gemini-2.5-flash was ALSO already closed to new users by the time
+         * this was written. Google's own 404 names the successor, so that
+         * error message is the place to look when replies stop. */
+        this.model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+        this.apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
         this.storeContext = '';
         this.lastContextUpdate = null;
     }

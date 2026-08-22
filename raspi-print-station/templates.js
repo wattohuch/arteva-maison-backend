@@ -57,7 +57,11 @@ async function buildReceiptHTML(order) {
   if (!order) throw new Error('buildReceiptHTML: order is null');
 
   const receiptQR = await generateQR('https://www.artevamaisonkw.com/receipt.html?order=' + encodeURIComponent(order.orderNumber || '') + '&token=' + encodeURIComponent(order.trackingToken || ''));
-  const whatsappQR = await generateQR('https://wa.me/96550683207');
+  // Same reasoning as the backend template: paper outlives a config change.
+  const contactNumber = (process.env.WHATSAPP_CONTACT_NUMBER
+    || process.env.WHATSAPP_OWNER_PHONE
+    || '96550683207').split(',')[0].replace(/\D/g, '');
+  const whatsappQR = await generateQR(`https://wa.me/${contactNumber}`);
   const logoB64 = getLogoBase64();
 
   return buildReceiptHTMLFromData(order, {
