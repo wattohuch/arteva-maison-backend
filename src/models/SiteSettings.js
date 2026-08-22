@@ -8,12 +8,12 @@ const siteSettingsSchema = new mongoose.Schema({
     },
     whatsappNumber: {
         type: String,
-        default: '96550683207',
+        default: '96598048900',
         trim: true
     },
     whatsappDisplay: {
         type: String,
-        default: '+965 5068 3207',
+        default: '+965 9804 8900',
         trim: true
     },
     instagramHandle: {

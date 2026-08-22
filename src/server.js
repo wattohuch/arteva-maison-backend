@@ -314,6 +314,19 @@ server.listen(PORT, async () => {
      * confirmation quietly fails is worse than one that is obviously off. */
     reportWhatsAppConfig();
 
+    /* Keep the WhatsApp token alive.
+     *
+     * Meta's long-lived tokens last 60 days. Left alone, WhatsApp stops dead
+     * every two months — silently, because an expired token looks exactly like
+     * a misconfigured one and the first symptom is a customer not receiving
+     * their order confirmation. This loads the stored token, renews it well
+     * before expiry, and emails the owner either way. */
+    try {
+        require('./services/whatsappTokenRefresher').startTokenScheduler();
+    } catch (e) {
+        console.error('[WA-TOKEN] Scheduler failed to start:', e.message);
+    }
+
     // Email service initializes automatically on module load
     // (see emailService.js - Resend API, initializes on require())
 

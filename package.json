@@ -23,7 +23,8 @@
     "test:audit": "node tests/audit.test.js",
     "backfill-stock": "node scripts/backfill-stock-ledger.js",
     "test:whatsapp": "node tests/whatsapp.test.js",
-    "test:twilio": "node tests/twilio.test.js"
+    "test:twilio": "node tests/twilio.test.js",
+    "wa:token": "node scripts/refresh-whatsapp-token.js"
   },
   "keywords": [],
   "author": "",
