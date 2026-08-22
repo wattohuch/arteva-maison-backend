@@ -6,7 +6,6 @@
  * 2. Green API / Baileys Print Station Queue (Fallback)
  */
 
-const axios = require('axios');
 const SiteSettings = require('../models/SiteSettings');
 
 class WhatsAppService {
@@ -14,8 +13,11 @@ class WhatsAppService {
         // --- Official WhatsApp Business API ---
         this.whatsappAccessToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
         this.whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
-        this.whatsappApiUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com';
-        this.whatsappApiVersion = process.env.WHATSAPP_API_VERSION || 'v18.0';
+        /* The endpoint and version live on whatsappCloudClient, which owns the
+         * transport. This class kept its own copies with a v18.0 default, which
+         * after the transport moved were used for nothing except a startup log
+         * line — one that then reported a version the process was not actually
+         * calling. Read from the client so the two can never disagree. */
         this.isOfficialEnabled = !!(this.whatsappAccessToken && this.whatsappPhoneNumberId);
 
         // --- Green API (Legacy / Fallback) ---
@@ -47,7 +49,7 @@ class WhatsAppService {
         if (this.isOfficialEnabled) {
             console.log('✅ WhatsApp Service (Official Cloud API) initialized');
             console.log(`   Phone Number ID: ${this.whatsappPhoneNumberId}`);
-            console.log(`   API Version: ${this.whatsappApiVersion}`);
+            console.log(`   API Version: ${require('./whatsappCloudClient').apiVersion}`);
             console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
         } else {
             console.error('╔══════════════════════════════════════════════════════╗');
@@ -120,7 +122,32 @@ class WhatsAppService {
     }
 
     /**
-     * Send message using the official Meta WhatsApp Business Cloud API
+     * Raise a client failure as an exception.
+     *
+     * The two methods below have always thrown on failure and their callers
+     * catch and read `err.response.data.error`. The Cloud client returns a
+     * result object instead, so the shape is rebuilt here rather than changing
+     * every call site — the error carries the same fields those catch blocks
+     * already read, plus `permanent` for anything written since.
+     */
+    _throwFromClientResult(result) {
+        const err = new Error(result.error || 'WhatsApp send failed');
+        err.permanent = Boolean(result.permanent);
+        err.response = {
+            status: result.httpStatus || 500,
+            data: { error: { code: result.code ?? null, message: result.error } },
+        };
+        throw err;
+    }
+
+    /**
+     * Send a plain text message through the Cloud API.
+     *
+     * Delegates to whatsappCloudClient, which owns the transport: retries with
+     * exponential backoff, and the distinction between a failure worth
+     * retrying and one that will never succeed. This method used to call axios
+     * directly, which meant a second HTTP client with its own (absent) retry
+     * policy — a transient blip from Meta simply lost the message.
      */
     async sendOfficialMessage(to, message) {
         const cleanPhone = this.formatPhone(to);
@@ -128,26 +155,12 @@ class WhatsAppService {
             throw new Error('Invalid phone number format');
         }
 
-        const url = `${this.whatsappApiUrl}/${this.whatsappApiVersion}/${this.whatsappPhoneNumberId}/messages`;
-        
-        const response = await axios.post(url, {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: cleanPhone,
-            type: 'text',
-            text: {
-                preview_url: false,
-                body: message
-            }
-        }, {
-            headers: {
-                'Authorization': `Bearer ${this.whatsappAccessToken}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 10000
-        });
+        const client = require('./whatsappCloudClient');
+        const result = await client.sendText(cleanPhone, message);
+        if (!result.success) this._throwFromClientResult(result);
 
-        return response.data;
+        // Callers read `responseData.messages[0].id`; keep Meta's own shape.
+        return result.raw || { messages: [{ id: result.messageId }] };
     }
 
     /**
@@ -160,42 +173,18 @@ class WhatsAppService {
      * code and rejected by Meta, which is silent unless someone reads the log.
      *
      * Template names and their language are configured per notification type
-     * (see TEMPLATE_FOR_TYPE). `params` fill the {{1}}, {{2}} … placeholders in
+     * (see `templateFor`). `params` fill the {{1}}, {{2}} … placeholders in
      * the approved body, in order.
      */
     async sendOfficialTemplate(to, templateName, languageCode, params = []) {
         const cleanPhone = this.formatPhone(to);
         if (!cleanPhone) throw new Error('Invalid phone number format');
 
-        const url = `${this.whatsappApiUrl}/${this.whatsappApiVersion}/${this.whatsappPhoneNumberId}/messages`;
+        const client = require('./whatsappCloudClient');
+        const result = await client.sendTemplate(cleanPhone, templateName, languageCode || 'en', params);
+        if (!result.success) this._throwFromClientResult(result);
 
-        const payload = {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: cleanPhone,
-            type: 'template',
-            template: {
-                name: templateName,
-                language: { code: languageCode || 'en' },
-            },
-        };
-
-        if (params.length) {
-            payload.template.components = [{
-                type: 'body',
-                parameters: params.map(text => ({ type: 'text', text: String(text ?? '') })),
-            }];
-        }
-
-        const response = await axios.post(url, payload, {
-            headers: {
-                'Authorization': `Bearer ${this.whatsappAccessToken}`,
-                'Content-Type': 'application/json',
-            },
-            timeout: 10000,
-        });
-
-        return response.data;
+        return result.raw || { messages: [{ id: result.messageId }] };
     }
 
     /**
@@ -260,8 +249,9 @@ class WhatsAppService {
                     console.log(`[WA-OFFICIAL] Sending message to ${phone} (type: ${type})`);
                     responseData = await this.sendOfficialMessage(phone, message);
                 }
-                console.log(`[WA-OFFICIAL] ✅ Message sent successfully. Meta Msg ID: ${responseData.messages?.[0]?.id}`);
-                
+                const wamid = responseData.messages?.[0]?.id;
+                console.log(`[WA-OFFICIAL] ✅ Message sent successfully. Meta Msg ID: ${wamid}`);
+
                 // Save to database queue as 'sent' for log tracking
                 try {
                     const WhatsAppQueue = require('../models/WhatsAppQueue');
@@ -278,11 +268,42 @@ class WhatsAppService {
                 } catch (dbErr) {
                     console.error('[WA-OFFICIAL] Failed to save log to DB queue:', dbErr.message);
                 }
-                
-                return { success: true, official: true, messageId: responseData.messages?.[0]?.id };
+
+                /* The lifecycle record, which is a different thing from the
+                 * queue row above. The queue is a send log written once; this
+                 * is the row Meta's delivery and read receipts will later
+                 * update by wamid. Without it every status webhook arrives
+                 * about a message we have no record of. */
+                await this._recordOutbound({
+                    messageId: wamid,
+                    to: phone,
+                    body: message,
+                    type: template ? 'template' : 'text',
+                    templateName: template ? template.name : null,
+                    context: type,
+                    orderId,
+                });
+
+                return { success: true, official: true, messageId: wamid };
             } catch (err) {
                 const errMsg = err.response?.data?.error?.message || err.message;
+                const errCode = err.response?.data?.error?.code ?? null;
                 console.error(`[WA-OFFICIAL] ❌ Meta Cloud API failed: ${errMsg}`);
+
+                // Record the failure too. A message that never left is exactly
+                // the thing someone will come looking for later, and "no row
+                // at all" is indistinguishable from "never attempted".
+                await this._recordOutbound({
+                    messageId: null,
+                    to: phone,
+                    body: message,
+                    type: 'text',
+                    context: type,
+                    orderId,
+                    status: 'failed',
+                    errorCode: errCode,
+                    errorMessage: errMsg,
+                });
 
                 const queued = await this._enqueueForPiAgent({
                     phone, message, type, orderId, priority,
@@ -303,6 +324,46 @@ class WhatsAppService {
         if (queued) return { success: true, queued: true, via: 'pi-agent' };
 
         return { success: false, error: 'WhatsApp API not configured' };
+    }
+
+    /**
+     * Persist an outbound message so its delivery lifecycle can be tracked.
+     *
+     * Deliberately swallows its own errors: a bookkeeping failure must never
+     * turn a delivered WhatsApp message into a failed send from the caller's
+     * point of view. Nothing downstream depends on this row existing.
+     */
+    async _recordOutbound({ messageId, to, body, type, templateName, context, orderId, status, errorCode, errorMessage }) {
+        try {
+            const WhatsAppMessage = require('../models/WhatsAppMessage');
+            await WhatsAppMessage.create({
+                messageId: messageId || undefined,
+                direction: 'outbound',
+                type: type || 'text',
+                from: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+                to,
+                body: typeof body === 'string' ? body.slice(0, 4096) : undefined,
+                templateName: templateName || undefined,
+                context,
+                order: orderId || undefined,
+                status: status || 'sent',
+                sentAt: status === 'failed' ? undefined : new Date(),
+                failedAt: status === 'failed' ? new Date() : undefined,
+                errorCode: errorCode ?? undefined,
+                errorMessage: errorMessage || undefined,
+            });
+
+            if (to && status !== 'failed') {
+                const WhatsAppContact = require('../models/WhatsAppContact');
+                await WhatsAppContact.updateOne(
+                    { waId: to },
+                    { $set: { lastOutboundAt: new Date() }, $setOnInsert: { waId: to, phone: `+${to}` } },
+                    { upsert: true }
+                );
+            }
+        } catch (err) {
+            console.error(`[WA-OFFICIAL] Could not record outbound message: ${err.message}`);
+        }
     }
 
     /**
@@ -1076,8 +1137,26 @@ Arteva Maison`;
             }
         }
 
-        // ── 2. Forward to the owners ──
-        if (process.env.WHATSAPP_FORWARD_INBOUND !== 'false') {
+        // ── 2. AI assistant ──
+        /* Moved here from routes/whatsapp.js, which ran the same logic behind
+         * an endpoint with no signature check — meaning anyone who knew the URL
+         * could make the business number reply to any phone they named. That
+         * route is gone and this is now the only inbound path. */
+        let aiHandled = false;
+        if (process.env.WHATSAPP_AI_REPLIES !== 'false' && process.env.GEMINI_API_KEY) {
+            aiHandled = await this._replyWithAI(phone, text, owners)
+                .catch(err => {
+                    console.error(`[WA-INBOUND] AI reply failed: ${err.message}`);
+                    return false;
+                });
+        }
+
+        // ── 3. Forward to the owners ──
+        /* Skipped when the AI answered: it has already replied to the customer
+         * and, on escalation, alerted the owners with more context than this
+         * plain forward carries. Doing both means every owner gets two
+         * notifications for one customer message. */
+        if (process.env.WHATSAPP_FORWARD_INBOUND !== 'false' && !aiHandled) {
             const body = String(text || '').trim() || '[media message]';
             const forward = `📩 *New customer message*\n\n📱 +${phone}\n💬 ${body}\n\n↩️ Reply to them directly on WhatsApp.`;
 
@@ -1091,7 +1170,90 @@ Arteva Maison`;
             }
         }
 
-        return { success: true };
+        return { success: true, aiHandled };
+    }
+
+    /**
+     * Answer a customer with the AI assistant.
+     *
+     * @returns {Promise<boolean>} true when the AI replied, and therefore the
+     *          owners do not also need the plain forward.
+     *
+     * A conversation that has been escalated to a human stays with that human
+     * for the cooldown. Nothing undermines a handover like a bot talking over
+     * the person who just took the conversation on.
+     */
+    async _replyWithAI(phone, text, owners) {
+        const body = String(text || '').trim();
+        if (!body) return false;
+
+        const WhatsAppConversation = require('../models/WhatsAppConversation');
+        const aiChatService = require('./aiChatService');
+
+        const COOLDOWN_MS = (parseInt(process.env.WHATSAPP_ESCALATION_COOLDOWN_HOURS) || 2) * 3600000;
+        const now = new Date();
+
+        let conversation = await WhatsAppConversation.findOne({ phone });
+        if (!conversation) {
+            conversation = new WhatsAppConversation({ phone, messages: [] });
+        }
+
+        if (conversation.isHumanEscalated) {
+            if ((now - conversation.lastMessageAt) < COOLDOWN_MS) {
+                console.log(`[WA-AI] ${phone} is with a human — staying out of it`);
+                conversation.lastMessageAt = now;
+                await conversation.save().catch(() => {});
+                // A human owns this conversation; they do not need a forward
+                // for every message the customer sends while they are in it.
+                return true;
+            }
+            // The handover has gone cold. Start fresh rather than resume a
+            // history the customer has almost certainly moved on from.
+            conversation.isHumanEscalated = false;
+            conversation.messages = [];
+        }
+
+        const aiResponse = await aiChatService.processMessage(phone, body, conversation.messages);
+        if (!aiResponse || !aiResponse.text) return false;
+
+        await this.sendMessage(phone, aiResponse.text, 'contact_auto_reply');
+
+        conversation.messages.push({ role: 'user', content: body, timestamp: now });
+        conversation.messages.push({ role: 'model', content: aiResponse.text, timestamp: new Date() });
+        conversation.lastMessageAt = new Date();
+
+        if (aiResponse.shouldEscalate) {
+            conversation.isHumanEscalated = true;
+
+            // Give the owner the order context up front, so they do not open
+            // the conversation by asking for an order number.
+            let context = '';
+            const orderMatch = body.match(/ORD-\w+/i);
+            if (orderMatch) {
+                try {
+                    const Order = require('../models/Order');
+                    const order = await Order.findOne({ orderNumber: orderMatch[0].toUpperCase() })
+                        .populate('deliveryPilot');
+                    if (order) {
+                        context = `\n📦 Order: ${order.orderNumber} (${order.orderStatus})`;
+                        if (order.deliveryPilot) {
+                            context += `\n🚚 Driver: ${order.deliveryPilot.name} (${order.deliveryPilot.phone})`;
+                        }
+                    }
+                } catch (err) {
+                    console.error(`[WA-AI] Could not load order context: ${err.message}`);
+                }
+            }
+
+            const alert = `🚨 *Customer needs a human*\n\n📱 +${phone}\n💬 "${body}"\n🤖 AI said: "${aiResponse.text}"${context}\n\n↩️ Please reply to them directly.`;
+            for (const owner of owners) {
+                await this.sendMessage(owner, alert, 'inbound_forward', null, [`+${phone}`, body])
+                    .catch(err => console.error(`[WA-AI] Escalation to ${owner} failed: ${err.message}`));
+            }
+        }
+
+        await conversation.save().catch(err => console.error(`[WA-AI] Could not save conversation: ${err.message}`));
+        return true;
     }
 
     /**

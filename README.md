@@ -104,6 +104,64 @@ npm start
 - `POST /api/delivery/pilots` - Create delivery pilot (admin)
 - `PUT /api/delivery/location/:orderId` - Update driver location
 
+## WhatsApp Cloud API
+
+Order notifications, delivery receipts, inbound customer messages and an AI
+assistant, over Meta's official WhatsApp Cloud API.
+
+**Setup:** [docs/WHATSAPP_SETUP.md](docs/WHATSAPP_SETUP.md) — credentials,
+webhook, and message templates, step by step.
+**Raspberry Pi:** [docs/RASPBERRY_PI_DEPLOYMENT.md](docs/RASPBERRY_PI_DEPLOYMENT.md).
+
+### What is implemented
+
+| | |
+|---|---|
+| Outbound | text, template, image, document, audio, video, sticker, location, contacts, interactive buttons, read receipts |
+| Inbound | messages of every type, delivery/read/failure receipts, template status changes |
+| Security | `X-Hub-Signature-256` verification, fails closed in production, admin-only send routes, per-route rate limits |
+| Reliability | duplicate-event protection, exponential backoff, permanent-vs-transient error classification |
+| Storage | full message lifecycle (`queued → sent → delivered → read` / `failed`), contacts, conversations; media to Cloudinary, never the local disk |
+
+### Endpoints
+
+```
+GET    /api/whatsapp/health                  configuration + connectivity (public)
+POST   /api/whatsapp/messages/text           free-form text
+POST   /api/whatsapp/messages/template       approved template
+POST   /api/whatsapp/messages/media          image / document / audio / video
+POST   /api/whatsapp/messages/media/upload   upload, returns a media id
+POST   /api/whatsapp/messages/location       location pin
+POST   /api/whatsapp/messages/interactive    reply buttons or list
+POST   /api/whatsapp/messages/:id/read       mark inbound read
+GET    /api/whatsapp/conversations           conversation list
+GET    /api/whatsapp/conversations/:waId     one conversation
+GET    /api/whatsapp/messages/:id            one message and its status
+
+GET    /api/meta/whatsapp                    Meta verification handshake
+POST   /api/meta/whatsapp                    Meta webhook (signature verified)
+```
+
+> `/api/whatsapp/webhook` is **retired** and answers `410 Gone`. It ran without
+> signature verification while being able to trigger outbound sends. Point Meta
+> at `/api/meta/whatsapp`.
+
+### Health
+
+```bash
+curl https://your-domain.com/api/whatsapp/health
+# {"status":"healthy","whatsapp":"configured","database":"connected","missing":[]}
+```
+
+Add `?probe=1` to also make a live call to Meta. The response never contains a
+credential.
+
+### Tests
+
+```bash
+npm run test:whatsapp     # 64 assertions, no network or credentials needed
+```
+
 ## Deployment
 
 ### Render (Recommended)

@@ -1,137 +1,98 @@
 const express = require('express');
 const router = express.Router();
-const whatsappService = require('../services/whatsappService');
-const WhatsAppChatSession = require('../models/WhatsAppChatSession');
+const rateLimit = require('express-rate-limit');
+const { protect, admin } = require('../middleware/auth');
+const multer = require('multer');
+const wa = require('../controllers/whatsappController');
 
-const COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 hours
+/**
+ * ARTEVA Maison — retired WhatsApp webhook
+ *
+ * This file used to host a second, independent webhook at
+ * /api/whatsapp/webhook. It had two problems that together made it the most
+ * dangerous endpoint in the codebase:
+ *
+ *   1. No signature verification. Meta signs every webhook with the app
+ *      secret; this route checked nothing. Anyone who learned the URL could
+ *      post a fabricated customer message.
+ *
+ *   2. It sent messages in response. The handler ran the AI assistant and
+ *      forwarded to the owners, both of which send WhatsApp messages from the
+ *      business number. So a stranger posting JSON here could make the shop's
+ *      number message any phone they named — burning quota, and putting the
+ *      number at risk of being reported and restricted by Meta.
+ *
+ * It also carried a hardcoded fallback verify token in source, which meant the
+ * handshake would succeed for anyone who read this repository.
+ *
+ * Everything it did now lives behind the verified webhook at
+ * /api/meta/whatsapp — including the AI assistant, which moved into
+ * whatsappService.handleInboundMessage.
+ *
+ * The routes are kept rather than deleted so anyone still pointing Meta here
+ * gets a clear answer instead of a 404 they have to guess at. 410 Gone is the
+ * accurate status: it existed, it is deliberately finished, do not retry.
+ */
 
-// GET /api/whatsapp/webhook — Meta Webhook verification
-router.get('/webhook', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
+const MOVED = {
+    success: false,
+    code: 'WEBHOOK_MOVED',
+    message: 'This webhook has moved to POST /api/meta/whatsapp, which verifies Meta\'s X-Hub-Signature-256. Update the Callback URL in the Meta app dashboard.',
+};
 
-    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || 'arteva_whatsapp_verify_token_2026';
-
-    if (mode === 'subscribe' && token === verifyToken) {
-        console.log('[WA-WEBHOOK] Webhook verified successfully ✅');
-        res.status(200).send(challenge);
-    } else {
-        console.warn('[WA-WEBHOOK] Webhook verification failed ❌');
-        res.sendStatus(403);
-    }
+router.all('/webhook', (req, res) => {
+    console.warn(
+        `[WA-LEGACY] ${req.method} /api/whatsapp/webhook is retired — Meta is still pointed at the old URL. ` +
+        'Update the Callback URL to /api/meta/whatsapp.'
+    );
+    res.status(410).json(MOVED);
 });
 
-// POST /api/whatsapp/webhook — Handle incoming messages
-router.post('/webhook', async (req, res) => {
-    const data = req.body;
+/* Outbound sending is rate limited on top of the global API limiter.
+ * Meta throttles a business number and, past a point, restricts it — so a
+ * loop in a dashboard script must hit our ceiling long before it hits theirs.
+ * Generous enough for a human working through a support queue. */
+/* WhatsApp media is not only images — documents, audio and video all go
+ * through the same endpoint — so the shared upload middleware cannot be
+ * reused: its filter rejects anything that is not an image, which is correct
+ * for product photographs and wrong here. Types are restricted to what Meta
+ * actually accepts rather than left open. */
+const WA_MEDIA_MIME = /^(image\/(jpeg|png|webp)|video\/(mp4|3gpp)|audio\/(aac|mp4|mpeg|amr|ogg)|application\/pdf)$/i;
 
-    // Acknowledge receipt to Meta immediately (prevents duplicate webhook retries)
-    res.status(200).json({ received: true });
-
-    // Validate payload structure
-    if (data.object !== 'whatsapp_business_account') return;
-
-    try {
-        const entry = data.entry?.[0];
-        const changes = entry?.changes?.[0];
-        const value = changes?.value;
-        const messages = value?.messages;
-
-        if (!messages || messages.length === 0) return;
-
-        const msg = messages[0];
-        const from = msg.from; // Customer wa_id / phone
-        const text = msg.text?.body;
-        const type = msg.type;
-
-        // We only handle text messages for AI chat
-        if (type !== 'text' || !text) return;
-
-        console.log(`[WA-WEBHOOK] Received message from +${from}: "${text}"`);
-
-        // Get owner phones to prevent message loops
-        const ownerPhones = await whatsappService.getOwnerPhones();
-        const cleanFrom = from.replace(/[^\d]/g, '');
-
-        // If the sender is one of the owner/admin numbers, ignore it
-        if (ownerPhones.includes(cleanFrom)) {
-            console.log(`[WA-WEBHOOK] Sender +${cleanFrom} is an owner. Skipping AI reply.`);
-            return;
-        }
-
-        // --- AI CHATBOT LOGIC ---
-        const WhatsAppConversation = require('../models/WhatsAppConversation');
-        const aiChatService = require('../services/aiChatService');
-
-        // Load conversation
-        let conversation = await WhatsAppConversation.findOne({ phone: cleanFrom });
-        if (!conversation) {
-            conversation = new WhatsAppConversation({ phone: cleanFrom, messages: [] });
-        }
-
-        // If human has taken over in the last 2 hours, do not interfere
-        const now = new Date();
-        if (conversation.isHumanEscalated) {
-            // Check if 2 hours have passed since human takeover
-            if ((now - conversation.lastMessageAt) < COOLDOWN_MS) {
-                console.log(`[WA-WEBHOOK] +${cleanFrom} is handled by human. Skipping AI.`);
-                conversation.lastMessageAt = now;
-                await conversation.save();
-                return;
-            } else {
-                // Session expired, reset escalation
-                conversation.isHumanEscalated = false;
-                conversation.messages = [];
-            }
-        }
-
-        // Process with AI
-        console.log(`[WA-WEBHOOK] Processing message with AI for +${cleanFrom}`);
-        const aiResponse = await aiChatService.processMessage(cleanFrom, text, conversation.messages);
-
-        if (!aiResponse) {
-            console.warn(`[WA-WEBHOOK] AI service did not return a response. Skipping.`);
-            return;
-        }
-
-        // Send response to customer
-        console.log(`[WA-WEBHOOK] Sending AI reply to +${cleanFrom}: ${aiResponse.text}`);
-        await whatsappService.sendMessage(cleanFrom, aiResponse.text, 'contact_auto_reply');
-
-        // Save conversation history
-        conversation.messages.push({ role: 'user', content: text, timestamp: now });
-        conversation.messages.push({ role: 'assistant', content: aiResponse.text, timestamp: new Date() });
-        conversation.lastMessageAt = new Date();
-        
-        // Handle escalation
-        if (aiResponse.shouldEscalate) {
-            console.log(`[WA-WEBHOOK] AI requested human escalation for +${cleanFrom}.`);
-            conversation.isHumanEscalated = true;
-            
-            // Try to extract an order number to give owners context
-            const orderMatch = text.match(/ORD-\w+/i);
-            let contextStr = '';
-            if (orderMatch) {
-                const Order = require('../models/Order');
-                const order = await Order.findOne({ orderNumber: orderMatch[0].toUpperCase() }).populate('deliveryPilot');
-                if (order && order.deliveryPilot) {
-                    contextStr = `\n📦 Related Order: ${order.orderNumber}\n🚚 Driver: ${order.deliveryPilot.name} (${order.deliveryPilot.phone})`;
-                }
-            }
-            
-            // Forward to owners
-            const forwardMsg = `🚨 *AI Escalation*\n\nCustomer +${cleanFrom} needs human assistance.\n\n💬 Last msg: "${text}"\n🤖 AI replied: "${aiResponse.text}"${contextStr}\n\n↩️ Please reply to them directly.`;
-            for (const ownerPhone of ownerPhones) {
-                await whatsappService.sendMessage(ownerPhone, forwardMsg, 'status_update');
-            }
-        }
-
-        await conversation.save();
-
-    } catch (err) {
-        console.error('[WA-WEBHOOK] Error processing webhook message:', err.message, err.stack);
-    }
+const mediaUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 16 * 1024 * 1024 },   // Meta's own ceiling
+    fileFilter: (req, file, cb) => {
+        if (WA_MEDIA_MIME.test(file.mimetype)) return cb(null, true);
+        cb(new Error(`WhatsApp does not accept ${file.mimetype}`), false);
+    },
 });
+
+const sendLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: Number(process.env.WHATSAPP_SEND_RATE_LIMIT || 30),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many WhatsApp sends. Slow down.' },
+});
+
+// ── Health ──
+// Public: an uptime monitor should not need an admin session, and the response
+// carries configuration booleans rather than any credential.
+router.get('/health', wa.health);
+
+// ── Outbound ──
+router.post('/messages/text', protect, admin, sendLimiter, wa.sendText);
+router.post('/messages/template', protect, admin, sendLimiter, wa.sendTemplate);
+router.post('/messages/media', protect, admin, sendLimiter, wa.sendMedia);
+router.post('/messages/media/upload', protect, admin, sendLimiter, mediaUpload.single('file'), wa.uploadMedia);
+router.post('/messages/location', protect, admin, sendLimiter, wa.sendLocation);
+router.post('/messages/interactive', protect, admin, sendLimiter, wa.sendInteractive);
+router.post('/messages/:id/read', protect, admin, wa.markRead);
+
+// ── History ──
+router.get('/conversations', protect, admin, wa.listConversations);
+router.get('/conversations/:waId', protect, admin, wa.getConversation);
+router.get('/messages/:id', protect, admin, wa.getMessage);
 
 module.exports = router;

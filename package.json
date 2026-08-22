@@ -15,17 +15,21 @@
     "fix-images-script": "node src/fix-product-images.js --generate-script",
     "backup": "node src/backup.js",
     "restore": "node src/restore.js",
-    "test": "node tests/stockService.test.js && node tests/promoService.test.js && node tests/api.smoke.test.js && node tests/meta.test.js && node tests/audit.test.js",
+    "test": "node tests/stockService.test.js && node tests/promoService.test.js && node tests/api.smoke.test.js && node tests/meta.test.js && node tests/whatsapp.test.js && node tests/audit.test.js",
     "test:meta": "node tests/meta.test.js",
     "test:stock": "node tests/stockService.test.js",
     "test:promo": "node tests/promoService.test.js",
     "test:api": "node tests/api.smoke.test.js",
     "test:audit": "node tests/audit.test.js",
-    "backfill-stock": "node scripts/backfill-stock-ledger.js"
+    "backfill-stock": "node scripts/backfill-stock-ledger.js",
+    "test:whatsapp": "node tests/whatsapp.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "axios": "^1.7.9",
     "bcryptjs": "^3.0.3",

@@ -209,11 +209,26 @@ const verifyWhatsAppWebhook = (req, res) => {
  *
  * @route POST /api/meta/whatsapp
  */
+/**
+ * Inbound WhatsApp events: customer replies, delivery and read receipts,
+ * failures, and template status changes.
+ *
+ * Meta retries anything it does not see acknowledged quickly, so this answers
+ * first and works afterwards. That ordering is what makes duplicate delivery
+ * normal rather than exceptional, which is why every event is claimed against
+ * a unique key before it is acted on — see services/whatsappInbound.js.
+ *
+ * @route POST /api/meta/whatsapp
+ */
 const handleWhatsAppWebhook = (req, res) => {
-    // Signature check. Meta signs every payload with the app secret; without
-    // this, anyone who learns the URL can post fabricated messages.
+    /* Signature check. Meta signs every payload with the app secret; without
+     * it, anyone who learns this URL can post fabricated customer messages and
+     * make the business number reply to strangers.
+     *
+     * WHATSAPP_APP_SECRET is the documented name; META_APP_SECRET is accepted
+     * because it was here first and is already set in production. */
     const signature = req.get('x-hub-signature-256');
-    const appSecret = process.env.META_APP_SECRET;
+    const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET;
 
     if (appSecret && req.rawBody) {
         const expected = 'sha256=' + crypto
@@ -234,40 +249,22 @@ const handleWhatsAppWebhook = (req, res) => {
          * message, which means a stranger could trigger WhatsApp sends from the
          * business number to any phone they name. Refusing is the safe answer;
          * local development still runs unsigned so the handler can be tested.  */
-        console.error('[META-WA] Refusing webhook: META_APP_SECRET is not set, so its authenticity cannot be verified');
+        console.error('[META-WA] Refusing webhook: WHATSAPP_APP_SECRET is not set, so its authenticity cannot be verified');
         return res.sendStatus(403);
     }
 
+    // Acknowledge before processing. Meta resends anything slow, and a resend
+    // is cheap to ignore but expensive to double-handle.
     res.sendStatus(200);
 
-    try {
-        const entries = req.body?.entry || [];
-        for (const entry of entries) {
-            for (const change of entry.changes || []) {
-                const value = change.value || {};
-
-                for (const status of value.statuses || []) {
-                    console.log(`[META-WA] ${status.recipient_id}: ${status.status}` +
-                        (status.errors?.[0]?.title ? ` — ${status.errors[0].title}` : ''));
-                }
-
-                for (const message of value.messages || []) {
-                    const from = message.from;
-                    const text = message.text?.body || '';
-
-                    /* Acknowledge the customer and alert the owners. Deliberately
-                     * not awaited: the 200 has already been sent, and Meta resends
-                     * anything it considers slow, which would double-greet. Errors
-                     * are handled inside; this catch is the last resort so a
-                     * rejection can never become an unhandled rejection. */
-                    whatsappService.handleInboundMessage(from, text)
-                        .catch(err => console.error(`[META-WA] Inbound handling failed: ${err.message}`));
-                }
+    const inbound = require('../services/whatsappInbound');
+    inbound.processWebhook(req.body)
+        .then(({ processed, skipped, failed }) => {
+            if (processed || failed) {
+                console.log(`[META-WA] webhook handled: ${processed} processed, ${skipped} duplicate, ${failed} failed`);
             }
-        }
-    } catch (err) {
-        console.error('[META-WA] Webhook parse error:', err.message);
-    }
+        })
+        .catch(err => console.error(`[META-WA] webhook processing error: ${err.message}`));
 };
 
 /** @route GET /api/meta/status — what is wired up, for the admin screen. */

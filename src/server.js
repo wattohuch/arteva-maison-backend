@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/db');
 const { errorHandler, requestId, notFoundHandler } = require('./middleware/error');
 const { reportPaymentConfig } = require('./config/paymentConfig');
+const { reportWhatsAppConfig } = require('./config/whatsappConfig');
 const { startBackupScheduler, updateActivity, forceBackup } = require('./autoBackup');
 const { initializeSocket } = require('./socketHandler');
 const Order = require('./models/Order');
@@ -307,6 +308,11 @@ server.listen(PORT, async () => {
     // production) — a placeholder API key is the kind of thing that must be
     // loud, not discovered when a customer fails to check out.
     reportPaymentConfig(console);
+
+    /* Say plainly at boot whether WhatsApp can actually send and receive.
+     * A half-configured integration that only reveals itself when an order
+     * confirmation quietly fails is worse than one that is obviously off. */
+    reportWhatsAppConfig();
 
     // Email service initializes automatically on module load
     // (see emailService.js - Resend API, initializes on require())

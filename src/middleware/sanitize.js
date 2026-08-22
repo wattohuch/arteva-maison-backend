@@ -14,13 +14,13 @@
  * @param {*} obj - The object to sanitize
  * @returns {*} - Sanitized object
  */
-function sanitizeObject(obj) {
+function sanitizeObject(obj, warn = false) {
     if (obj === null || typeof obj !== 'object') {
         return obj;
     }
 
     if (Array.isArray(obj)) {
-        return obj.map(item => sanitizeObject(item));
+        return obj.map(item => sanitizeObject(item, warn));
     }
 
     const sanitized = {};
@@ -28,10 +28,16 @@ function sanitizeObject(obj) {
         if (obj.hasOwnProperty(key)) {
             // Skip keys that start with $ or contain .
             if (key.startsWith('$') || key.includes('.')) {
-                console.warn(`[SANITIZE] Removed dangerous key: ${key}`);
+                /* Only announced for req.body, where the key really is dropped.
+                 * req.query is read-only in Express 5, so the copy built below
+                 * is advisory and nothing is removed from what handlers read —
+                 * warning there claimed a protection that had not happened, and
+                 * did it on every Meta webhook verification, whose parameters
+                 * are legitimately named hub.mode, hub.challenge and so on. */
+                if (warn) console.warn(`[SANITIZE] Removed dangerous key: ${key}`);
                 continue;
             }
-            sanitized[key] = sanitizeObject(obj[key]);
+            sanitized[key] = sanitizeObject(obj[key], warn);
         }
     }
     return sanitized;
@@ -45,7 +51,7 @@ function sanitizeObject(obj) {
 function sanitizeRequest(req, res, next) {
     // Sanitize req.body (writable in Express 5.x)
     if (req.body && typeof req.body === 'object') {
-        req.body = sanitizeObject(req.body);
+        req.body = sanitizeObject(req.body, true);
     }
 
     // For req.query and req.params (read-only in Express 5.x), 
