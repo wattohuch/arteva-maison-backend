@@ -935,8 +935,12 @@ ${linksAr}`;
 
         const phone = rawPhone;
         const name = user.name || 'Valued Customer';
+        /* Proof is optional. A driver marking delivery uploads a photograph;
+         * an admin closing the order from the dashboard has none. This used to
+         * concatenate unconditionally and send the customer a link ending in
+         * "undefined". */
         const backendUrl = process.env.RENDER_EXTERNAL_URL || 'https://arteva-maison-backend-gy1x.onrender.com';
-        const fullProofUrl = `${backendUrl}${proofUrl}`;
+        const fullProofUrl = proofUrl ? `${backendUrl}${proofUrl}` : null;
         const receiptUrl = this.buildReceiptUrl(order);
 
         const message = `✅ *ARTÉVA Maison*
@@ -944,8 +948,7 @@ ${linksAr}`;
 Hello ${name},
 Your order *${order.orderNumber}* has been successfully delivered! 🎉
 
-📸 Delivery proof: ${fullProofUrl}
-📄 View Receipt: ${receiptUrl}
+${fullProofUrl ? `📸 Delivery proof: ${fullProofUrl}\n` : ''}📄 View Receipt: ${receiptUrl}
 
 Thank you for shopping with ARTÉVA Maison! ✨
 
@@ -954,8 +957,7 @@ Thank you for shopping with ARTÉVA Maison! ✨
 مرحباً ${name}،
 تم توصيل طلبك رقم *${order.orderNumber}* بنجاح! 🎉
 
-📸 صورة التوصيل: ${fullProofUrl}
-📄 عرض الإيصال: ${receiptUrl}
+${fullProofUrl ? `📸 صورة التوصيل: ${fullProofUrl}\n` : ''}📄 عرض الإيصال: ${receiptUrl}
 
 شكراً لتسوقكم مع ARTÉVA Maison! ✨`;
 
@@ -965,7 +967,7 @@ Thank you for shopping with ARTÉVA Maison! ✨
          * `delivery_proof`, not `status_update`: it was sharing the status-update
          * type, so the two could never be given different templates even though
          * their wording and parameters differ. */
-        const templateParams = [name, order.orderNumber, fullProofUrl];
+        const templateParams = [name, order.orderNumber, fullProofUrl || this.buildTrackingUrl(order)];
 
         const result = await this.sendMessage(
             phone, message, 'delivery_proof', order._id, templateParams
@@ -1143,14 +1145,123 @@ Arteva Maison`;
      * @param {string} from    sender's phone, digits only, as Meta sends it
      * @param {string} text    message body ('' for media-only messages)
      */
-    async handleInboundMessage(from, text) {
+    /**
+     * An owner replying to an escalation, relayed to the customer.
+     *
+     * Escalation used to end at "a customer needs you, here is their number" —
+     * leaving the owner to find that chat and start it themselves. In practice
+     * that means the customer waits while someone copies a number between
+     * apps, and the reply arrives from a different conversation than the one
+     * they were already in.
+     *
+     * Now the owner just replies to the alert. WhatsApp puts the alert's wamid
+     * in the reply's context, and that identifies the customer exactly — which
+     * matters when two people need help at once, where "the most recent
+     * escalation" would send one customer the other's answer.
+     *
+     * @param {string} ownerPhone who replied
+     * @param {string} text       what they wrote
+     * @param {string} replyToId  wamid of the message they replied to
+     * @returns {Promise<boolean>} true when the reply was relayed
+     */
+    async relayOwnerReply(ownerPhone, text, replyToId) {
+        const body = String(text || '').trim();
+        if (!body) return false;
+
+        const WhatsAppMessage = require('../models/WhatsAppMessage');
+        let customer = null;
+
+        // 1. Preferred: they used WhatsApp's reply, so the target is unambiguous.
+        if (replyToId) {
+            try {
+                const alert = await WhatsAppMessage.findOne({ messageId: replyToId }).lean();
+                if (alert && alert.relayTo) customer = alert.relayTo;
+            } catch (err) {
+                console.error(`[WA-RELAY] Could not resolve reply context: ${err.message}`);
+            }
+        }
+
+        /* 2. Fallback: an explicit number at the start, "96599887766 on its way".
+         * Kept because replying-to only exists if the owner uses that gesture,
+         * and on desktop WhatsApp people frequently do not. */
+        let stripped = body;
+        if (!customer) {
+            const explicit = body.match(/^\+?(\d{8,15})\s*[:\-,]?\s+([\s\S]+)$/);
+            if (explicit) {
+                const candidate = this.formatPhone(explicit[1]);
+                // Only treat it as an address if we have actually spoken to them.
+                /* relayTo counts as having spoken to them: a customer who
+                 * escalated but has not yet been replied to appears only as the
+                 * target of an alert, and refusing that is refusing the exact
+                 * case this fallback exists for. */
+                const known = await WhatsAppMessage.exists({
+                    $or: [{ from: candidate }, { to: candidate }, { relayTo: candidate }],
+                }).catch(() => null);
+                if (known) {
+                    customer = candidate;
+                    stripped = explicit[2].trim();
+                }
+            }
+        }
+
+        if (!customer) return false;
+
+        const result = await this.sendMessage(customer, stripped, 'owner_relay', null, [stripped]);
+
+        if (result.success) {
+            console.log(`[WA-RELAY] ${ownerPhone} -> ${customer}: "${stripped.slice(0, 60)}"`);
+            /* Tell the owner it landed. Without this they cannot tell a relayed
+             * reply from one that vanished, and the natural response to silence
+             * is to send it again. */
+            await this.sendMessage(
+                ownerPhone,
+                `✅ Sent to +${customer}.`,
+                'relay_receipt',
+                null,
+                [`+${customer}`]
+            ).catch(() => { /* the relay itself already succeeded */ });
+        } else {
+            console.error(`[WA-RELAY] Failed to reach ${customer}: ${result.error}`);
+            await this.sendMessage(
+                ownerPhone,
+                `❌ Could not deliver that to +${customer}. ${result.error || ''}`.trim(),
+                'relay_receipt',
+                null,
+                [`+${customer}`]
+            ).catch(() => {});
+        }
+
+        return true;
+    }
+
+    /** Record which customer an escalation alert concerns. */
+    async _tagRelayTarget(messageId, customerWaId) {
+        try {
+            const WhatsAppMessage = require('../models/WhatsAppMessage');
+            await WhatsAppMessage.updateOne({ messageId }, { $set: { relayTo: customerWaId } });
+        } catch (err) {
+            // The alert still reached the owner; only the reply shortcut is lost.
+            console.error(`[WA-RELAY] Could not tag ${messageId}: ${err.message}`);
+        }
+    }
+
+    async handleInboundMessage(from, text, opts = {}) {
         if (!from) return { success: false, error: 'No sender' };
 
         const phone = this.formatPhone(from);
         const owners = await this.getOwnerPhones();
 
-        // Owners handle support from these numbers; greeting them is noise.
         if (owners.map(p => this.formatPhone(p)).includes(phone)) {
+            /* An owner replying to an escalation alert is answering a customer,
+             * not talking to us. Try to relay it before falling back to the old
+             * behaviour of ignoring owner traffic entirely. */
+            const relayed = await this.relayOwnerReply(phone, text, opts.replyTo)
+                .catch(err => {
+                    console.error(`[WA-RELAY] ${err.message}`);
+                    return false;
+                });
+            if (relayed) return { success: true, relayed: true };
+
             console.log(`[WA-INBOUND] From owner ${phone} — no auto-reply`);
             return { success: true, skipped: 'owner' };
         }
@@ -1299,10 +1410,20 @@ Arteva Maison`;
                 }
             }
 
-            const alert = `🚨 *Customer needs a human*\n\n📱 +${phone}\n💬 "${body}"\n🤖 AI said: "${aiResponse.text}"${context}\n\n↩️ Please reply to them directly.`;
+            const alert = `🚨 *Customer needs a human*\n\n📱 +${phone}\n💬 "${body}"\n🤖 AI said: "${aiResponse.text}"${context}\n\n↩️ *Reply to this message* and it goes straight to them.`;
             for (const owner of owners) {
-                await this.sendMessage(owner, alert, 'inbound_forward', null, [`+${phone}`, body])
-                    .catch(err => console.error(`[WA-AI] Escalation to ${owner} failed: ${err.message}`));
+                const sent = await this.sendMessage(owner, alert, 'inbound_forward', null, [`+${phone}`, body])
+                    .catch(err => {
+                        console.error(`[WA-AI] Escalation to ${owner} failed: ${err.message}`);
+                        return null;
+                    });
+
+                /* Tag the alert with the customer it is about. When the owner
+                 * replies, WhatsApp echoes this message's id back to us and
+                 * that is how the reply finds its way to the right person. */
+                if (sent && sent.messageId) {
+                    await this._tagRelayTarget(sent.messageId, phone);
+                }
             }
         }
 

@@ -41,7 +41,10 @@ class AiChatService {
             let context = `You are a helpful, professional customer support assistant for ARTÉVA Maison, an elegant home decor and lifestyle brand based in Kuwait.\n\n`;
             
             context += `=== STORE POLICIES ===\n`;
-            context += `- Website: www.artevamaisonkw.com\n`;
+            // Full scheme, from configuration. Without it the model guessed,
+            // and guessed http:// for a site that is https.
+            const siteUrl = (process.env.FRONTEND_URL || 'https://www.artevamaisonkw.com').replace(/\/$/, '');
+            context += `- Website: ${siteUrl}\n`;
             context += `- Instagram: @arteva.maison\n`;
             context += `- Shipping: We deliver across Kuwait for 2 KWD.\n`;
             context += `- Payment Methods: We accept KNET, Visa, Mastercard, Apple Pay, and Deema (Buy Now Pay Later).\n\n`;
@@ -59,11 +62,13 @@ class AiChatService {
 
             context += `\n=== INSTRUCTIONS ===\n`;
             context += `1. Be extremely polite, helpful, and concise.\n`;
+            context += `1b. This is WhatsApp. Write links as bare URLs — https://example.com — never as markdown [text](url), which WhatsApp shows as literal brackets. Only *bold*, _italic_ and ~strike~ exist here; # headings and ** do nothing.\n`;
             context += `2. If the user speaks Arabic, reply in Arabic. If English, reply in English.\n`;
             context += `3. Use the product catalog above to answer questions about availability and prices.\n`;
-            context += `4. If the user mentions an order number (e.g. ORD-1234), inform them you can check it.\n`;
+            context += `4. Order numbers are 8 characters of letters and digits with no prefix, like QV684GNU. If the user gives you one, an ORDER CONTEXT section below will carry its real status — answer from that. If there is no ORDER CONTEXT section, ask them for the number.\n`;
             context += `5. If the user asks for something outside the catalog, say we don't have it right now.\n`;
-            context += `6. If you cannot help, or the user specifically asks to speak to a human, reply with exactly this phrase: [ESCALATE_TO_HUMAN] and a polite message saying you will connect them with our team.\n`;
+            context += `6. NEVER promise to check something later, to get back to them, to pass it to the team, or to update them shortly. You cannot do any of those — this conversation is all you have. Answer from the information above, or escalate.\n`;
+            context += `7. If the user asks for a human, a person, an agent, a manager, or says the bot is not helping, reply with exactly [ESCALATE_TO_HUMAN] followed by a short line telling them a colleague will message them here shortly. Do the same whenever you cannot answer from the information above. Escalating is always better than inventing.\n`;
 
             this.storeContext = context;
             this.lastContextUpdate = now;
@@ -78,13 +83,148 @@ class AiChatService {
     /**
      * Sends the message to Gemini API and returns the response
      */
-    /** Strip the escalation marker and report whether it was present. */
-    _finalise(text) {
-        const shouldEscalate = text.includes('[ESCALATE_TO_HUMAN]');
-        return {
-            text: text.split('[ESCALATE_TO_HUMAN]').join('').trim(),
-            shouldEscalate,
-        };
+    /**
+     * Strip the escalation marker, and decide whether a human is needed.
+     *
+     * The prompt already tells the model to escalate when asked for a person,
+     * and the model does not reliably comply — asked "Can u connect me with a
+     * human" it carried on describing vases. Whether a customer reaches a
+     * person is not a decision worth leaving to a language model, so it is
+     * checked here too. A false positive costs an owner one notification; a
+     * false negative is someone who asked for help and was ignored.
+     *
+     * A verb and a noun must both appear before we override the model, so
+     * "can someone tell me the price" stays an ordinary question.
+     */
+    /**
+     * Repair formatting WhatsApp cannot render, and force our own links to
+     * https.
+     *
+     * Applied to every reply on the way out. The model is instructed not to
+     * produce these, and does anyway.
+     */
+    _formatForWhatsApp(text) {
+        let out = String(text || {});
+
+        // [label](url) -> url, keeping the label when it is not just the URL.
+        out = out.replace(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gi, (m, label, url) => {
+            const bare = label.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+            const target = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+            return bare === target || !label.trim() ? url : `${label}: ${url}`;
+        });
+
+        // Our own site is https. A model-invented http:// costs the customer a
+        // redirect and, on some clients, a warning.
+        out = out.replace(/http:\/\/(www\.)?artevamaisonkw\.com/gi, 'https://$1artevamaisonkw.com');
+
+        // Markdown emphasis WhatsApp does not understand.
+        out = out.replace(/\*\*([^*]+)\*\*/g, '*$1*');   // **bold** -> *bold*
+        out = out.replace(/^#{1,6}\s+/gm, '');            // headings
+
+        return out.trim();
+    }
+    _finalise(text, userMessage = '') {
+        const marker = text.includes('[ESCALATE_TO_HUMAN]');
+        const clean = this._formatForWhatsApp(text.split('[ESCALATE_TO_HUMAN]').join(''));
+
+        const msg = String(userMessage || '');
+        const asksForHuman =
+            /\b(speak|talk|connect|transfer|put me|get me|call)\b/i.test(msg) &&
+            /\b(human|person|agent|someone|somebody|representative|staff|manager|owner|real)\b/i.test(msg);
+        const arabicAsk = /(موظف|بشر|انسان|إنسان|خدمة العملاء|مسؤول)/.test(msg);
+
+        const shouldEscalate = marker || asksForHuman || arabicAsk;
+        if (shouldEscalate && !marker) {
+            console.log('[AI-CHAT] Customer asked for a human; escalating even though the model did not');
+        }
+
+        return { text: clean, shouldEscalate };
+    }
+
+    /**
+     * Find any order the customer named, and describe it for the model.
+     *
+     * Order numbers are eight characters of A-Z0-9 with no prefix — 2OGW0INW,
+     * QV684GNU. This matched /ORD-\w+/, a format this shop has never issued, so
+     * the lookup could never fire. The model was handed no order data and
+     * filled the gap the way a language model does: by promising to "check with
+     * our team" and come back, which nobody was ever going to do. The prompt
+     * made it worse by offering "ORD-1234" as the example, teaching customers
+     * to quote a shape that does not exist.
+     *
+     * Candidates are resolved against the database rather than trusted from a
+     * pattern. An eight-character alphanumeric run is not distinctive enough to
+     * assume — DECORATE would match — so the database decides, and an unknown
+     * token simply yields nothing.
+     */
+    async lookupOrderContext(messageText) {
+        const text = String(messageText || '');
+
+        // Accept the bare number, a # prefix, and the legacy ORD- form.
+        const candidates = new Set();
+        const patterns = [
+            /\bORD-([A-Za-z0-9]{4,12})\b/gi,
+            /#\s*([A-Za-z0-9]{6,12})\b/g,
+            /\b([A-Za-z0-9]{8})\b/g,
+        ];
+        for (const re of patterns) {
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const token = m[1].toUpperCase();
+                // Real numbers are drawn from A-Z0-9; anything else is noise.
+                if (/^[A-Z0-9]+$/.test(token)) candidates.add(token);
+            }
+        }
+
+        if (candidates.size === 0) return '';
+
+        // Cap the lookup: a message full of eight-letter words must not become
+        // a dozen queries.
+        const lookups = [...candidates].slice(0, 5);
+
+        let order = null;
+        try {
+            order = await Order.findOne({ orderNumber: { $in: lookups } })
+                .populate('deliveryPilot')
+                .lean();
+        } catch (err) {
+            console.error(`[AI-CHAT] Order lookup failed: ${err.message}`);
+            return '';
+        }
+
+        if (!order) {
+            /* Only say so when the customer clearly meant it as an order
+             * number. Otherwise an ordinary eight-letter word would have the
+             * assistant insisting an order could not be found. */
+            const deliberate = /ORD-|#|order|طلب/i.test(text);
+            if (!deliberate) return '';
+            return '\n\n=== ORDER CONTEXT ===\n'
+                + `The customer quoted ${lookups.join(' or ')}, which is NOT an order in our system. `
+                + 'Tell them you could not find it and ask them to check the number. '
+                + 'Do NOT promise to look into it or to come back to them.\n';
+        }
+
+        const lines = [
+            '\n\n=== ORDER CONTEXT ===',
+            `Order ${order.orderNumber} EXISTS. Use these facts; do not invent others.`,
+            `Status: ${order.orderStatus}`,
+            `Payment: ${order.paymentStatus}`,
+            `Total: ${order.total} ${order.currency || 'KWD'}`,
+            `Placed: ${order.createdAt ? new Date(order.createdAt).toDateString() : 'unknown'}`,
+        ];
+
+        if (order.deliveryPilot) {
+            lines.push(`Driver: ${order.deliveryPilot.name} (${order.deliveryPilot.phone}) — you may share these details.`);
+        } else {
+            lines.push('No driver assigned yet.');
+        }
+
+        lines.push(
+            'Tell the customer this status NOW, in this reply. You already have it — '
+            + 'do not say you will check, and do not promise to come back to them.'
+        );
+
+        return lines.join('\n') + '\n';
     }
 
     async processMessage(phone, messageText, history) {
@@ -94,23 +234,8 @@ class AiChatService {
         }
 
         try {
-            // 1. Check if it's an order tracking request
-            const orderMatch = messageText.match(/ORD-\w+/i);
-            let orderContext = '';
-            if (orderMatch) {
-                const orderNumber = orderMatch[0].toUpperCase();
-                const order = await Order.findOne({ orderNumber }).populate('deliveryPilot');
-                if (order) {
-                    orderContext = `\n\n=== ORDER CONTEXT ===\nThe user is asking about order ${orderNumber}. Current status: ${order.orderStatus}. Payment status: ${order.paymentStatus}. Total: ${order.total} KWD.\n`;
-                    if (order.deliveryPilot) {
-                        orderContext += `Driver Assigned: ${order.deliveryPilot.name} (Phone: ${order.deliveryPilot.phone}). You can provide these driver details to the customer if they are asking about delivery.\n`;
-                    } else {
-                        orderContext += `No driver assigned yet.\n`;
-                    }
-                } else {
-                    orderContext = `\n\n=== ORDER CONTEXT ===\nThe user is asking about order ${orderNumber}, but this order was NOT FOUND in our system.\n`;
-                }
-            }
+            // 1. Look up any order number the customer mentioned
+            const orderContext = await this.lookupOrderContext(messageText);
 
             // 2. Build system prompt
             const baseContext = await this.buildContext();
@@ -201,11 +326,11 @@ class AiChatService {
                      * reply — "We have vases, bowls and lighting." — was
                      * discarded in favour of the fragment it came from. */
                     if (trimmed) {
-                        return this._finalise(trimmed);
+                        return this._finalise(trimmed, messageText);
                     }
                 }
 
-                return this._finalise(text);
+                return this._finalise(text, messageText);
             }
 
             return null;

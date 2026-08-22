@@ -138,6 +138,38 @@ const ask = async (candidate) => {
         check('the output budget leaves room for reasoning and an answer', budget >= 1024, String(budget));
     }
 
+    // ── WhatsApp formatting ─────────────────────────────────────────────────
+    // A customer was sent "[www.artevamaisonkw.com](http://www.artevamaisonkw.com)".
+    // WhatsApp has no markdown links, so the brackets rendered literally — and
+    // the scheme was http on an https site.
+    {
+        const f = (t) => ai._formatForWhatsApp(t);
+        check('a markdown link collapses to a bare URL',
+            f('[www.artevamaisonkw.com](http://www.artevamaisonkw.com)') === 'https://www.artevamaisonkw.com',
+            f('[www.artevamaisonkw.com](http://www.artevamaisonkw.com)'));
+        check('a labelled markdown link keeps its label but loses the syntax',
+            f('Order at [our site](https://www.artevamaisonkw.com) today') === 'Order at our site: https://www.artevamaisonkw.com today',
+            f('Order at [our site](https://www.artevamaisonkw.com) today'));
+        check('http to our own domain is upgraded to https',
+            f('Visit http://www.artevamaisonkw.com') === 'Visit https://www.artevamaisonkw.com',
+            f('Visit http://www.artevamaisonkw.com'));
+        check('**bold** becomes WhatsApp *bold*',
+            f('**Vase** is 106') === '*Vase* is 106', f('**Vase** is 106'));
+        check('markdown headings are stripped',
+            f('## Our Collection') === 'Our Collection', f('## Our Collection'));
+        check('a correct https link is left alone',
+            f('See https://www.artevamaisonkw.com/track-order') === 'See https://www.artevamaisonkw.com/track-order');
+    }
+    {
+        // The repair must run on the real reply path, not only in isolation.
+        const r = await ask({
+            finishReason: 'STOP',
+            content: { parts: [{ text: 'Order here: [site](http://www.artevamaisonkw.com)' }] },
+        });
+        check('the repair is applied to what the customer actually receives',
+            !r.text.includes('](') && !r.text.includes('http://'), r.text);
+    }
+
     Module._load = originalLoad;
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);

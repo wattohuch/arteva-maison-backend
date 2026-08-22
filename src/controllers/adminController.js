@@ -513,7 +513,16 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     try {
         const whatsapp = require('../services/whatsappService');
         // await whatsapp.notifyOwnerOrderStatusChange(order, order.user, oldStatus, status); // DISABLED: Owner only gets new order notifications
-        await whatsapp.notifyCustomerOrderStatusChange(order, order.user, status);
+        if (status === 'delivered') {
+            /* notifyCustomerOrderStatusChange returns early on 'delivered',
+             * because delivery has its own message carrying the receipt and,
+             * when a driver closed the order, the proof photograph. Until now
+             * only the driver app called it — so an order completed from the
+             * dashboard told the customer nothing at all. */
+            await whatsapp.notifyCustomerDelivery(order, order.user || {}, null);
+        } else {
+            await whatsapp.notifyCustomerOrderStatusChange(order, order.user, status);
+        }
 
         // Send refund/return notification if admin cancels a paid order
         if (status === 'cancelled' && order.paymentStatus === 'paid') {

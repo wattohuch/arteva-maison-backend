@@ -79,6 +79,18 @@ const whatsappMessageSchema = new mongoose.Schema({
     conversation: { type: mongoose.Schema.Types.ObjectId, ref: 'WhatsAppConversation' },
     /** wamid this is a reply to, when the customer replied to a specific message. */
     replyTo: { type: String },
+    /**
+     * Set on an escalation alert sent to an owner: the wa_id of the customer
+     * it concerns.
+     *
+     * This is what makes the relay work. When an owner swipes to reply to the
+     * alert, WhatsApp puts the alert's wamid in the inbound message's context,
+     * and that is enough to find this row and learn who the reply is for —
+     * without asking the owner to type a phone number, and without guessing
+     * from "whoever escalated most recently", which breaks the moment two
+     * customers need help at once.
+     */
+    relayTo: { type: String, index: true },
     sentAt: { type: Date },
     deliveredAt: { type: Date },
     readAt: { type: Date },

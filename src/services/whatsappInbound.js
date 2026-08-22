@@ -248,6 +248,10 @@ class WhatsAppInboundProcessor {
             await whatsappService.handleInboundMessage(waId, text, {
                 messageId: message.id,
                 profileName,
+                /* The message this one replies to. An owner swiping to reply on
+                 * an escalation alert is how the relay knows which customer the
+                 * reply belongs to. */
+                replyTo: message.context && message.context.id,
             });
         }
     }
