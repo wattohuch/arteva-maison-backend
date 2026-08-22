@@ -78,6 +78,15 @@ class AiChatService {
     /**
      * Sends the message to Gemini API and returns the response
      */
+    /** Strip the escalation marker and report whether it was present. */
+    _finalise(text) {
+        const shouldEscalate = text.includes('[ESCALATE_TO_HUMAN]');
+        return {
+            text: text.split('[ESCALATE_TO_HUMAN]').join('').trim(),
+            shouldEscalate,
+        };
+    }
+
     async processMessage(phone, messageText, history) {
         if (!this.apiKey) {
             console.warn('[AI-CHAT] GEMINI_API_KEY is not set. AI Chat disabled.');
@@ -127,7 +136,22 @@ class AiChatService {
                 },
                 generationConfig: {
                     temperature: 0.3,
-                    maxOutputTokens: 250
+                    /* The 2.5 and newer models are "thinking" models: they emit
+                     * reasoning tokens, and those count against maxOutputTokens.
+                     * At 250 the reasoning consumed nearly the whole budget and
+                     * the customer got a sentence that stopped mid-word —
+                     * "our highest-priced piece is the". The budget has to cover
+                     * the thinking AND the answer. */
+                    maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 2048),
+                    /* Ask for no reasoning at all. Supported from 2.5 onwards;
+                     * a model that does not know the field ignores it, and one
+                     * that enforces a floor (2.5 Pro) clamps up to its minimum
+                     * rather than failing. A WhatsApp reply about stock and
+                     * opening hours does not need deliberation, and every token
+                     * spent on it is latency the customer waits through. */
+                    thinkingConfig: {
+                        thinkingBudget: Number(process.env.GEMINI_THINKING_BUDGET || 0),
+                    },
                 }
             };
 
@@ -138,17 +162,50 @@ class AiChatService {
                 }
             });
 
-            if (response.data && response.data.candidates && response.data.candidates[0]) {
-                const text = response.data.candidates[0].content.parts[0].text.trim();
-                
-                // Handle escalation
-                const shouldEscalate = text.includes('[ESCALATE_TO_HUMAN]');
-                const cleanText = text.replace('[ESCALATE_TO_HUMAN]', '').trim();
+            const candidate = response.data && response.data.candidates && response.data.candidates[0];
+            if (candidate) {
+                /* Join every part, minus the reasoning.
+                 *
+                 * This read parts[0].text, which is wrong twice over. A reply
+                 * long enough to be split across parts was silently truncated to
+                 * the first one; and on a thinking model part[0] can BE the
+                 * reasoning, which is how "Formulate Response Strategy**:" was
+                 * sent to a customer as though it were an answer. Parts carrying
+                 * `thought: true` are the model working, not talking. */
+                const parts = (candidate.content && candidate.content.parts) || [];
+                const text = parts
+                    .filter(part => part && !part.thought && typeof part.text === 'string')
+                    .map(part => part.text)
+                    .join('')
+                    .trim();
 
-                return {
-                    text: cleanText,
-                    shouldEscalate
-                };
+                const finishReason = candidate.finishReason;
+
+                if (!text) {
+                    /* Nothing sayable came back. Usually MAX_TOKENS with the
+                     * whole budget spent thinking, or SAFETY. Returning null
+                     * lets the caller fall back to alerting a human, which is a
+                     * better outcome than sending an empty message. */
+                    console.warn(`[AI-CHAT] No usable text in response (finishReason: ${finishReason || 'none'}, ${parts.length} parts)`);
+                    return null;
+                }
+
+                if (finishReason === 'MAX_TOKENS') {
+                    /* The answer really was cut off. Trim back to the last
+                     * complete sentence so the customer gets something that
+                     * reads as finished rather than a dangling clause. */
+                    console.warn('[AI-CHAT] Reply hit the token ceiling — trimming to the last complete sentence');
+                    const trimmed = text.replace(/[^.!?؟\n]*$/, '').trim();
+                    /* Any complete sentence beats a dangling one. An
+                     * earlier length floor here meant a short but finished
+                     * reply — "We have vases, bowls and lighting." — was
+                     * discarded in favour of the fragment it came from. */
+                    if (trimmed) {
+                        return this._finalise(trimmed);
+                    }
+                }
+
+                return this._finalise(text);
             }
 
             return null;
