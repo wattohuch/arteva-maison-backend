@@ -18,7 +18,24 @@ class WhatsAppService {
          * after the transport moved were used for nothing except a startup log
          * line — one that then reported a version the process was not actually
          * calling. Read from the client so the two can never disagree. */
-        this.isOfficialEnabled = !!(this.whatsappAccessToken && this.whatsappPhoneNumberId);
+        /* Whether a transport is configured at all — NOT whether Meta
+         * specifically is. This gated sending on Meta credentials, so a Twilio
+         * deployment (which has no WHATSAPP_ACCESS_TOKEN by design) would have
+         * reported itself disabled and skipped every send silently, which is
+         * the worst possible failure: no error, no message, no clue.
+         *
+         * A getter rather than a snapshot so switching WHATSAPP_PROVIDER takes
+         * effect without a restart, and so tests can flip provider per case. */
+        Object.defineProperty(this, 'isOfficialEnabled', {
+            get() {
+                const provider = (process.env.WHATSAPP_PROVIDER || 'meta').toLowerCase();
+                if (provider === 'twilio') {
+                    return require('./twilioWhatsAppClient').isConfigured;
+                }
+                return !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+            },
+            enumerable: true,
+        });
 
         // --- Green API (Legacy / Fallback) ---
         this.instanceId = process.env.GREEN_API_INSTANCE_ID || '';
@@ -44,13 +61,31 @@ class WhatsAppService {
         this._retryDelayMs = 15000;
 
         // Check connection on startup
-        this.isConnected = this.isOfficialEnabled;
+        // Mirrors isOfficialEnabled rather than snapshotting it — the admin
+        // status endpoint reads this and a stale snapshot would misreport.
+        Object.defineProperty(this, 'isConnected', {
+            get() { return this.isOfficialEnabled; },
+            enumerable: true,
+        });
 
-        if (this.isOfficialEnabled) {
+        const activeProvider = (process.env.WHATSAPP_PROVIDER || 'meta').toLowerCase();
+
+        if (this.isOfficialEnabled && activeProvider === 'twilio') {
+            const twilio = require('./twilioWhatsAppClient');
+            console.log('✅ WhatsApp Service (Twilio) initialized');
+            console.log(`   Sender: ${twilio.from}`);
+            console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
+        } else if (this.isOfficialEnabled) {
             console.log('✅ WhatsApp Service (Official Cloud API) initialized');
             console.log(`   Phone Number ID: ${this.whatsappPhoneNumberId}`);
             console.log(`   API Version: ${require('./whatsappCloudClient').apiVersion}`);
             console.log(`   Owners: ${this.ownerPhones.join(', ')}`);
+        } else if (activeProvider === 'twilio') {
+            console.error('╔══════════════════════════════════════════════════════╗');
+            console.error('║  ❌ TWILIO WHATSAPP IS NOT CONFIGURED                ║');
+            console.error('╚══════════════════════════════════════════════════════╝');
+            require('./twilioWhatsAppClient').missingConfig()
+                .forEach(m => console.error(`     → ${m}`));
         } else {
             console.error('╔══════════════════════════════════════════════════════╗');
             console.error('║  ❌ WHATSAPP NOTIFICATIONS ARE DISABLED!             ║');
@@ -149,13 +184,32 @@ class WhatsAppService {
      * directly, which meant a second HTTP client with its own (absent) retry
      * policy — a transient blip from Meta simply lost the message.
      */
+    /**
+     * The transport that actually puts a message on WhatsApp.
+     *
+     * Meta's Cloud API and Twilio are both supported and expose the same two
+     * methods, so everything above this line is provider-agnostic. Selected by
+     * WHATSAPP_PROVIDER; defaults to Meta so an existing deployment keeps the
+     * behaviour it already has.
+     *
+     * Twilio is worth choosing when the Sandbox matters: it sends immediately
+     * with no number registration and no Business Manager, which lets customer
+     * conversations run while the production number is still being sorted out.
+     */
+    _transport() {
+        const provider = (process.env.WHATSAPP_PROVIDER || 'meta').toLowerCase();
+        return provider === 'twilio'
+            ? require('./twilioWhatsAppClient')
+            : require('./whatsappCloudClient');
+    }
+
     async sendOfficialMessage(to, message) {
         const cleanPhone = this.formatPhone(to);
         if (!cleanPhone) {
             throw new Error('Invalid phone number format');
         }
 
-        const client = require('./whatsappCloudClient');
+        const client = this._transport();
         const result = await client.sendText(cleanPhone, message);
         if (!result.success) this._throwFromClientResult(result);
 
@@ -180,7 +234,7 @@ class WhatsAppService {
         const cleanPhone = this.formatPhone(to);
         if (!cleanPhone) throw new Error('Invalid phone number format');
 
-        const client = require('./whatsappCloudClient');
+        const client = this._transport();
         const result = await client.sendTemplate(cleanPhone, templateName, languageCode || 'en', params);
         if (!result.success) this._throwFromClientResult(result);
 

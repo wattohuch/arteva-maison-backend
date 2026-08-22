@@ -93,6 +93,19 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
     const WhatsAppWebhookEvent = require('../src/models/WhatsAppWebhookEvent');
     const { checkWhatsAppConfig } = require('../src/config/whatsappConfig');
 
+    /* Deduplication is enforced by the unique index on eventKey, not by the
+     * application — so these assertions are only meaningful once that index
+     * actually exists. Mongoose builds indexes in the background after connect,
+     * and this suite races it: the dedup checks passed on most runs and failed
+     * on the ones where the first duplicate insert landed before the index was
+     * ready. Waiting for the build makes the outcome depend on the code under
+     * test rather than on timing. */
+    await Promise.all([
+        WhatsAppWebhookEvent.init(),
+        WhatsAppMessage.init(),
+        WhatsAppContact.init(),
+    ]);
+
     client.refresh();
 
     const reset = () => { axiosState.calls = []; axiosState.queue = []; };

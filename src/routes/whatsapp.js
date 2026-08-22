@@ -79,6 +79,19 @@ const sendLimiter = rateLimit({
 // ── Health ──
 // Public: an uptime monitor should not need an admin session, and the response
 // carries configuration booleans rather than any credential.
+/* ── Twilio inbound ──
+ *
+ * Public and unauthenticated by design: Twilio signs each request and that
+ * signature is the authentication, checked inside the handler. Mounted here
+ * rather than under /api/meta because the payload shape, the signature scheme
+ * and the reply convention are all Twilio's, not Meta's.
+ *
+ * Twilio POSTs form-encoded, which express.urlencoded already parses app-wide.
+ */
+const twilioHook = require('../controllers/twilioWebhookController');
+router.post('/twilio', twilioHook.handleTwilioInbound);
+router.post('/twilio/status', twilioHook.handleTwilioStatus);
+
 router.get('/health', wa.health);
 
 // ── Outbound ──
