@@ -147,29 +147,40 @@ router.put('/printer/url', protect, admin, async (req, res) => {
     res.json({ success: true, message: `Printer URL updated to ${url}`, note: 'Update your Render env var to persist across deploys' });
 });
 
-// WhatsApp connection status check
+/* WhatsApp connection status.
+ *
+ * Rewritten when the Cloud API replaced Green API. This called
+ * `whatsapp.checkStatus()`, which that migration removed, so the endpoint threw
+ * `checkStatus is not a function` and answered 500 — the one screen an admin
+ * opens to find out whether WhatsApp works was itself broken. It also reported
+ * GREEN_API_* variables that nothing reads any more, so a correctly configured
+ * Cloud API install looked unconfigured.
+ */
 router.get('/whatsapp-status', protect, admin, async (req, res) => {
     try {
         const whatsapp = require('../services/whatsappService');
+        const { checkWhatsAppConfig } = require('../config/whatsappConfig');
+
+        const config = checkWhatsAppConfig();
         const ownerPhones = await whatsapp.getOwnerPhones();
-        const connected = await whatsapp.checkStatus();
+
         res.json({
             success: true,
-            connected,
-            provider: 'Green API',
-            instanceId: process.env.GREEN_API_INSTANCE_ID || 'NOT SET',
-            apiUrl: process.env.GREEN_API_URL || 'NOT SET (using default)',
-            tokenSet: !!(process.env.GREEN_API_TOKEN),
-            ownerPhones: ownerPhones,
+            provider: 'WhatsApp Cloud API',
+            connected: !!whatsapp.isConnected,
+            configured: config.ok,
+            missing: config.missing,
+            warnings: config.warnings,
+            phoneNumberIdSet: !!process.env.WHATSAPP_PHONE_NUMBER_ID,
+            tokenSet: !!process.env.WHATSAPP_ACCESS_TOKEN,
+            ownerPhones,
             ownerPhoneCount: ownerPhones.length,
-            message: !process.env.GREEN_API_INSTANCE_ID || !process.env.GREEN_API_TOKEN
-                ? '❌ GREEN_API_INSTANCE_ID or GREEN_API_TOKEN not set in env vars. WhatsApp is DISABLED.'
-                : connected
-                    ? `✅ WhatsApp ready — will notify ${ownerPhones.length} owner(s): ${ownerPhones.join(', ')}`
-                    : '❌ Not connected. Go to https://console.green-api.com and scan QR code'
+            message: config.ok
+                ? `✅ WhatsApp ready — will notify ${ownerPhones.length} owner(s): ${ownerPhones.join(', ')}`
+                : `❌ Not configured. Missing: ${config.missing.join('; ')}`,
         });
     } catch (e) {
-        res.json({ success: false, connected: false, message: e.message });
+        res.status(500).json({ success: false, connected: false, message: e.message });
     }
 });
 

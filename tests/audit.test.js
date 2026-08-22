@@ -702,6 +702,22 @@ const section = (title) => console.log(`\n── ${title} ──`);
     }
 
 
+    // -- WhatsApp status endpoint --
+    section('WhatsApp status endpoint');
+
+    /* This answered 500 after the Cloud API migration removed checkStatus(),
+       which the handler still called — the one screen an admin opens to find
+       out whether WhatsApp works was itself the thing that was broken. */
+    const waStatus = await req('/admin/whatsapp-status', {}, tok(admin));
+    check('whatsapp-status responds instead of throwing', waStatus.status === 200,
+        `${waStatus.status} ${JSON.stringify(waStatus.body).slice(0, 120)}`);
+    check('  and reports the Cloud API, not the retired Green API',
+        waStatus.body?.provider === 'WhatsApp Cloud API', String(waStatus.body?.provider));
+    check('  and says what configuration is missing',
+        Array.isArray(waStatus.body?.missing), JSON.stringify(waStatus.body?.missing || null).slice(0, 100));
+    check('  and stays admin-only',
+        (await req('/admin/whatsapp-status', {}, tok(shopper))).status === 403);
+
     // -- Editable revenue --
     section('Editable revenue (owner corrections)');
 
