@@ -667,7 +667,7 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
 
         const bad = await client.createTemplate({
             name: 'two_vars_one_sample', language: 'en', category: 'UTILITY',
-            body: 'Hi {{1}}, order {{2}}', examples: ['Sara'],
+            body: 'Hi {{1}}, order {{2}} is on its way.', examples: ['Sara'],
         });
         check('a missing example is refused before Meta sees it',
             bad.success === false && /2 placeholder/.test(bad.error || ''), bad.error);
@@ -681,7 +681,7 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
         axiosState.queue = [{ data: { id: '1', status: 'PENDING', category: 'UTILITY' } }];
         const ok = await client.createTemplate({
             name: 'arteva_order_status', language: 'ar', category: 'UTILITY',
-            body: 'x {{1}} {{2}} {{3}} {{4}}', examples: ['a', 'b', 'c', 'd'],
+            body: 'a {{1}} b {{2}} c {{3}} d {{4}} e', examples: ['a', 'b', 'c', 'd'],
         });
         check('a well formed template is submitted', ok.success === true, ok.error);
 
@@ -761,6 +761,48 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
 
         delete process.env.WHATSAPP_PROVISION_TEMPLATES;
         delete process.env.WHATSAPP_PROVISION_DRY_RUN;
+        delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+        client.refresh();
+    }
+    // == 18. Template body shape ============================================
+    // Meta refuses a body that ends with a variable, and one with two
+    // variables side by side. Both come back as a generic parameter error, so
+    // five of seven templates were silently refused in production before this
+    // was understood — the two that survived were the two ending in text.
+    {
+        reset();
+        process.env.WHATSAPP_BUSINESS_ACCOUNT_ID = 'WABA_TEST';
+        client.refresh();
+        const tpl = require('../src/services/whatsappTemplates');
+
+        const endsVar = await client.createTemplate({
+            name: 'ends_with_var', language: 'en', category: 'UTILITY',
+            body: 'Your order is ready. Track it: {{1}}', examples: ['https://x'],
+        });
+        check('a body ending in a variable is refused before Meta sees it',
+            endsVar.success === false && /ends with a variable/.test(endsVar.error || ''),
+            endsVar.error);
+
+        const adjacent = await client.createTemplate({
+            name: 'adjacent_vars', language: 'en', category: 'UTILITY',
+            body: 'Hello {{1}} {{2}}, welcome.', examples: ['a', 'b'],
+        });
+        check('two variables with nothing between them are refused',
+            adjacent.success === false && /nothing between them/.test(adjacent.error || ''),
+            adjacent.error);
+
+        check('neither refusal reached the network', axiosState.calls.length === 0);
+
+        // Every shipped contract has to satisfy both rules, in both languages.
+        let bad = '';
+        for (const [envVar, c] of Object.entries(tpl.TEMPLATE_CONTRACTS)) {
+            for (const [lang, body] of Object.entries(c.body)) {
+                if (/\{\{\s*\d+\s*\}\}\s*$/.test(body)) bad += envVar + ':' + lang + ' ends with a variable. ';
+                if (/\{\{\s*\d+\s*\}\}\s*\{\{\s*\d+\s*\}\}/.test(body)) bad += envVar + ':' + lang + ' has adjacent variables. ';
+            }
+        }
+        check('no shipped template body ends with, or doubles up, a variable', bad === '', bad);
+
         delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
         client.refresh();
     }

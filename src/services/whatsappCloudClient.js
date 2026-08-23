@@ -583,6 +583,25 @@ class WhatsAppCloudClient {
             .map(v => v.replace(/\D/g, '')));
         const examples = Array.isArray(spec.examples) ? spec.examples : [];
 
+        /* Meta refuses a body that ends with a variable, and refuses two
+         * variables with nothing but whitespace between them. Both come back
+         * as a generic parameter error naming neither the template nor the
+         * rule, so they are caught here where the message can say which. */
+        if (/\{\{\s*\d+\s*\}\}\s*$/.test(body)) {
+            return {
+                success: false,
+                permanent: true,
+                error: `Template "${name}" ends with a variable. Meta refuses this — put a closing line of text after the last placeholder.`,
+            };
+        }
+        if (/\{\{\s*\d+\s*\}\}\s*\{\{\s*\d+\s*\}\}/.test(body)) {
+            return {
+                success: false,
+                permanent: true,
+                error: `Template "${name}" has two variables with nothing between them. Meta refuses this — separate them with text.`,
+            };
+        }
+
         if (placeholders.size !== examples.length) {
             // Caught here rather than at Meta, where it returns a parameter
             // error that does not say which template or which variable.

@@ -36,8 +36,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number', 'total with currency', 'tracking URL'],
         examples: ['Sara', 'A7K2M9P4', '45.500 KWD', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
         body: {
-            en: '*ARTÉVA Maison — Order Confirmed*\n\nHello {{1}}, thank you for your order.\n\nOrder number: {{2}}\nTotal: {{3}}\n\nWe are preparing it now and will let you know as soon as it is on its way.\n\nTrack your order: {{4}}',
-            ar: '*ARTÉVA Maison — تأكيد الطلب*\n\nمرحباً {{1}}، شكراً لطلبك.\n\nرقم الطلب: {{2}}\nالإجمالي: {{3}}\n\nنقوم بتجهيز طلبك الآن وسنبلغك فور شحنه.\n\nتتبع طلبك: {{4}}',
+            en: '*ARTÉVA Maison — Order Confirmed*\n\nHello {{1}}, thank you for your order.\n\nOrder number: {{2}}\nTotal: {{3}}\n\nTrack your order: {{4}}\n\nWe are preparing it now and will let you know as soon as it is on its way.',
+            ar: '*ARTÉVA Maison — تأكيد الطلب*\n\nمرحباً {{1}}، شكراً لطلبك.\n\nرقم الطلب: {{2}}\nالإجمالي: {{3}}\n\nتتبع طلبك: {{4}}\n\nنقوم بتجهيز طلبك الآن وسنبلغك فور شحنه.',
         },
     },
     WHATSAPP_TEMPLATE_STATUS_UPDATE: {
@@ -47,8 +47,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number', 'status', 'tracking URL'],
         examples: ['Sara', 'A7K2M9P4', 'shipped', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
         body: {
-            en: '*ARTÉVA Maison — Order Update*\n\nHello {{1}}, your order {{2}} is now {{3}}.\n\nTrack your order: {{4}}',
-            ar: '*ARTÉVA Maison — تحديث الطلب*\n\nمرحباً {{1}}، حالة طلبك {{2}} الآن: {{3}}.\n\nتتبع طلبك: {{4}}',
+            en: '*ARTÉVA Maison — Order Update*\n\nHello {{1}}, your order {{2}} is now {{3}}.\n\nTrack your order: {{4}}\n\nThank you for shopping with us.',
+            ar: '*ARTÉVA Maison — تحديث الطلب*\n\nمرحباً {{1}}، حالة طلبك {{2}} الآن: {{3}}.\n\nتتبع طلبك: {{4}}\n\nشكراً لتسوقك معنا.',
         },
     },
     WHATSAPP_TEMPLATE_DELIVERY_PROOF: {
@@ -58,8 +58,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number', 'proof or tracking URL'],
         examples: ['Sara', 'A7K2M9P4', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
         body: {
-            en: '*ARTÉVA Maison — Delivered*\n\nHello {{1}}, your order {{2}} has been delivered.\n\nWe hope you love it. Details: {{3}}',
-            ar: '*ARTÉVA Maison — تم التسليم*\n\nمرحباً {{1}}، تم تسليم طلبك {{2}}.\n\nنتمنى أن ينال إعجابك. التفاصيل: {{3}}',
+            en: '*ARTÉVA Maison — Delivered*\n\nHello {{1}}, your order {{2}} has been delivered.\n\nDetails: {{3}}\n\nWe hope you love it.',
+            ar: '*ARTÉVA Maison — تم التسليم*\n\nمرحباً {{1}}، تم تسليم طلبك {{2}}.\n\nالتفاصيل: {{3}}\n\nنتمنى أن ينال إعجابك.',
         },
     },
     WHATSAPP_TEMPLATE_OWNER_NEW_ORDER: {
@@ -69,8 +69,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['order number', 'customer', 'total', 'item count'],
         examples: ['A7K2M9P4', 'Sara', '45.500 KWD', '3'],
         body: {
-            en: '*New order — {{1}}*\n\nCustomer: {{2}}\nTotal: {{3}}\nItems: {{4}}',
-            ar: '*طلب جديد — {{1}}*\n\nالعميل: {{2}}\nالإجمالي: {{3}}\nعدد القطع: {{4}}',
+            en: '*New order — {{1}}*\n\nCustomer: {{2}}\nTotal: {{3}}\nItems: {{4}}\n\nOpen the dashboard to confirm it.',
+            ar: '*طلب جديد — {{1}}*\n\nالعميل: {{2}}\nالإجمالي: {{3}}\nعدد القطع: {{4}}\n\nافتح لوحة التحكم لتأكيد الطلب.',
         },
     },
     WHATSAPP_TEMPLATE_INBOUND_FORWARD: {
@@ -80,8 +80,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer phone', 'their message'],
         examples: ['+96599887766', 'Do you have this vase in white?'],
         body: {
-            en: '*New customer message*\n\nFrom: {{1}}\n{{2}}',
-            ar: '*رسالة جديدة من عميل*\n\nمن: {{1}}\n{{2}}',
+            en: '*New customer message*\n\nFrom: {{1}}\n\nMessage: {{2}}\n\nReply to this message to answer them directly.',
+            ar: '*رسالة جديدة من عميل*\n\nمن: {{1}}\n\nالرسالة: {{2}}\n\nرد على هذه الرسالة للإجابة عليه مباشرة.',
         },
     },
     WHATSAPP_TEMPLATE_WELCOME: {
