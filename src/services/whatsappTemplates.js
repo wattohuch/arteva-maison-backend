@@ -36,8 +36,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number', 'total with currency', 'tracking URL'],
         examples: ['Sara', 'A7K2M9P4', '45.500 KWD', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
         body: {
-            en: 'Hello {{1}}, your ARTÉVA Maison order {{2}} is confirmed. Total: {{3}}. Track it here: {{4}}',
-            ar: 'مرحباً {{1}}، تم تأكيد طلبك {{2}} من ARTÉVA Maison. الإجمالي: {{3}}. تتبع طلبك هنا: {{4}}',
+            en: '*ARTÉVA Maison — Order Confirmed*\n\nHello {{1}}, thank you for your order.\n\nOrder number: {{2}}\nTotal: {{3}}\n\nWe are preparing it now and will let you know as soon as it is on its way.\n\nTrack your order: {{4}}',
+            ar: '*ARTÉVA Maison — تأكيد الطلب*\n\nمرحباً {{1}}، شكراً لطلبك.\n\nرقم الطلب: {{2}}\nالإجمالي: {{3}}\n\nنقوم بتجهيز طلبك الآن وسنبلغك فور شحنه.\n\nتتبع طلبك: {{4}}',
         },
     },
     WHATSAPP_TEMPLATE_STATUS_UPDATE: {
@@ -47,8 +47,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number', 'status', 'tracking URL'],
         examples: ['Sara', 'A7K2M9P4', 'shipped', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
         body: {
-            en: 'Hello {{1}}, your ARTÉVA Maison order {{2}} is now {{3}}. Track it here: {{4}}',
-            ar: 'مرحباً {{1}}، حالة طلبك {{2}} من ARTÉVA Maison الآن: {{3}}. تتبع طلبك هنا: {{4}}',
+            en: '*ARTÉVA Maison — Order Update*\n\nHello {{1}}, your order {{2}} is now {{3}}.\n\nTrack your order: {{4}}',
+            ar: '*ARTÉVA Maison — تحديث الطلب*\n\nمرحباً {{1}}، حالة طلبك {{2}} الآن: {{3}}.\n\nتتبع طلبك: {{4}}',
         },
     },
     WHATSAPP_TEMPLATE_DELIVERY_PROOF: {
@@ -58,8 +58,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number', 'proof or tracking URL'],
         examples: ['Sara', 'A7K2M9P4', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
         body: {
-            en: 'Hello {{1}}, your ARTÉVA Maison order {{2}} has been delivered. Details: {{3}}',
-            ar: 'مرحباً {{1}}، تم تسليم طلبك {{2}} من ARTÉVA Maison. التفاصيل: {{3}}',
+            en: '*ARTÉVA Maison — Delivered*\n\nHello {{1}}, your order {{2}} has been delivered.\n\nWe hope you love it. Details: {{3}}',
+            ar: '*ARTÉVA Maison — تم التسليم*\n\nمرحباً {{1}}، تم تسليم طلبك {{2}}.\n\nنتمنى أن ينال إعجابك. التفاصيل: {{3}}',
         },
     },
     WHATSAPP_TEMPLATE_OWNER_NEW_ORDER: {
@@ -69,8 +69,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['order number', 'customer', 'total', 'item count'],
         examples: ['A7K2M9P4', 'Sara', '45.500 KWD', '3'],
         body: {
-            en: 'New order {{1}} from {{2}}. Total {{3}}, {{4}} item(s).',
-            ar: 'طلب جديد {{1}} من {{2}}. الإجمالي {{3}}، عدد القطع {{4}}.',
+            en: '*New order — {{1}}*\n\nCustomer: {{2}}\nTotal: {{3}}\nItems: {{4}}',
+            ar: '*طلب جديد — {{1}}*\n\nالعميل: {{2}}\nالإجمالي: {{3}}\nعدد القطع: {{4}}',
         },
     },
     WHATSAPP_TEMPLATE_INBOUND_FORWARD: {
@@ -80,8 +80,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer phone', 'their message'],
         examples: ['+96599887766', 'Do you have this vase in white?'],
         body: {
-            en: 'Message from {{1}}: {{2}}',
-            ar: 'رسالة من {{1}}: {{2}}',
+            en: '*New customer message*\n\nFrom: {{1}}\n{{2}}',
+            ar: '*رسالة جديدة من عميل*\n\nمن: {{1}}\n{{2}}',
         },
     },
     WHATSAPP_TEMPLATE_WELCOME: {
@@ -91,8 +91,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name'],
         examples: ['Sara'],
         body: {
-            en: 'Welcome to ARTÉVA Maison, {{1}}. We are delighted to have you with us.',
-            ar: 'أهلاً بك في ARTÉVA Maison، {{1}}. يسعدنا انضمامك إلينا.',
+            en: '*Welcome to ARTÉVA Maison*\n\nHello {{1}}, we are delighted to have you with us. Our team is here whenever you need us.',
+            ar: '*أهلاً بك في ARTÉVA Maison*\n\nمرحباً {{1}}، يسعدنا انضمامك إلينا. فريقنا في خدمتك دائماً.',
         },
     },
     WHATSAPP_TEMPLATE_REFUND_RETURN: {
@@ -102,8 +102,8 @@ const TEMPLATE_CONTRACTS = {
         params: ['customer name', 'order number'],
         examples: ['Sara', 'A7K2M9P4'],
         body: {
-            en: 'Hello {{1}}, we have received your return request for order {{2}}. Our team will contact you shortly.',
-            ar: 'مرحباً {{1}}، استلمنا طلب الإرجاع الخاص بطلبك {{2}}. سيتواصل معك فريقنا قريباً.',
+            en: '*ARTÉVA Maison — Return Received*\n\nHello {{1}}, we have received your return request for order {{2}}. Our team will contact you shortly.',
+            ar: '*ARTÉVA Maison — استلام طلب الإرجاع*\n\nمرحباً {{1}}، استلمنا طلب الإرجاع لطلبك {{2}}. سيتواصل معك فريقنا قريباً.',
         },
     },
 };
