@@ -103,6 +103,11 @@ router.post('/messages/location', protect, admin, sendLimiter, wa.sendLocation);
 router.post('/messages/interactive', protect, admin, sendLimiter, wa.sendInteractive);
 router.post('/messages/:id/read', protect, admin, wa.markRead);
 
+// ── Templates ──
+// Which templates Meta has approved, and the exact env var value each one
+// should take — so nobody has to retype a name out of the dashboard.
+router.get('/templates', protect, admin, wa.listTemplates);
+
 // ── History ──
 router.get('/conversations', protect, admin, wa.listConversations);
 router.get('/conversations/:waId', protect, admin, wa.getConversation);

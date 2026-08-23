@@ -602,6 +602,59 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
         process.env.WHATSAPP_AUTO_GREET = 'false';
     }
 
+    // ══ 15. Template discovery ══════════════════════════════════════════════
+    // The placeholder count is the thing worth checking: a template approved
+    // with three variables and sent four is refused with 132000, and that only
+    // surfaces as a customer who never received their confirmation.
+    {
+        reset();
+        process.env.WHATSAPP_BUSINESS_ACCOUNT_ID = 'WABA_TEST';
+        client.refresh();
+
+        axiosState.queue = [{ data: { data: [
+            { name: 'order_confirmed', status: 'APPROVED', language: 'en', category: 'UTILITY',
+              components: [{ type: 'BODY', text: 'Hello {{1}}, order {{2}} confirmed. Total {{3}}. Track: {{4}}' }] },
+            { name: 'order_status', status: 'APPROVED', language: 'ar', category: 'UTILITY',
+              components: [{ type: 'BODY', text: 'Hi {{1}}, order {{2}} is now {{3}}.' }] },
+            { name: 'still_waiting', status: 'PENDING', language: 'en', category: 'UTILITY',
+              components: [{ type: 'BODY', text: 'Hi {{1}}' }] },
+            { name: 'button_link', status: 'APPROVED', language: 'en', category: 'UTILITY',
+              components: [
+                  { type: 'BODY', text: 'Hello {{1}}, order {{2}} delivered. {{3}}' },
+                  { type: 'BUTTONS', buttons: [{ type: 'URL', url: 'https://x/{{1}}' }] },
+              ] },
+        ] } }];
+
+        const r = await client.listTemplates();
+        check('templates are listed', r.success === true, JSON.stringify(r).slice(0, 120));
+
+        const byName = Object.fromEntries((r.templates || []).map(t => [t.name, t]));
+        check('body placeholders are counted', byName.order_confirmed?.bodyParams === 4,
+            String(byName.order_confirmed?.bodyParams));
+        check('a repeated placeholder is not double counted', byName.order_status?.bodyParams === 3,
+            String(byName.order_status?.bodyParams));
+        check('a variable inside a button URL is flagged',
+            byName.button_link?.hasButtonVariable === true);
+        check('a template still in review is reported, not hidden',
+            byName.still_waiting?.status === 'PENDING');
+        check('language is carried through', byName.order_status?.language === 'ar');
+
+        delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+        client.refresh();
+    }
+    {
+        // No WABA id configured: derive it from the phone number rather than fail.
+        reset();
+        client.refresh();
+        axiosState.queue = [
+            { data: { whatsapp_business_account: { id: 'WABA_DERIVED', name: 'ARTEVA' } } },
+            { data: { data: [] } },
+        ];
+        const r = await client.listTemplates();
+        check('the business account is resolved from the phone number when unset',
+            r.success === true && r.businessAccountId === 'WABA_DERIVED', JSON.stringify(r).slice(0, 120));
+    }
+
     await mongoose.disconnect();
     await mongod.stop();
     Module._load = originalLoad;

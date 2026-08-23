@@ -503,6 +503,89 @@ class WhatsAppCloudClient {
         return { success: true, mediaId: res.data?.id };
     }
 
+    /**
+     * The WhatsApp Business Account this phone number belongs to.
+     *
+     * Template management is addressed by WABA id, not phone number id, and
+     * WHATSAPP_BUSINESS_ACCOUNT_ID is easy to leave unset because messaging
+     * works without it. Rather than fail on a missing variable, ask Meta which
+     * account the number we are already using belongs to.
+     */
+    async resolveBusinessAccountId() {
+        if (this.businessAccountId) return { success: true, id: this.businessAccountId };
+
+        const res = await this.request(
+            `${this.apiBase}/${this.apiVersion}/${this.phoneNumberId}?fields=whatsapp_business_account{id,name}`,
+            null,
+            { method: 'get', label: 'resolveWaba', maxAttempts: 1 }
+        );
+        if (!res.success) return res;
+
+        const waba = res.data && res.data.whatsapp_business_account;
+        if (!waba || !waba.id) {
+            return {
+                success: false,
+                permanent: true,
+                error: 'Meta did not report a business account for this phone number. Set WHATSAPP_BUSINESS_ACCOUNT_ID.',
+            };
+        }
+
+        // Cache for the life of the process; it does not change.
+        this.businessAccountId = waba.id;
+        return { success: true, id: waba.id, name: waba.name };
+    }
+
+    /**
+     * Every message template on the account, with its status and placeholders.
+     *
+     * The placeholder count is what callers actually need: a template approved
+     * with three variables and sent four is rejected with 132000, and that
+     * failure is invisible until a customer says they never got their
+     * confirmation.
+     */
+    async listTemplates() {
+        const waba = await this.resolveBusinessAccountId();
+        if (!waba.success) return waba;
+
+        const res = await this.request(
+            `${this.apiBase}/${this.apiVersion}/${waba.id}/message_templates?fields=name,status,language,category,components&limit=100`,
+            null,
+            { method: 'get', label: 'listTemplates', maxAttempts: 2 }
+        );
+        if (!res.success) return res;
+
+        const templates = (res.data.data || []).map(t => {
+            const components = t.components || [];
+            const body = components.find(c => c.type === 'BODY');
+            const header = components.find(c => c.type === 'HEADER');
+            const buttons = components.find(c => c.type === 'BUTTONS');
+
+            // Meta does not report the variable count, so read it off the text.
+            const countVars = (text) => {
+                const found = String(text || '').match(/\{\{\s*\d+\s*\}\}/g) || [];
+                return new Set(found.map(v => v.replace(/\D/g, ''))).size;
+            };
+
+            return {
+                name: t.name,
+                status: t.status,
+                language: t.language,
+                category: t.category,
+                bodyParams: countVars(body && body.text),
+                headerParams: countVars(header && header.text),
+                /* A variable inside a button URL needs buttonParams rather than
+                 * bodyParams — a different payload shape, and a common reason a
+                 * template that looks right is rejected. */
+                hasButtonVariable: Boolean(
+                    buttons && (buttons.buttons || []).some(b => /\{\{\s*\d+\s*\}\}/.test(b.url || ''))
+                ),
+                bodyText: body && body.text,
+            };
+        });
+
+        return { success: true, businessAccountId: waba.id, templates };
+    }
+
     /** Configuration report for the health endpoint. Never returns a secret. */
     describe() {
         return {

@@ -311,6 +311,135 @@ const getMessage = asyncHandler(async (req, res) => {
     res.json({ success: true, data: message });
 });
 
+/**
+ * What each notification type sends, so an approved template can be checked
+ * against it before it is put into production.
+ *
+ * A template approved with three variables and sent four is rejected with
+ * 132000, and nothing surfaces that until a customer says their confirmation
+ * never arrived. Comparing the counts here turns a silent production failure
+ * into a line on a screen.
+ *
+ * Keep in step with the templateParams arrays in whatsappService.
+ */
+const TEMPLATE_CONTRACTS = {
+    WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER: {
+        type: 'customer_new_order',
+        params: ['customer name', 'order number', 'total with currency', 'tracking URL'],
+        sample: 'Hello {{1}}, your ARTÉVA order {{2}} is confirmed. Total {{3}}. Track it: {{4}}',
+    },
+    WHATSAPP_TEMPLATE_STATUS_UPDATE: {
+        type: 'status_update',
+        params: ['customer name', 'order number', 'status', 'tracking URL'],
+        sample: 'Hello {{1}}, your ARTÉVA order {{2}} is now {{3}}. Track it: {{4}}',
+    },
+    WHATSAPP_TEMPLATE_DELIVERY_PROOF: {
+        type: 'delivery_proof',
+        params: ['customer name', 'order number', 'proof or tracking URL'],
+        sample: 'Hello {{1}}, your ARTÉVA order {{2}} has been delivered. Details: {{3}}',
+    },
+    WHATSAPP_TEMPLATE_OWNER_NEW_ORDER: {
+        type: 'owner_new_order',
+        params: ['order number', 'customer', 'total', 'item count'],
+        sample: 'New order {{1}} from {{2}}. Total {{3}}, {{4}} item(s).',
+    },
+    WHATSAPP_TEMPLATE_INBOUND_FORWARD: {
+        type: 'inbound_forward',
+        params: ['customer phone', 'their message'],
+        sample: 'Message from {{1}}: {{2}}',
+    },
+};
+
+// @desc    Approved WhatsApp templates, checked against what the code sends
+// @route   GET /api/whatsapp/templates
+// @access  Private/Admin
+//
+// Exists so nobody has to read template names out of the Meta dashboard and
+// retype them. It reports the exact value each environment variable should
+// take, and refuses to recommend a template whose placeholder count does not
+// match the parameters the code will supply.
+const listTemplates = asyncHandler(async (req, res) => {
+    const result = await client.listTemplates();
+
+    if (!result.success) {
+        return res.status(result.permanent ? 422 : 502).json({
+            success: false,
+            message: result.error,
+            hint: 'Needs WHATSAPP_ACCESS_TOKEN with whatsapp_business_management, and either WHATSAPP_BUSINESS_ACCOUNT_ID or a phone number Meta can resolve to one.',
+        });
+    }
+
+    const approved = result.templates.filter(t => t.status === 'APPROVED');
+
+    /* Match each contract to an approved template. Name matching is a
+     * convenience — the point is the parameter check, which is what actually
+     * decides whether a send will work. */
+    const suggestions = Object.entries(TEMPLATE_CONTRACTS).map(([envVar, contract]) => {
+        const expected = contract.params.length;
+        const candidates = approved
+            .map(t => ({
+                ...t,
+                matchesParams: t.bodyParams === expected,
+                // A variable in a button URL is a different payload shape and
+                // is not something the notification paths currently send.
+                needsButtonWiring: t.hasButtonVariable,
+            }))
+            .sort((a, b) => Number(b.matchesParams) - Number(a.matchesParams));
+
+        const usable = candidates.filter(c => c.matchesParams && !c.needsButtonWiring);
+        const current = process.env[envVar] || null;
+
+        let verdict;
+        if (current) {
+            const inUse = approved.find(t => t.name === current);
+            if (!inUse) {
+                verdict = `SET BUT NOT APPROVED — "${current}" is not an approved template on this account. Every send of this type will fail with 132001.`;
+            } else if (inUse.bodyParams !== expected) {
+                verdict = `SET BUT MISMATCHED — "${current}" takes ${inUse.bodyParams} variable(s); the code sends ${expected}. Every send will fail with 132000.`;
+            } else {
+                verdict = 'OK';
+            }
+        } else {
+            verdict = usable.length
+                ? `Not set. ${usable.map(u => `"${u.name}" (${u.language})`).join(' or ')} would fit.`
+                : 'Not set, and no approved template takes the right number of variables. Free-form text is used, which only reaches a customer within 24h of their own message.';
+        }
+
+        return {
+            envVar,
+            notificationType: contract.type,
+            expectedParams: expected,
+            paramMeaning: contract.params,
+            suggestedBody: contract.sample,
+            currentValue: current,
+            verdict,
+            fits: usable.map(u => ({ name: u.name, language: u.language, bodyParams: u.bodyParams })),
+        };
+    });
+
+    res.json({
+        success: true,
+        data: {
+            businessAccountId: result.businessAccountId,
+            counts: {
+                total: result.templates.length,
+                approved: approved.length,
+                pending: result.templates.filter(t => t.status === 'PENDING').length,
+                rejected: result.templates.filter(t => t.status === 'REJECTED').length,
+            },
+            templates: result.templates.map(t => ({
+                name: t.name,
+                status: t.status,
+                language: t.language,
+                category: t.category,
+                bodyParams: t.bodyParams,
+                hasButtonVariable: t.hasButtonVariable,
+            })),
+            suggestions,
+        },
+    });
+});
+
 // @desc    Is the WhatsApp integration configured and working?
 // @route   GET /api/whatsapp/health
 // @access  Public — reports configuration state only, never a credential
@@ -352,6 +481,7 @@ const health = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+    listTemplates,
     sendText,
     sendTemplate,
     sendMedia,
