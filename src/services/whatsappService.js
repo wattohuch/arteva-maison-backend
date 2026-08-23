@@ -250,20 +250,28 @@ class WhatsAppService {
      * keeps sending free-form text exactly as it does today, so adding this
      * changes no behaviour until a template is actually named.
      */
-    templateFor(type) {
+    templateFor(type, lang) {
         const key = `WHATSAPP_TEMPLATE_${String(type).toUpperCase()}`;
         const name = process.env[key];
         if (!name) return null;
         return {
             name,
-            language: process.env[`${key}_LANG`] || process.env.WHATSAPP_TEMPLATE_LANG || 'en',
+            /* A per-type _LANG is an explicit operator override and wins — it
+             * is how you pin a type to one language when only that one is
+             * approved. Otherwise the recipient's own language decides, and
+             * the global default is the fallback for callers that have no
+             * language to offer. */
+            language: process.env[`${key}_LANG`]
+                || lang
+                || process.env.WHATSAPP_TEMPLATE_LANG
+                || 'en',
         };
     }
 
     /**
      * Send WhatsApp message (tries Meta official API, falls back to print-station queue)
      */
-    async sendMessage(to, message, type = 'test', orderId = null, templateParams = null) {
+    async sendMessage(to, message, type = 'test', orderId = null, templateParams = null, lang = null) {
         const phone = this.formatPhone(to);
         if (!phone) {
             console.warn('⚠️ Invalid phone number:', to);
@@ -291,7 +299,7 @@ class WhatsAppService {
                  * form Meta will deliver outside the 24-hour service window,
                  * which is where every order notification falls. With nothing
                  * configured this is exactly the free-form send it always was. */
-                const template = templateParams ? this.templateFor(type) : null;
+                const template = templateParams ? this.templateFor(type, lang) : null;
 
                 let responseData;
                 if (template) {
@@ -595,7 +603,7 @@ ${order.notes ? `📝 *${isArabic ? 'ملاحظات' : 'Notes'}:* ${order.notes}
         for (let i = 0; i < ownerPhones.length; i++) {
             const phone = ownerPhones[i];
             try {
-                const result = await this.sendMessage(phone, message, 'owner_new_order', order._id, templateParams);
+                const result = await this.sendMessage(phone, message, 'owner_new_order', order._id, templateParams, isArabic ? 'ar' : 'en');
                 results.push(result);
                 console.log(`[WA-OWNER] Phone ${i+1}/${ownerPhones.length} (${phone}): ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
             } catch (err) {
@@ -802,7 +810,8 @@ We will notify you when your order ships.
         ];
 
         const result = await this.sendMessage(
-            phone, message, 'customer_new_order', order._id, templateParams
+            phone, message, 'customer_new_order', order._id, templateParams,
+            user.language === 'ar' ? 'ar' : 'en'
         );
         console.log(`[WA-CUSTOMER] Result for ${order.orderNumber}: ${result.success ? '✅ Delivered' : '❌ Failed: ' + (result.error || 'unknown')}`);
         return result;
@@ -915,7 +924,8 @@ ${linksAr}`;
         ];
 
         const result = await this.sendMessage(
-            phone, message, 'status_update', order._id, templateParams
+            phone, message, 'status_update', order._id, templateParams,
+            user.language === 'ar' ? 'ar' : 'en'
         );
         console.log(`[WA-CUSTOMER] Status change result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
@@ -970,7 +980,8 @@ ${fullProofUrl ? `📸 صورة التوصيل: ${fullProofUrl}\n` : ''}📄 ع�
         const templateParams = [name, order.orderNumber, fullProofUrl || this.buildTrackingUrl(order)];
 
         const result = await this.sendMessage(
-            phone, message, 'delivery_proof', order._id, templateParams
+            phone, message, 'delivery_proof', order._id, templateParams,
+            user.language === 'ar' ? 'ar' : 'en'
         );
         console.log(`[WA-CUSTOMER] Delivery result for ${order.orderNumber}: ${result.success ? '✅' : '❌ ' + (result.error || 'unknown')}`);
         return result;
@@ -1076,7 +1087,8 @@ Our team is always here to assist you and ensure you have a seamless shopping ex
          * Configure with WHATSAPP_TEMPLATE_WELCOME. Registering is not a message
          * to us, so this too falls outside the 24-hour window. */
         const result = await this.sendMessage(
-            rawPhone, message, 'welcome', null, [user.name || 'there']
+            rawPhone, message, 'welcome', null, [user.name || 'there'],
+            isArabic ? 'ar' : 'en'
         );
         console.log(`[WA-WELCOME] Result for ${user.name || user.email}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
         return result;
@@ -1123,7 +1135,8 @@ Arteva Maison`;
          *   "Hello {{1}}, we received your return request for order {{2}}."
          * Configure with WHATSAPP_TEMPLATE_REFUND_RETURN. */
         const result = await this.sendMessage(
-            rawPhone, message, 'refund_return', order._id, [name, order.orderNumber]
+            rawPhone, message, 'refund_return', order._id, [name, order.orderNumber],
+            isArabic ? 'ar' : 'en'
         );
         console.log(`[WA-REFUND] Result for ${order.orderNumber}: ${result.success ? '✅ Queued' : '❌ ' + (result.error || 'unknown')}`);
         return result;

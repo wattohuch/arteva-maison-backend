@@ -806,6 +806,38 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
         delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
         client.refresh();
     }
+    // == 19. Template language follows the recipient ========================
+    // The free-form messages are bilingual; a template is one language per
+    // send. Governed by a single global, turning templates on would hand every
+    // Arabic-speaking customer English — a regression on today's behaviour.
+    {
+        reset();
+        const svc = require('../src/services/whatsappService');
+
+        process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER = 'arteva_order_confirmed';
+        process.env.WHATSAPP_TEMPLATE_LANG = 'en';
+        delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER_LANG;
+
+        check('an Arabic customer gets the Arabic template',
+            svc.templateFor('customer_new_order', 'ar').language === 'ar');
+        check('an English customer gets the English template',
+            svc.templateFor('customer_new_order', 'en').language === 'en');
+        check('no language given falls back to the global default',
+            svc.templateFor('customer_new_order').language === 'en');
+
+        // The per-type override is how you pin a type when only one language
+        // is approved, so it has to beat the recipient's own language.
+        process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER_LANG = 'en';
+        check('a per-type _LANG override beats the recipient language',
+            svc.templateFor('customer_new_order', 'ar').language === 'en');
+        delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER_LANG;
+
+        check('an unconfigured type still sends free-form',
+            svc.templateFor('status_update', 'ar') === null);
+
+        delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER;
+        delete process.env.WHATSAPP_TEMPLATE_LANG;
+    }
     await mongoose.disconnect();
     await mongod.stop();
     Module._load = originalLoad;
