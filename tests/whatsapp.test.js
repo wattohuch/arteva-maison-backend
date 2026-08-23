@@ -697,6 +697,73 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
         client.refresh();
     }
 
+    // == 17. Boot-time provisioning ==========================================
+    // The flag exists because the person who can reach Meta and the person
+    // holding an admin session are not always at the same machine. It must be
+    // inert unless asked, must not duplicate on restart, and must never stop
+    // the shop booting.
+    {
+        reset();
+        process.env.WHATSAPP_BUSINESS_ACCOUNT_ID = 'WABA_TEST';
+        client.refresh();
+        const tpl = require('../src/services/whatsappTemplates');
+
+        delete process.env.WHATSAPP_PROVISION_TEMPLATES;
+        await tpl.provisionOnBoot();
+        check('boot provisioning is off unless asked', axiosState.calls.length === 0);
+
+        // Dry run reaches Meta to read the list, but files nothing.
+        process.env.WHATSAPP_PROVISION_TEMPLATES = 'true';
+        process.env.WHATSAPP_PROVISION_DRY_RUN = 'true';
+        axiosState.queue = [{ data: { data: [] } }];
+        await tpl.provisionOnBoot();
+        check('a dry run submits nothing',
+            axiosState.calls.filter(c => c.method === 'post').length === 0);
+
+        // A restart with everything already filed must not resubmit.
+        reset();
+        process.env.WHATSAPP_PROVISION_DRY_RUN = 'false';
+        const all = [];
+        for (const c of Object.values(tpl.TEMPLATE_CONTRACTS)) {
+            for (const lang of tpl.DEFAULT_TEMPLATE_LANGS) {
+                all.push({ name: c.name, language: lang, status: 'APPROVED', category: 'UTILITY',
+                    components: [{ type: 'BODY', text: c.body[lang] }] });
+            }
+        }
+        axiosState.queue = [{ data: { data: all } }];
+        await tpl.provisionOnBoot();
+        check('a restart does not resubmit what is already filed',
+            axiosState.calls.filter(c => c.method === 'post').length === 0);
+
+        // Meta unreachable: reported, never thrown.
+        reset();
+        axiosState.queue = [{ error: { response: { status: 401, data: { error: { code: 190, message: 'Bad token' } } } } }];
+        let threw = false;
+        try { await tpl.provisionOnBoot(); } catch (e) { threw = true; }
+        check('a Meta failure does not stop the boot', threw === false);
+
+        // Every contract's example count matches its placeholders, in every
+        // language. A mismatch here is a template Meta refuses to accept.
+        let contractsOk = true;
+        let badContract = '';
+        for (const [envVar, c] of Object.entries(tpl.TEMPLATE_CONTRACTS)) {
+            for (const [lang, body] of Object.entries(c.body)) {
+                const vars = new Set((body.match(/\{\{\s*\d+\s*\}\}/g) || []).map(v => v.replace(/\D/g, '')));
+                if (vars.size !== c.examples.length || vars.size !== c.params.length) {
+                    contractsOk = false;
+                    badContract = envVar + ':' + lang + ' has ' + vars.size + ' vars, '
+                        + c.examples.length + ' examples, ' + c.params.length + ' params';
+                }
+            }
+        }
+        check('every contract agrees on its variable count in every language',
+            contractsOk, badContract);
+
+        delete process.env.WHATSAPP_PROVISION_TEMPLATES;
+        delete process.env.WHATSAPP_PROVISION_DRY_RUN;
+        delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+        client.refresh();
+    }
     await mongoose.disconnect();
     await mongod.stop();
     Module._load = originalLoad;

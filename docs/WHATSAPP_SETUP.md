@@ -202,6 +202,23 @@ what the code actually sends. The check matters: a template approved with three
 variables that the code sends four to is rejected with `132000` on every send,
 and the only symptom is a customer saying their confirmation never arrived.
 
+#### Or from an environment variable, with no API call at all
+
+Set these on the host and restart. The server files the templates during
+start-up and prints the outcome to the log:
+
+```env
+WHATSAPP_PROVISION_TEMPLATES=true
+WHATSAPP_PROVISION_DRY_RUN=true   # optional: report only, submit nothing
+```
+
+Useful when the person who can reach Meta and the person holding an admin
+session are not at the same machine. It is idempotent, so a restart never
+files a second copy, and it never blocks the boot — if Meta is unreachable the
+shop still starts and the failure is logged. Remove the flag once the log says
+there is nothing left to file.
+
+Watch for lines tagged `[WA-TPL]`.
 #### From the admin dashboard, without a terminal
 
 Sign in to the admin dashboard as an owner or admin, open the browser console

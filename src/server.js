@@ -314,6 +314,12 @@ server.listen(PORT, async () => {
      * confirmation quietly fails is worse than one that is obviously off. */
     reportWhatsAppConfig();
 
+    /* Optional one-off: file the message templates with Meta. Guarded by
+     * WHATSAPP_PROVISION_TEMPLATES so it only runs when asked, idempotent
+     * so a restart cannot duplicate a submission, and non-blocking so a
+     * Meta outage cannot stop the shop booting. */
+    require('./services/whatsappTemplates').provisionOnBoot();
+
     /* Keep the WhatsApp token alive.
      *
      * Meta's long-lived tokens last 60 days. Left alone, WhatsApp stops dead
