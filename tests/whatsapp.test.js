@@ -655,6 +655,48 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
             r.success === true && r.businessAccountId === 'WABA_DERIVED', JSON.stringify(r).slice(0, 120));
     }
 
+    // ══ 16. Template provisioning ═════════════════════════════════
+    // Filing templates over the API is what lets this be done without a
+    // browser signed into Business Manager. Two things must hold: Meta gets a
+    // sample for every placeholder (it rejects the submission otherwise), and
+    // re-running never files a second copy of a template already on record.
+    {
+        reset();
+        process.env.WHATSAPP_BUSINESS_ACCOUNT_ID = 'WABA_TEST';
+        client.refresh();
+
+        const bad = await client.createTemplate({
+            name: 'two_vars_one_sample', language: 'en', category: 'UTILITY',
+            body: 'Hi {{1}}, order {{2}}', examples: ['Sara'],
+        });
+        check('a missing example is refused before Meta sees it',
+            bad.success === false && /2 placeholder/.test(bad.error || ''), bad.error);
+        check('nothing was sent for the refused template', axiosState.calls.length === 0);
+
+        const badName = await client.createTemplate({
+            name: 'Not A Valid Name', language: 'en', body: 'hello', examples: [],
+        });
+        check('an invalid template name is refused', badName.success === false);
+
+        axiosState.queue = [{ data: { id: '1', status: 'PENDING', category: 'UTILITY' } }];
+        const ok = await client.createTemplate({
+            name: 'arteva_order_status', language: 'ar', category: 'UTILITY',
+            body: 'x {{1}} {{2}} {{3}} {{4}}', examples: ['a', 'b', 'c', 'd'],
+        });
+        check('a well formed template is submitted', ok.success === true, ok.error);
+
+        const sent = axiosState.calls[axiosState.calls.length - 1];
+        const body = sent.data.components.find(c => c.type === 'BODY');
+        check('Meta receives one sample row per placeholder',
+            Array.isArray(body.example?.body_text?.[0]) && body.example.body_text[0].length === 4);
+        check('the language is submitted as asked', sent.data.language === 'ar');
+        check('the request targets the business account, not the phone number',
+            /WABA_TEST\/message_templates/.test(sent.url), sent.url);
+
+        delete process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+        client.refresh();
+    }
+
     await mongoose.disconnect();
     await mongod.stop();
     Module._load = originalLoad;

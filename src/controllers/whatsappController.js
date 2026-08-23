@@ -325,30 +325,201 @@ const getMessage = asyncHandler(async (req, res) => {
 const TEMPLATE_CONTRACTS = {
     WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER: {
         type: 'customer_new_order',
+        name: 'arteva_order_confirmed',
+        category: 'UTILITY',
         params: ['customer name', 'order number', 'total with currency', 'tracking URL'],
-        sample: 'Hello {{1}}, your ARTÉVA order {{2}} is confirmed. Total {{3}}. Track it: {{4}}',
+        examples: ['Sara', 'A7K2M9P4', '45.500 KWD', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
+        body: {
+            en: 'Hello {{1}}, your ARTÉVA Maison order {{2}} is confirmed. Total: {{3}}. Track it here: {{4}}',
+            ar: 'مرحباً {{1}}، تم تأكيد طلبك {{2}} من ARTÉVA Maison. الإجمالي: {{3}}. تتبع طلبك هنا: {{4}}',
+        },
     },
     WHATSAPP_TEMPLATE_STATUS_UPDATE: {
         type: 'status_update',
+        name: 'arteva_order_status',
+        category: 'UTILITY',
         params: ['customer name', 'order number', 'status', 'tracking URL'],
-        sample: 'Hello {{1}}, your ARTÉVA order {{2}} is now {{3}}. Track it: {{4}}',
+        examples: ['Sara', 'A7K2M9P4', 'shipped', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
+        body: {
+            en: 'Hello {{1}}, your ARTÉVA Maison order {{2}} is now {{3}}. Track it here: {{4}}',
+            ar: 'مرحباً {{1}}، حالة طلبك {{2}} من ARTÉVA Maison الآن: {{3}}. تتبع طلبك هنا: {{4}}',
+        },
     },
     WHATSAPP_TEMPLATE_DELIVERY_PROOF: {
         type: 'delivery_proof',
+        name: 'arteva_order_delivered',
+        category: 'UTILITY',
         params: ['customer name', 'order number', 'proof or tracking URL'],
-        sample: 'Hello {{1}}, your ARTÉVA order {{2}} has been delivered. Details: {{3}}',
+        examples: ['Sara', 'A7K2M9P4', 'https://www.artevamaisonkw.com/track/A7K2M9P4'],
+        body: {
+            en: 'Hello {{1}}, your ARTÉVA Maison order {{2}} has been delivered. Details: {{3}}',
+            ar: 'مرحباً {{1}}، تم تسليم طلبك {{2}} من ARTÉVA Maison. التفاصيل: {{3}}',
+        },
     },
     WHATSAPP_TEMPLATE_OWNER_NEW_ORDER: {
         type: 'owner_new_order',
+        name: 'arteva_owner_new_order',
+        category: 'UTILITY',
         params: ['order number', 'customer', 'total', 'item count'],
-        sample: 'New order {{1}} from {{2}}. Total {{3}}, {{4}} item(s).',
+        examples: ['A7K2M9P4', 'Sara', '45.500 KWD', '3'],
+        body: {
+            en: 'New order {{1}} from {{2}}. Total {{3}}, {{4}} item(s).',
+            ar: 'طلب جديد {{1}} من {{2}}. الإجمالي {{3}}، عدد القطع {{4}}.',
+        },
     },
     WHATSAPP_TEMPLATE_INBOUND_FORWARD: {
         type: 'inbound_forward',
+        name: 'arteva_customer_message',
+        category: 'UTILITY',
         params: ['customer phone', 'their message'],
-        sample: 'Message from {{1}}: {{2}}',
+        examples: ['+96599887766', 'Do you have this vase in white?'],
+        body: {
+            en: 'Message from {{1}}: {{2}}',
+            ar: 'رسالة من {{1}}: {{2}}',
+        },
+    },
+    WHATSAPP_TEMPLATE_WELCOME: {
+        type: 'welcome',
+        name: 'arteva_welcome',
+        category: 'UTILITY',
+        params: ['customer name'],
+        examples: ['Sara'],
+        body: {
+            en: 'Welcome to ARTÉVA Maison, {{1}}. We are delighted to have you with us.',
+            ar: 'أهلاً بك في ARTÉVA Maison، {{1}}. يسعدنا انضمامك إلينا.',
+        },
+    },
+    WHATSAPP_TEMPLATE_REFUND_RETURN: {
+        type: 'refund_return',
+        name: 'arteva_return_received',
+        category: 'UTILITY',
+        params: ['customer name', 'order number'],
+        examples: ['Sara', 'A7K2M9P4'],
+        body: {
+            en: 'Hello {{1}}, we have received your return request for order {{2}}. Our team will contact you shortly.',
+            ar: 'مرحباً {{1}}، استلمنا طلب الإرجاع الخاص بطلبك {{2}}. سيتواصل معك فريقنا قريباً.',
+        },
     },
 };
+
+/** The language a template is submitted in when nothing says otherwise. */
+const DEFAULT_TEMPLATE_LANGS = ['en', 'ar'];
+
+// @desc    Submit the templates this shop needs to Meta for review
+// @route   POST /api/whatsapp/templates/provision
+// @access  Private/Admin
+//
+// Without approved templates the shop cannot message a customer who has not
+// written to it in the last 24 hours, which is most of them — an order
+// confirmation for a first-time buyer simply never arrives. Creating them
+// over the Graph API means this does not depend on having a browser signed
+// into Business Manager.
+//
+// Idempotent: anything already on the account is left alone, so re-running
+// after a partial failure submits only what is missing rather than filing
+// duplicates for review.
+//
+// Body (all optional):
+//   languages  string[]  default ['en','ar']
+//   only       string[]  restrict to these env var names
+//   dryRun     boolean   report what would be submitted, send nothing
+const provisionTemplates = asyncHandler(async (req, res) => {
+    const existing = await client.listTemplates();
+    if (!existing.success) {
+        return res.status(existing.permanent ? 422 : 502).json({
+            success: false,
+            message: existing.error,
+            hint: 'Needs WHATSAPP_ACCESS_TOKEN with whatsapp_business_management.',
+        });
+    }
+
+    const requested = Array.isArray(req.body?.languages) && req.body.languages.length
+        ? req.body.languages.map(l => String(l).toLowerCase())
+        : DEFAULT_TEMPLATE_LANGS;
+
+    const only = Array.isArray(req.body?.only) && req.body.only.length
+        ? new Set(req.body.only.map(String))
+        : null;
+
+    const dryRun = req.body?.dryRun === true;
+
+    /* A template name is unique per account but holds one version per
+     * language, so "already there" is a name-and-language question. */
+    const present = new Set(existing.templates.map(t => `${t.name}:${t.language}`));
+
+    const created = [];
+    const skipped = [];
+    const failed = [];
+
+    for (const [envVar, contract] of Object.entries(TEMPLATE_CONTRACTS)) {
+        if (only && !only.has(envVar)) continue;
+
+        for (const lang of requested) {
+            const body = contract.body[lang];
+            if (!body) {
+                skipped.push({ envVar, name: contract.name, language: lang, reason: 'no wording written for this language' });
+                continue;
+            }
+
+            if (present.has(`${contract.name}:${lang}`)) {
+                skipped.push({ envVar, name: contract.name, language: lang, reason: 'already on the account' });
+                continue;
+            }
+
+            if (dryRun) {
+                created.push({ envVar, name: contract.name, language: lang, status: 'WOULD_SUBMIT', body });
+                continue;
+            }
+
+            const result = await client.createTemplate({
+                name: contract.name,
+                language: lang,
+                category: contract.category,
+                body,
+                examples: contract.examples,
+            });
+
+            if (result.success) {
+                created.push({
+                    envVar,
+                    name: result.name,
+                    language: result.language,
+                    status: result.status,
+                    category: result.category,
+                });
+            } else {
+                /* Reported, not thrown. One rejected language must not stop
+                 * the other six templates from being filed. */
+                failed.push({ envVar, name: contract.name, language: lang, error: result.error, code: result.code });
+            }
+        }
+    }
+
+    // What to set once Meta approves them. The name is the same in every
+    // language; the language is a separate variable.
+    const envToSet = {};
+    for (const [envVar, contract] of Object.entries(TEMPLATE_CONTRACTS)) {
+        if (only && !only.has(envVar)) continue;
+        envToSet[envVar] = contract.name;
+    }
+
+    res.json({
+        success: failed.length === 0,
+        data: {
+            businessAccountId: existing.businessAccountId,
+            dryRun,
+            languages: requested,
+            counts: { created: created.length, skipped: skipped.length, failed: failed.length },
+            created,
+            skipped,
+            failed,
+            envToSet,
+            nextStep: dryRun
+                ? 'Nothing was submitted. Re-send without dryRun to file these for review.'
+                : 'Meta reviews these, usually within minutes to a few hours. Set the environment variables above once they read APPROVED in GET /api/whatsapp/templates.',
+        },
+    });
+});
 
 // @desc    Approved WhatsApp templates, checked against what the code sends
 // @route   GET /api/whatsapp/templates
@@ -410,7 +581,7 @@ const listTemplates = asyncHandler(async (req, res) => {
             notificationType: contract.type,
             expectedParams: expected,
             paramMeaning: contract.params,
-            suggestedBody: contract.sample,
+            suggestedBody: contract.body.en,
             currentValue: current,
             verdict,
             fits: usable.map(u => ({ name: u.name, language: u.language, bodyParams: u.bodyParams })),
@@ -482,6 +653,7 @@ const health = asyncHandler(async (req, res) => {
 
 module.exports = {
     listTemplates,
+    provisionTemplates,
     sendText,
     sendTemplate,
     sendMedia,

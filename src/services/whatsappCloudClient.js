@@ -543,6 +543,90 @@ class WhatsAppCloudClient {
      * failure is invisible until a customer says they never got their
      * confirmation.
      */
+    /**
+     * Submit a message template to Meta for review.
+     *
+     * Templates are the only way to reach a customer outside the 24-hour
+     * service window, so an unapproved account cannot send an order
+     * confirmation at all. Creating them over the API means it can be done
+     * from wherever the token is, rather than from the browser session that
+     * happens to be signed into Business Manager.
+     *
+     * The example values are not decoration. Meta rejects a submission whose
+     * body contains {{1}} without a sample for it, and the rejection arrives
+     * as a generic parameter error, so they are derived from the body rather
+     * than left to the caller to remember.
+     *
+     * @param {object} spec
+     * @param {string} spec.name      lowercase, digits and underscores only
+     * @param {string} spec.language  e.g. 'en' or 'ar'
+     * @param {string} spec.category  UTILITY | MARKETING | AUTHENTICATION
+     * @param {string} spec.body      body text, using {{1}}, {{2}}, …
+     * @param {string[]} spec.examples one sample per placeholder, in order
+     * @param {string} [spec.footer]
+     */
+    async createTemplate(spec) {
+        const waba = await this.resolveBusinessAccountId();
+        if (!waba.success) return waba;
+
+        const name = String(spec.name || '').trim();
+        if (!/^[a-z0-9_]{1,512}$/.test(name)) {
+            return {
+                success: false,
+                permanent: true,
+                error: `Template name "${name}" is invalid: lowercase letters, digits and underscores only.`,
+            };
+        }
+
+        const body = String(spec.body || '');
+        const placeholders = new Set((body.match(/\{\{\s*\d+\s*\}\}/g) || [])
+            .map(v => v.replace(/\D/g, '')));
+        const examples = Array.isArray(spec.examples) ? spec.examples : [];
+
+        if (placeholders.size !== examples.length) {
+            // Caught here rather than at Meta, where it returns a parameter
+            // error that does not say which template or which variable.
+            return {
+                success: false,
+                permanent: true,
+                error: `Template "${name}" has ${placeholders.size} placeholder(s) but ${examples.length} example(s).`,
+            };
+        }
+
+        const components = [{
+            type: 'BODY',
+            text: body,
+            // Meta wants one row of samples: [[v1, v2, …]].
+            ...(examples.length ? { example: { body_text: [examples.map(String)] } } : {}),
+        }];
+        if (spec.footer) components.push({ type: 'FOOTER', text: String(spec.footer) });
+
+        const res = await this.request(
+            `${this.apiBase}/${this.apiVersion}/${waba.id}/message_templates`,
+            {
+                name,
+                language: spec.language || 'en',
+                category: spec.category || 'UTILITY',
+                components,
+            },
+            { label: `createTemplate:${name}`, maxAttempts: 1 }
+        );
+        if (!res.success) return res;
+
+        return {
+            success: true,
+            id: res.data && res.data.id,
+            name,
+            language: spec.language || 'en',
+            /* Meta may file a template under a category other than the one
+             * requested. Reporting what it actually chose matters: a UTILITY
+             * template recategorised as MARKETING can be blocked by a
+             * customer's marketing opt-out. */
+            category: (res.data && res.data.category) || spec.category || 'UTILITY',
+            status: (res.data && res.data.status) || 'PENDING',
+        };
+    }
+
     async listTemplates() {
         const waba = await this.resolveBusinessAccountId();
         if (!waba.success) return waba;

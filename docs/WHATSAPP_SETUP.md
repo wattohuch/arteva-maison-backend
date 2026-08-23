@@ -163,6 +163,72 @@ message**. Every order notification falls outside that window, so it needs an
 approved template. Without one, Meta rejects the send with code `131047` —
 the server records it as failed and logs the reason.
 
+### Option A — over the API (no dashboard needed)
+
+Templates can be filed without a browser signed into Business Manager. Two
+admin endpoints do it:
+
+```bash
+# See what would be submitted, without submitting anything
+curl -X POST https://<your-api>/api/whatsapp/templates/provision \
+  -H "Authorization: Bearer <admin JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"dryRun": true}'
+
+# File them for review
+curl -X POST https://<your-api>/api/whatsapp/templates/provision \
+  -H "Authorization: Bearer <admin JWT>" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+This submits all seven templates in English and Arabic. It is idempotent:
+anything already on the account is skipped, so re-running after a partial
+failure files only what is missing rather than queueing duplicates for review.
+
+Optional body fields: `languages` (default `["en","ar"]`), `only` (restrict to
+named env vars), `dryRun`.
+
+The access token needs the **`whatsapp_business_management`** permission —
+`whatsapp_business_messaging` alone can send but cannot manage templates.
+
+Then watch for approval, which usually takes minutes:
+
+```bash
+curl https://<your-api>/api/whatsapp/templates -H "Authorization: Bearer <admin JWT>"
+```
+
+That reports each template's status *and* checks its placeholder count against
+what the code actually sends. The check matters: a template approved with three
+variables that the code sends four to is rejected with `132000` on every send,
+and the only symptom is a customer saying their confirmation never arrived.
+
+#### From the admin dashboard, without a terminal
+
+Sign in to the admin dashboard as an owner or admin, open the browser console
+(F12) and paste:
+
+```js
+await (async () => {
+  const base = location.hostname === 'localhost'
+    ? 'http://localhost:5000/api'
+    : 'https://arteva-maison-backend-gy1x.onrender.com/api';
+  const r = await fetch(base + '/whatsapp/templates/provision', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + localStorage.getItem('arteva_token'),
+    },
+    body: JSON.stringify({ dryRun: true }),   // set false to actually submit
+  });
+  console.table((await r.json()).data.created);
+})();
+```
+
+It reuses the session already in the browser, so no token has to be copied
+anywhere. Change `dryRun` to `false` once the listing looks right.
+
+### Option B — by hand in the dashboard
+
 1. <https://business.facebook.com/wa/manage/message-templates/>
 2. **Create template** → category **Utility** (not Marketing — Utility is
    approved faster and costs less)
@@ -172,20 +238,32 @@ the server records it as failed and logs the reason.
    Hello {{1}}, your ARTÉVA order {{2}} is confirmed. Total {{3}}. Track it here: {{4}}
    ```
 
-4. Once approved, name it in `.env`:
+### Setting the variables
 
-   ```env
-   WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER=order_confirmed
-   WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER_LANG=en
-   ```
+Once approved, name each template in `.env`. The name is the same across
+languages; the language is its own variable:
+
+```env
+WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER=arteva_order_confirmed
+WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER_LANG=en
+```
 
 With nothing configured the system keeps sending free-form text, which works
 inside the 24-hour window and fails outside it. Configuring a template is what
 makes proactive notification reliable.
 
-Supported keys: `WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER`,
-`WHATSAPP_TEMPLATE_STATUS_UPDATE`, `WHATSAPP_TEMPLATE_DELIVERY_PROOF`,
-`WHATSAPP_TEMPLATE_OWNER_NEW_ORDER`, `WHATSAPP_TEMPLATE_INBOUND_FORWARD`.
+| Env var | Template filed as | Variables |
+|---|---|---|
+| `WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER` | `arteva_order_confirmed` | name, order no., total, tracking URL |
+| `WHATSAPP_TEMPLATE_STATUS_UPDATE` | `arteva_order_status` | name, order no., status, tracking URL |
+| `WHATSAPP_TEMPLATE_DELIVERY_PROOF` | `arteva_order_delivered` | name, order no., proof URL |
+| `WHATSAPP_TEMPLATE_OWNER_NEW_ORDER` | `arteva_owner_new_order` | order no., customer, total, item count |
+| `WHATSAPP_TEMPLATE_INBOUND_FORWARD` | `arteva_customer_message` | customer phone, message |
+| `WHATSAPP_TEMPLATE_WELCOME` | `arteva_welcome` | name |
+| `WHATSAPP_TEMPLATE_REFUND_RETURN` | `arteva_return_received` | name, order no. |
+
+Each also takes a `_LANG` suffix, falling back to `WHATSAPP_TEMPLATE_LANG`,
+then `en`.
 
 ---
 

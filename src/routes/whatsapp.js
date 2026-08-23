@@ -107,6 +107,9 @@ router.post('/messages/:id/read', protect, admin, wa.markRead);
 // Which templates Meta has approved, and the exact env var value each one
 // should take — so nobody has to retype a name out of the dashboard.
 router.get('/templates', protect, admin, wa.listTemplates);
+// Files the templates this shop needs with Meta. Idempotent, so re-running
+// after a partial failure submits only what is missing.
+router.post('/templates/provision', protect, admin, wa.provisionTemplates);
 
 // ── History ──
 router.get('/conversations', protect, admin, wa.listConversations);
