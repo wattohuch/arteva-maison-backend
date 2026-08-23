@@ -838,6 +838,57 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
         delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER;
         delete process.env.WHATSAPP_TEMPLATE_LANG;
     }
+    // == 20. One language approved, the other still in review ===============
+    // Approval arrives per language. Between the two, an Arabic customer would
+    // otherwise get nothing at all — 132001 and silence. One retry in the
+    // default language covers the gap without hiding any other failure.
+    {
+        reset();
+        const svc = require('../src/services/whatsappService');
+        process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER = 'arteva_order_confirmed';
+        process.env.WHATSAPP_TEMPLATE_LANG = 'en';
+        delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER_LANG;
+
+        // Arabic refused as missing, English accepted.
+        axiosState.queue = [
+            { error: { response: { status: 400, data: { error: { code: 132001, message: 'Template name does not exist in the translation' } } } } },
+            { data: { messages: [{ id: 'wamid.FALLBACK' }] } },
+        ];
+        let r = await svc.sendMessage('96599887766', 'free form', 'customer_new_order', null,
+            ['Sara', 'A7K2M9P4', '45.500 KWD', 'https://x'], 'ar');
+        check('a missing language falls back and still delivers', r.success === true, JSON.stringify(r).slice(0, 120));
+
+        const langs = axiosState.calls
+            .filter(c => c.data && c.data.type === 'template')
+            .map(c => c.data.template.language.code);
+        check('Arabic was tried first, then English', langs.join(',') === 'ar,en', langs.join(','));
+
+        // A parameter mismatch is not a language problem — no retry, and the
+        // failure must stay visible rather than be masked by a second attempt.
+        reset();
+        axiosState.queue = [
+            { error: { response: { status: 400, data: { error: { code: 132000, message: 'number of parameters does not match' } } } } },
+        ];
+        r = await svc.sendMessage('96599887766', 'free form', 'customer_new_order', null,
+            ['Sara', 'A7K2M9P4', '45.500 KWD', 'https://x'], 'ar');
+        check('a parameter mismatch is not retried', r.success !== true);
+        check('only one attempt was made for a non-language failure',
+            axiosState.calls.filter(c => c.data && c.data.type === 'template').length === 1,
+            String(axiosState.calls.length));
+
+        // Already sending the fallback language: nothing left to fall back to.
+        reset();
+        axiosState.queue = [
+            { error: { response: { status: 400, data: { error: { code: 132001, message: 'missing' } } } } },
+        ];
+        r = await svc.sendMessage('96599887766', 'free form', 'customer_new_order', null,
+            ['Sara', 'A7K2M9P4', '45.500 KWD', 'https://x'], 'en');
+        check('the fallback language is not retried against itself',
+            axiosState.calls.filter(c => c.data && c.data.type === 'template').length === 1);
+
+        delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER;
+        delete process.env.WHATSAPP_TEMPLATE_LANG;
+    }
     await mongoose.disconnect();
     await mongod.stop();
     Module._load = originalLoad;

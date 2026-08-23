@@ -303,10 +303,29 @@ class WhatsAppService {
 
                 let responseData;
                 if (template) {
-                    console.log(`[WA-OFFICIAL] Sending template "${template.name}" to ${phone} (type: ${type})`);
-                    responseData = await this.sendOfficialTemplate(
-                        phone, template.name, template.language, templateParams
-                    );
+                    console.log(`[WA-OFFICIAL] Sending template "${template.name}" (${template.language}) to ${phone} (type: ${type})`);
+                    try {
+                        responseData = await this.sendOfficialTemplate(
+                            phone, template.name, template.language, templateParams
+                        );
+                    } catch (err) {
+                        /* 132001 means the template has no version in that
+                         * language. The ordinary cause is one language
+                         * approved and the other still in review, which is a
+                         * temporary state the customer should not have to
+                         * notice — so try the default language once before
+                         * giving up. Any other failure is not a language
+                         * problem and is left alone. */
+                        const code = err.response && err.response.data
+                            && err.response.data.error && err.response.data.error.code;
+                        const fallback = process.env.WHATSAPP_TEMPLATE_LANG || 'en';
+                        if (code !== 132001 || template.language === fallback) throw err;
+
+                        console.warn(`[WA-OFFICIAL] "${template.name}" has no ${template.language} version — retrying in ${fallback}`);
+                        responseData = await this.sendOfficialTemplate(
+                            phone, template.name, fallback, templateParams
+                        );
+                    }
                 } else {
                     console.log(`[WA-OFFICIAL] Sending message to ${phone} (type: ${type})`);
                     responseData = await this.sendOfficialMessage(phone, message);
