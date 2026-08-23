@@ -889,6 +889,128 @@ const settle = (ms = 60) => new Promise(r => setTimeout(r, ms));
         delete process.env.WHATSAPP_TEMPLATE_CUSTOMER_NEW_ORDER;
         delete process.env.WHATSAPP_TEMPLATE_LANG;
     }
+    // == 21. /end and /hold =================================================
+    // The handover used to end one way only: two hours of silence. Wrong in
+    // both directions — a finished conversation kept the assistant out for the
+    // rest of the window, and one still being worked on got the bot back the
+    // moment it went quiet for long enough.
+    //
+    // The rule that matters most is that a command is never relayed. '/end'
+    // arriving in a customer's chat as text would be worse than no feature.
+    {
+        reset();
+        const svc = require('../src/services/whatsappService');
+        const WhatsAppMessage = require('../src/models/WhatsAppMessage');
+        const Conversation = require('../src/models/WhatsAppConversation');
+
+        const OWNER = '96565611566';
+        const CUSTOMER = '96599887766';
+
+        const realSend = svc.sendMessage.bind(svc);
+        const realOwners = svc.getOwnerPhones.bind(svc);
+        const sent = [];
+        svc.sendMessage = async (phone, message, type) => {
+            sent.push({ phone, message, type });
+            return { success: true, messageId: 'wamid.CMD' + sent.length };
+        };
+        svc.getOwnerPhones = async () => [OWNER];
+
+        await WhatsAppMessage.create({
+            messageId: 'wamid.CMDALERT', direction: 'outbound', type: 'text', to: OWNER,
+            body: 'Customer needs a human', context: 'inbound_forward',
+            relayTo: CUSTOMER, status: 'sent',
+        });
+
+        const escalate = () => Conversation.findOneAndUpdate(
+            { phone: CUSTOMER },
+            { phone: CUSTOMER, isHumanEscalated: true, lastMessageAt: new Date(),
+              messages: [{ role: 'user', content: 'help', timestamp: new Date() }] },
+            { upsert: true }
+        );
+        const state = () => Conversation.findOne({ phone: CUSTOMER }).lean();
+
+        // /end hands the conversation back
+        await escalate();
+        sent.length = 0;
+        const ended = await svc.handleInboundMessage(OWNER, '/end', { replyTo: 'wamid.CMDALERT' });
+        let st = await state();
+        check('/end clears the handover', st.isHumanEscalated === false);
+        check('/end wipes the history the assistant would resume from',
+            (st.messages || []).length === 0);
+        check('/end is never relayed to the customer',
+            !sent.some(m => m.phone === CUSTOMER), JSON.stringify(sent.map(m => m.phone)));
+        check('the owner is told it worked',
+            sent.some(m => m.phone === OWNER && /handed back/.test(m.message)),
+            JSON.stringify(sent.map(m => m.message)));
+        check('the command is consumed rather than ignored', ended.relayed === true);
+
+        // Repeating it is not an error
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, '/end', { replyTo: 'wamid.CMDALERT' });
+        check('/end on an already-ended chat says so',
+            sent.some(m => /already with the assistant/.test(m.message)),
+            JSON.stringify(sent.map(m => m.message)));
+
+        // /hold takes it back, and restarts the clock
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, '/hold', { replyTo: 'wamid.CMDALERT' });
+        check('/hold takes the conversation off the assistant',
+            (await state()).isHumanEscalated === true);
+        check('/hold is never relayed to the customer', !sent.some(m => m.phone === CUSTOMER));
+
+        await Conversation.updateOne({ phone: CUSTOMER },
+            { lastMessageAt: new Date(Date.now() - 90 * 60000) });
+        const before = (await state()).lastMessageAt;
+        await svc.handleInboundMessage(OWNER, '/hold', { replyTo: 'wamid.CMDALERT' });
+        check('/hold restarts the cooldown', (await state()).lastMessageAt > before);
+
+        // Shape tolerance, and the number-prefix form
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, '  /END  ', { replyTo: 'wamid.CMDALERT' });
+        check('case and stray spaces are tolerated', (await state()).isHumanEscalated === false);
+
+        await escalate();
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, CUSTOMER + ' /end', {});
+        check('the number-prefix form works too', (await state()).isHumanEscalated === false);
+        check('the prefix form does not message the customer either',
+            !sent.some(m => m.phone === CUSTOMER));
+
+        // No conversation to act on
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, '/end', {});
+        check('/end with no target asks which conversation',
+            sent.length === 1 && /needs to know which conversation/.test(sent[0].message),
+            JSON.stringify(sent.map(m => m.message)));
+
+        // Ordinary replies are untouched
+        await escalate();
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, 'It ships tomorrow.', { replyTo: 'wamid.CMDALERT' });
+        check('a normal reply is still relayed',
+            sent.some(m => m.phone === CUSTOMER && m.message === 'It ships tomorrow.'));
+        check('a normal reply leaves the handover in place',
+            (await state()).isHumanEscalated === true);
+
+        sent.length = 0;
+        await svc.handleInboundMessage(OWNER, 'we will /end that line soon', { replyTo: 'wamid.CMDALERT' });
+        check('a sentence merely containing /end is relayed, not executed',
+            sent.some(m => m.phone === CUSTOMER) && (await state()).isHumanEscalated === true);
+
+        // Only owners have these
+        process.env.WHATSAPP_AUTO_GREET = 'false';
+        process.env.WHATSAPP_AI_REPLIES = 'false';
+        process.env.WHATSAPP_FORWARD_INBOUND = 'false';
+        await svc.handleInboundMessage(CUSTOMER, '/end', {});
+        check('a customer typing /end changes nothing',
+            (await state()).isHumanEscalated === true);
+
+        svc.sendMessage = realSend;
+        svc.getOwnerPhones = realOwners;
+        delete process.env.WHATSAPP_AUTO_GREET;
+        delete process.env.WHATSAPP_AI_REPLIES;
+        delete process.env.WHATSAPP_FORWARD_INBOUND;
+    }
     await mongoose.disconnect();
     await mongod.stop();
     Module._load = originalLoad;

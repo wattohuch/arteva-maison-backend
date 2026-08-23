@@ -1236,6 +1236,23 @@ Arteva Maison`;
             }
         }
 
+        /* Commands are handled before the send, because the one thing that
+         * must never happen is "/end" arriving in the customer's chat as
+         * text. Checked against the stripped body so the number-prefix form
+         * ("96599887766 /end") works the same as replying to the alert. */
+        const command = String(stripped).trim().toLowerCase();
+        if (command === '/end' || command === '/hold') {
+            if (!customer) {
+                await this.sendMessage(
+                    ownerPhone,
+                    `⚠️ ${command} needs to know which conversation. Reply to the customer's alert with it, or write their number first: "96599887766 ${command}".`,
+                    'relay_receipt'
+                ).catch(() => {});
+                return true;
+            }
+            return this._runOwnerCommand(command, ownerPhone, customer);
+        }
+
         if (!customer) return false;
 
         const result = await this.sendMessage(customer, stripped, 'owner_relay', null, [stripped]);
@@ -1263,6 +1280,70 @@ Arteva Maison`;
             ).catch(() => {});
         }
 
+        return true;
+    }
+
+    /**
+     * Hand a conversation back to the assistant, or keep it with a person.
+     *
+     * /end  — the assistant answers this customer again from now on.
+     * /hold — the assistant stays out, and the clock restarts.
+     *
+     * Neither sends anything to the customer. Ending a conversation is not an
+     * announcement; if the owner wants to say goodbye they send that first and
+     * then the command.
+     *
+     * @param {'/end'|'/hold'} command
+     * @param {string} ownerPhone
+     * @param {string} customer
+     * @returns {Promise<boolean>} always true — the message was consumed here
+     */
+    async _runOwnerCommand(command, ownerPhone, customer) {
+        const WhatsAppConversation = require('../models/WhatsAppConversation');
+        const hours = parseInt(process.env.WHATSAPP_ESCALATION_COOLDOWN_HOURS) || 2;
+
+        let reply;
+        try {
+            let conversation = await WhatsAppConversation.findOne({ phone: customer });
+
+            if (command === '/end') {
+                if (!conversation || !conversation.isHumanEscalated) {
+                    reply = `ℹ️ +${customer} is already with the assistant.`;
+                } else {
+                    conversation.isHumanEscalated = false;
+                    /* Clear the history too. What the customer discussed with a
+                     * person is not context the assistant should resume from —
+                     * it would answer as though it had been in the room. */
+                    conversation.messages = [];
+                    await conversation.save();
+                    reply = `✅ +${customer} handed back to the assistant.`;
+                    console.log(`[WA-RELAY] ${ownerPhone} ended the handover for ${customer}`);
+                }
+            } else {
+                if (!conversation) {
+                    conversation = new WhatsAppConversation({ phone: customer, messages: [] });
+                }
+                /* /hold on a conversation that was never escalated is a person
+                 * claiming it before the assistant says something they would
+                 * rather it did not. That is worth allowing. */
+                const wasHeld = conversation.isHumanEscalated;
+                conversation.isHumanEscalated = true;
+                conversation.lastMessageAt = new Date();
+                await conversation.save();
+                reply = wasHeld
+                    ? `⏸️ Still holding +${customer}. The assistant stays out for another ${hours}h.`
+                    : `⏸️ Holding +${customer}. The assistant will not reply to them for ${hours}h.`;
+                console.log(`[WA-RELAY] ${ownerPhone} held ${customer} for ${hours}h`);
+            }
+        } catch (err) {
+            /* Say so rather than fail silently: an owner who believes they
+             * ended a handover and did not will leave a customer talking to
+             * nobody. */
+            console.error(`[WA-RELAY] ${command} for ${customer} failed: ${err.message}`);
+            reply = `❌ Could not apply ${command} to +${customer}. Try again.`;
+        }
+
+        await this.sendMessage(ownerPhone, reply, 'relay_receipt').catch(() => {});
         return true;
     }
 

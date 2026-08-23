@@ -284,6 +284,59 @@ then `en`.
 
 ---
 
+## Handing a conversation to a person
+
+When the assistant cannot help, it escalates: every owner phone gets an
+alert with the customer's number, what they asked, what the assistant
+answered, and the order and driver if a number was quoted. The assistant
+then stays out of that conversation so it cannot talk over whoever picks
+it up.
+
+### Replying
+
+Reply to the alert on WhatsApp and it goes straight to the customer. The
+reply gesture is what identifies them — it matters when two people need
+help at once, where "the most recent escalation" would send one customer
+the other's answer.
+
+On desktop, where people rarely use reply, put the number first instead:
+
+```
+96599887766 It ships tomorrow, sorry for the wait.
+```
+
+Either way the owner gets a receipt saying it landed, so a relayed reply
+is never confused with one that vanished.
+
+### Ending or extending the handover
+
+Two owner-only commands, sent the same way — reply to the alert, or put the
+customer's number first:
+
+| Command | Effect |
+|---|---|
+| `/end` | The assistant answers this customer again from now on |
+| `/hold` | The assistant stays out, and the clock restarts |
+
+Neither is forwarded to the customer, and neither announces anything to
+them. To say goodbye, send that message first and then `/end`.
+
+Without them the handover ends one way only: `WHATSAPP_ESCALATION_COOLDOWN_HOURS`
+(default 2) of silence. That is wrong in both directions — a finished
+conversation keeps the assistant out for the rest of the window, and one
+still being worked on gets the bot back the moment it goes quiet for long
+enough.
+
+`/hold` also works on a conversation that was never escalated, which is how
+you claim one before the assistant says something you would rather it did
+not.
+
+Only owner numbers have these — `WHATSAPP_OWNER_PHONE`, or the owner
+accounts. A customer typing `/end` is treated as ordinary text. A sentence
+that merely contains the word ("we will /end that line soon") is relayed
+normally; only a message that is exactly the command is executed.
+
+---
 ## Testing
 
 ### Sending
