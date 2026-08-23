@@ -1425,11 +1425,16 @@ Arteva Maison`;
             // Give the owner the order context up front, so they do not open
             // the conversation by asking for an order number.
             let context = '';
-            const orderMatch = body.match(/ORD-\w+/i);
-            if (orderMatch) {
+            /* Order numbers are eight characters of A-Z0-9 with no prefix.
+             * This matched /ORD-\w+/i, which no real number has ever
+             * satisfied, so the alert never carried the context it
+             * promises. Shared with the assistant so the two cannot
+             * disagree about what an order number looks like. */
+            const quoted = aiChatService.extractOrderNumbers(body).slice(0, 5);
+            if (quoted.length) {
                 try {
                     const Order = require('../models/Order');
-                    const order = await Order.findOne({ orderNumber: orderMatch[0].toUpperCase() })
+                    const order = await Order.findOne({ orderNumber: { $in: quoted } })
                         .populate('deliveryPilot');
                     if (order) {
                         context = `\n📦 Order: ${order.orderNumber} (${order.orderStatus})`;

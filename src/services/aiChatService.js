@@ -157,11 +157,20 @@ class AiChatService {
      * assume — DECORATE would match — so the database decides, and an unknown
      * token simply yields nothing.
      */
-    async lookupOrderContext(messageText) {
-        const text = String(messageText || '');
-
-        // Accept the bare number, a # prefix, and the legacy ORD- form.
-        const candidates = new Set();
+    /**
+     * Order numbers a message might be quoting.
+     *
+     * Eight characters of A-Z0-9 with no prefix is the real format, but
+     * customers write it however they like, so a # prefix and the legacy
+     * ORD- form are accepted too. Shared with the escalation alert in
+     * whatsappService: two copies of this drifted apart once already.
+     *
+     * @param {string} text
+     * @returns {string[]} upper-cased candidates, in the order found
+     */
+    extractOrderNumbers(text) {
+        const body = String(text || '');
+        const found = new Set();
         const patterns = [
             /\bORD-([A-Za-z0-9]{4,12})\b/gi,
             /#\s*([A-Za-z0-9]{6,12})\b/g,
@@ -169,12 +178,18 @@ class AiChatService {
         ];
         for (const re of patterns) {
             let m;
-            while ((m = re.exec(text)) !== null) {
+            while ((m = re.exec(body)) !== null) {
                 const token = m[1].toUpperCase();
                 // Real numbers are drawn from A-Z0-9; anything else is noise.
-                if (/^[A-Z0-9]+$/.test(token)) candidates.add(token);
+                if (/^[A-Z0-9]+$/.test(token)) found.add(token);
             }
         }
+        return [...found];
+    }
+    async lookupOrderContext(messageText) {
+        const text = String(messageText || '');
+
+        const candidates = new Set(this.extractOrderNumbers(text));
 
         if (candidates.size === 0) return '';
 

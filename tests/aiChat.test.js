@@ -170,6 +170,34 @@ const ask = async (candidate) => {
             !r.text.includes('](') && !r.text.includes('http://'), r.text);
     }
 
+    {
+        // Order numbers are eight characters of A-Z0-9 with no prefix. This
+        // has been got wrong twice — once in the assistant, once in the
+        // escalation alert — and both times the symptom was silence rather
+        // than an error: the lookup simply never matched anything.
+        const svc = require('../src/services/aiChatService');
+
+        check('a bare eight-character number is found',
+            svc.extractOrderNumbers('where is 2OGW0INW').includes('2OGW0INW'));
+        check('a # prefix is accepted',
+            svc.extractOrderNumbers('my order #A7K2M9P4 please').includes('A7K2M9P4'));
+        check('the legacy ORD- form still works',
+            svc.extractOrderNumbers('ORD-12345 status').includes('12345'));
+        check('lowercase is normalised',
+            svc.extractOrderNumbers('check a7k2m9p4 for me').includes('A7K2M9P4'));
+        check('both numbers in one message are returned',
+            svc.extractOrderNumbers('A7K2M9P4 and 2OGW0INW').length === 2);
+
+        // An eight-letter English word is indistinguishable from an order
+        // number by shape alone, so it is returned and the database decides.
+        // What must not happen is a message of ordinary short words
+        // producing candidates.
+        check('ordinary short words produce nothing',
+            svc.extractOrderNumbers('hi is my order here yet').length === 0,
+            JSON.stringify(svc.extractOrderNumbers('hi is my order here yet')));
+        check('punctuation-only text produces nothing',
+            svc.extractOrderNumbers('???').length === 0);
+    }
     Module._load = originalLoad;
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail ? 1 : 0);
