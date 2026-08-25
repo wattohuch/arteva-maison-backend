@@ -207,9 +207,38 @@ ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
     border-bottom: 2px solid var(--color-gold);
   }
   .header-logo { max-width: 220px; height: auto; margin-bottom: 8px; }
-  .logo-text { display: flex; flex-direction: column; align-items: center; line-height: 1.1; margin-bottom: 6px; }
-  .logo-text .main { font-family: var(--font-display); font-size: 28px; font-weight: 700; letter-spacing: 0.15em; color: var(--color-text); }
-  .logo-text .sub { font-family: var(--font-display); font-size: 12px; font-weight: 400; letter-spacing: 0.3em; color: var(--color-gold); }
+  /* The wordmark, matched to the website's header (.brand / .brand-name /
+     .brand-sub in Header.css) rather than approximated.
+     
+     A receipt is the most physical thing the shop hands over, so a logo that
+     is nearly-but-not-quite the site's reads as a different business. The
+     values below are the site's, with two deliberate differences: the size is
+     fixed rather than a viewport clamp, because paper has no viewport; and
+     MAISON uses the solid gold the header switches to when scrolled, since the
+     soft variant is designed to sit over a photograph and prints washed out.
+     
+     text-indent compensates for the trailing letter-spacing, which would
+     otherwise push the text visually off-centre — the same trick the site
+     uses. */
+  .logo-text { display: flex; flex-direction: column; align-items: center; line-height: 1; margin-bottom: 6px; }
+  .logo-text .main {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-indent: 0.16em;
+    color: var(--color-text);
+  }
+  .logo-text .sub {
+    margin-top: 3px;
+    font-family: var(--font-body);
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.42em;
+    text-indent: 0.42em;
+    text-transform: uppercase;
+    color: var(--color-gold);
+  }
   .logo { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: 2px; margin-bottom: 4px; text-transform: uppercase; }
   .receipt-title { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--color-text-light); }
   .receipt-title-ar { font-family: var(--font-arabic); font-size: 11px; color: var(--color-text-light); margin-top: 2px; direction: rtl; }
@@ -293,7 +322,7 @@ ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
 <div id="receipt-root">
 
 <div class="header">
-  ${logoB64 ? '<img src="' + logoB64 + '" class="header-logo" alt="ARTÉVA MAISON">' : '<div class="logo-text"><span class="main">ARTÉVA</span><span class="sub">MAISON</span></div>'}
+  ${logoB64 ? '<img src="' + logoB64 + '" class="header-logo" alt="ARTÉVA MAISON">' : '<div class="logo-text"><span class="main">ARTÉVA</span><span class="sub">Maison</span></div>'}
   <div class="receipt-title">Order Receipt</div>
   <div class="receipt-title-ar">إيصال الطلب</div>
 </div>

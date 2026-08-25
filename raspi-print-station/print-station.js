@@ -74,6 +74,11 @@ const PRINT_KEY  = process.env.PRINT_KEY || 'arteva-print-2026';
 const POLL_MS    = (parseInt(process.env.POLL_SECONDS) || 30) * 1000;
 const PRINTER    = process.env.PRINTER_NAME || '';
 const PAPER      = process.env.PAPER_SIZE || 'A4';
+
+/* Copies per receipt. Clamped: a typo of 20 in the env would quietly empty the
+   paper tray mid-exhibition, and there is no legitimate reason to exceed a
+   handful. */
+const COPIES = Math.min(Math.max(parseInt(process.env.PRINT_COPIES, 10) || 1, 1), 5);
 const PRINT_RECEIPT = process.env.PRINT_RECEIPT !== 'false';
 const PRINT_LABEL   = process.env.PRINT_LABEL === 'true';
 const TEST_MODE     = process.env.TEST_MODE === 'true';
@@ -785,6 +790,18 @@ async function htmlToPrint(html, filename, printerName) {
     if (printerName) {
       lprArgs.push('-P', printerName);
     }
+    /* Number of copies per receipt.
+     *
+     * One is the norm; two is wanted at exhibitions and markets, where the
+     * customer takes one and the stall keeps one. Passed to CUPS with -#
+     * rather than printing the job twice: CUPS collates a multi-copy job
+     * itself, so the pages come out together and a paper jam halfway through
+     * fails ONE job that can be retried, instead of leaving the shop unsure
+     * whether the second copy ever started. */
+    if (COPIES > 1) {
+      lprArgs.push('-#', String(COPIES));
+    }
+
     lprArgs.push(
       '-o', 'cupsPrintQuality=Best',
       '-o', 'ColorModel=Color',

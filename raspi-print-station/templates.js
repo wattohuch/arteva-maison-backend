@@ -62,7 +62,13 @@ async function buildReceiptHTML(order) {
     || process.env.WHATSAPP_OWNER_PHONE
     || '96550683207').split(',')[0].replace(/\D/g, '');
   const whatsappQR = await generateQR(`https://wa.me/${contactNumber}`);
-  const logoB64 = getLogoBase64();
+  /* The typeset wordmark, not logo.png, unless explicitly asked for.
+   *
+   * The shop wanted the receipt to carry the same mark as the website, which is
+   * CSS type rather than an image — and the two did not match, so a printed
+   * receipt and the site looked like different businesses. The PNG is still
+   * here and still loads; set PRINT_USE_LOGO_IMAGE=true to go back to it. */
+  const logoB64 = process.env.PRINT_USE_LOGO_IMAGE === 'true' ? getLogoBase64() : null;
 
   return buildReceiptHTMLFromData(order, {
     receiptQR, whatsappQR, logoBase64: logoB64, webFonts: USE_WEB_FONTS,
