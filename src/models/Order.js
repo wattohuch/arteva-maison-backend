@@ -249,7 +249,20 @@ const orderSchema = new mongoose.Schema({
     deliveredAt: Date,
     cancelledAt: Date,
     paidAt: Date,
-    printedAt: Date
+    printedAt: Date,
+    /**
+     * How many copies the print agent should run off.
+     *
+     * Set per order rather than as one setting on the Pi, because the answer
+     * differs by source: a receipt written at the counter needs two — one for
+     * the customer, one the shop keeps — while an online order that will be
+     * packed and shipped needs one.
+     *
+     * The agent clamps this and falls back to its own PRINT_COPIES for orders
+     * created before this field existed, so nothing already in the queue
+     * changes behaviour.
+     */
+    printCopies: { type: Number, default: 1, min: 1, max: 5 }
 }, {
     timestamps: true
 });

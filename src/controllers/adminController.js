@@ -2047,7 +2047,12 @@ const createOrder = asyncHandler(async (req, res) => {
         },
         items: normalisedItems,
         shippingCost: Number(shippingCost) || 0,
-        notes: notes || ''
+        notes: notes || '',
+        /* Two copies for a counter receipt: one the customer takes away, one
+           the shop keeps. An online order gets the default of one, since it is
+           packed and shipped rather than handed over. Configurable per shop via
+           RECEIPT_PRINT_COPIES without editing this file. */
+        printCopies: Math.min(Math.max(parseInt(process.env.RECEIPT_PRINT_COPIES, 10) || 2, 1), 5)
     };
 
     newOrderData.subtotal = normalisedItems.reduce((sum, i) => sum + (i.price * i.quantity), 0);

@@ -684,6 +684,30 @@ async function apiRequest(method, url, options = {}, retries = 3) {
       const status = err.response?.status;
       const msg = status ? `HTTP ${status}` : `${code} ${err.message}`;
 
+      /* A rejected key is not a transient fault and retrying cannot fix it.
+       *
+       * This is how printing stopped for twelve hours without anyone knowing:
+       * PRINT_AGENT_KEY was set on the server and not here, every poll came
+       * back 401, and the agent logged it as an ordinary API failure among the
+       * timeouts and reconnects. It reads as a configuration error now, names
+       * both places the value has to match, and gives up rather than retrying
+       * a request that will never succeed. */
+      if (status === 401 || status === 403) {
+        log('', 'error');
+        log('╔═══════════════════════════════════════════════════════════════╗', 'error');
+        log('║  PRINT KEY REJECTED — the server refused this agent.          ║', 'error');
+        log('║                                                               ║', 'error');
+        log('║  PRINT_KEY in the station .env must equal                     ║', 'error');
+        log('║  PRINT_AGENT_KEY in the backend environment. Setting one      ║', 'error');
+        log('║  without the other stops all printing, silently.              ║', 'error');
+        log('║                                                               ║', 'error');
+        log(`║  This agent is sending a key of length ${String(PRINT_KEY.length).padEnd(3)}                    ║`, 'error');
+        log(`║  ${PRINT_KEY === 'arteva-print-2026' ? 'It is still the committed DEFAULT — that is the problem.  ' : 'It is not the default, so the two values simply differ.    '} ║`, 'error');
+        log('╚═══════════════════════════════════════════════════════════════╝', 'error');
+        log('', 'error');
+        throw err;
+      }
+
       if (attempt < retries) {
         const delay = Math.min(5000 * attempt, 15000); // 5s, 10s, 15s
         log(`⚠ API attempt ${attempt}/${retries} failed: ${msg} — retrying in ${delay/1000}s...`, 'warn');
@@ -718,7 +742,12 @@ async function markPrinted(orderId) {
 }
 
 // ── HTML → PDF → Print ─────────────────────────────────────
-async function htmlToPrint(html, filename, printerName) {
+/**
+ * @param {number} [copies] How many to run off. Defaults to the station's own
+ *        PRINT_COPIES when the caller does not say — which is what orders
+ *        created before the server sent a per-order count fall back to.
+ */
+async function htmlToPrint(html, filename, printerName, copies = COPIES) {
   const htmlPath = path.join(TEMP_DIR, `${filename}.html`);
   const pdfPath  = path.join(TEMP_DIR, `${filename}.pdf`);
 
@@ -790,16 +819,22 @@ async function htmlToPrint(html, filename, printerName) {
     if (printerName) {
       lprArgs.push('-P', printerName);
     }
-    /* Number of copies per receipt.
+    /* Number of copies.
      *
-     * One is the norm; two is wanted at exhibitions and markets, where the
-     * customer takes one and the stall keeps one. Passed to CUPS with -#
-     * rather than printing the job twice: CUPS collates a multi-copy job
-     * itself, so the pages come out together and a paper jam halfway through
-     * fails ONE job that can be retried, instead of leaving the shop unsure
-     * whether the second copy ever started. */
-    if (COPIES > 1) {
-      lprArgs.push('-#', String(COPIES));
+     * Now decided per order by the server (Order.printCopies) rather than by
+     * one setting on this station, because the answer differs by source: a
+     * receipt written at the counter needs two — one for the customer, one the
+     * shop keeps — while an online order that gets packed and shipped needs
+     * one. PRINT_COPIES remains the fallback for orders created before the
+     * server sent a count.
+     *
+     * Passed to CUPS with -# rather than printing the job twice: CUPS collates
+     * a multi-copy job itself, so the pages come out together, and a paper jam
+     * halfway through fails ONE job that can be retried instead of leaving the
+     * shop unsure whether the second copy ever started. */
+    const copyCount = Math.min(Math.max(parseInt(copies, 10) || 1, 1), 5);
+    if (copyCount > 1) {
+      lprArgs.push('-#', String(copyCount));
     }
 
     lprArgs.push(
@@ -863,11 +898,19 @@ async function _doPrintJob(order, filename, printerName, num) {
   printerName = detectedPrinter;
 
   if (PRINT_RECEIPT) {
-    log(`  🖨️  Generating receipt...`);
+    /* The server decides how many. A counter receipt comes through as 2 (one
+       for the customer, one for the shop); an online order as 1. Orders
+       predating Order.printCopies carry no value and fall back to the
+       station's PRINT_COPIES. */
+    const copies = Math.min(Math.max(parseInt(order.printCopies, 10) || COPIES, 1), 5);
+    log(`  🖨️  Generating receipt${copies > 1 ? ` (${copies} copies)` : ''}...`);
     const receiptHTML = await buildReceiptHTML(order);
-    await htmlToPrint(receiptHTML, `receipt-${num}`, printerName);
-    log(`  ✓ Receipt sent to printer`);
+    await htmlToPrint(receiptHTML, `receipt-${num}`, printerName, copies);
+    log(`  ✓ Receipt sent to printer${copies > 1 ? ` — ${copies} copies` : ''}`);
   }
+
+  /* One label per parcel, whatever the receipt count — the label identifies the
+     package, and two identical labels on one box helps nobody. */
 
   if (PRINT_LABEL) {
     await new Promise(r => setTimeout(r, 3000)); // Let printer breathe
