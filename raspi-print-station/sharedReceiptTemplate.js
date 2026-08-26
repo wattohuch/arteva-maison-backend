@@ -47,21 +47,42 @@ function safeFixed(val, digits = 3) {
  *        network — see raspi-print-station/templates.js.
  * @returns {string} Complete HTML document string
  */
+/**
+ * Who the receipt is FOR.
+ *
+ * The order's `user` is who the sale is filed under, which is not the same
+ * question. On a manual receipt it is the member of staff who rang it up —
+ * falling back to it printed the cashier in the customer box, and worse, it
+ * pre-filled the receipt form with staff details so an admin who typed over
+ * the name still saved the cashier's EMAIL as the customer's.
+ *
+ * So the fallback is source-aware:
+ *
+ *   · a snapshot on the order always wins — it is what was typed for this sale
+ *   · a MANUAL receipt without one falls back to the shipping details, then to
+ *     blank. Never to the account, because that account is staff.
+ *   · an ONLINE order resolves through its account, which really is the buyer.
+ */
+function resolveCustomer(order) {
+  if (!order) return {};
+
+  const snap = order.customer;
+  if (snap && (snap.name || snap.email || snap.phone)) return snap;
+
+  if (order.orderSource === 'manual') {
+    const addr = order.shippingAddress || {};
+    return { name: addr.fullName || '', email: '', phone: addr.phone || '' };
+  }
+
+  return order.user || {};
+}
+
 function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = null, webFonts = true } = {}) {
   if (!order) throw new Error('buildReceiptHTMLFromData: order is null');
 
   const logoB64 = logoBase64;
   const date = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  /* The buyer as written on this receipt, falling back to the linked account.
-   *
-   * order.customer wins deliberately. A manual receipt with no email typed is
-   * attached to whichever account created it, so reading order.user first
-   * printed the cashier's name and email in the customer box. Online orders
-   * carry no order.customer and still resolve through order.user exactly as
-   * before. */
-  const customer = (order.customer && (order.customer.name || order.customer.email || order.customer.phone))
-    ? order.customer
-    : (order.user || {});
+  const customer = resolveCustomer(order);
   const addr = order.shippingAddress || {};
   const items = order.items || [];
   const statusRaw = escapeHTML((order.orderStatus || 'pending').replace(/_/g, ' '));
@@ -521,4 +542,4 @@ ${order.notes && order.notes.trim() ? `
 </body></html>`;
 }
 
-module.exports = { buildReceiptHTMLFromData, escapeHTML, safeFixed };
+module.exports = { buildReceiptHTMLFromData, resolveCustomer, escapeHTML, safeFixed };

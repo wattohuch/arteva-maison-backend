@@ -95,6 +95,15 @@ const orderSchema = new mongoose.Schema({
     },
     items: [orderItemSchema],
     shippingAddress: {
+        /**
+         * Who the parcel is addressed to.
+         *
+         * Two places wrote this and it was never in the schema, so Mongoose
+         * dropped it on every save without complaint. That is why a manual
+         * receipt had nowhere to keep the buyer's name and why the customer on
+         * an old receipt cannot be recovered from the data.
+         */
+        fullName: String,
         street: { type: String, required: true },
         city: { type: String, required: true },
         state: String,

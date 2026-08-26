@@ -14,7 +14,6 @@
  *      with — whenever the receipt did match one.
  */
 
-const assert = require('assert');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { buildReceiptHTMLFromData } = require('../raspi-print-station/sharedReceiptTemplate');
@@ -25,11 +24,10 @@ function check(name, cond, detail = '') {
   else { failed++; console.log(`FAIL  ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-/** Mirrors how every renderer resolves who the buyer is. */
-function resolveCustomer(order) {
-  const c = order.customer;
-  return (c && (c.name || c.email || c.phone)) ? c : (order.user || {});
-}
+// The real resolver, imported rather than restated. The previous version of
+// this test reimplemented the logic and therefore agreed with a bug the
+// shipping code had.
+const { resolveCustomer } = require('../raspi-print-station/sharedReceiptTemplate');
 
 (async () => {
   const mongod = await MongoMemoryServer.create();
@@ -98,6 +96,47 @@ function resolveCustomer(order) {
   check('an online order still resolves through its account',
     resolveCustomer(onlineStored).name === 'Real Shopper',
     resolveCustomer(onlineStored).name);
+
+  /* ── The regression that got through ──
+   *
+   * A manual receipt with NO snapshot must not fall back to the staff account.
+   * It did, which pre-filled the receipt form with the cashier's details; an
+   * admin typing over the name left the email untouched, and the save stored
+   * the cashier's email as the customer's. Order U6T9U6UZ came out reading
+   * "Entesar / mohammadalawaji2@gmail.com" that way. */
+  const noSnapshot = await Order.create({
+    user: owner._id,
+    createdByAdmin: owner._id,
+    orderSource: 'manual',
+    items: [{ product: new mongoose.Types.ObjectId(), name: 'Plate', price: 10, quantity: 1 }],
+    shippingAddress: { street: 'X', city: 'Kuwait', fullName: 'Entesar', phone: '+96541107701' },
+    subtotal: 10, total: 10, paymentStatus: 'paid', orderStatus: 'confirmed',
+  });
+
+  const bare = await Order.findById(noSnapshot._id).populate('user', 'name email phone').lean();
+  const resolved = resolveCustomer(bare);
+
+  check('a manual receipt with no snapshot never yields the staff account',
+    resolved.email !== 'owner@arteva.com', `email came back as ${resolved.email}`);
+  check('  it takes the name from the shipping details',
+    resolved.name === 'Entesar', resolved.name);
+  check('  the email stays EMPTY rather than the cashier address',
+    !resolved.email, `email was ${JSON.stringify(resolved.email)}`);
+  check('  and it never yields the staff name',
+    resolved.name !== 'mohammad', resolved.name);
+
+  // A manual receipt with nothing at all must be blank, not staff details.
+  const empty = await Order.create({
+    user: owner._id, orderSource: 'manual',
+    items: [{ product: new mongoose.Types.ObjectId(), name: 'Y', price: 1, quantity: 1 }],
+    shippingAddress: { street: 'X', city: 'Kuwait' },
+    subtotal: 1, total: 1,
+  });
+  const emptyResolved = resolveCustomer(
+    await Order.findById(empty._id).populate('user', 'name email phone').lean()
+  );
+  check('an empty manual receipt resolves to BLANK, not the cashier',
+    !emptyResolved.name && !emptyResolved.email, JSON.stringify(emptyResolved));
 
   await mongoose.disconnect();
   await mongod.stop();
