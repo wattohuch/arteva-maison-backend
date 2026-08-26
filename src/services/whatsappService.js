@@ -1024,13 +1024,18 @@ ${fullProofUrl ? `📸 صورة التوصيل: ${fullProofUrl}\n` : ''}📄 ع�
 
         const phone = rawPhone;
         const driverName = driver.name || 'Driver';
-        const customerName = order.user ? order.user.name : 'Customer';
-        
-        // Use order.shippingAddress.phone or fallback to user.phone
-        let customerPhone = order.shippingAddress?.phone;
-        if (!customerPhone && order.user?.phone) {
-            customerPhone = order.user.phone;
-        }
+        /* Resolve through the shared rule, so a driver dispatched a manual
+           receipt is told who the BUYER is. Reading order.user directly named
+           the staff member who wrote the receipt, since that is the account it
+           is filed under. */
+        const { resolveCustomer } = require('../../raspi-print-station/sharedReceiptTemplate');
+        const buyer = resolveCustomer(order);
+
+        const customerName = buyer.name || 'Customer';
+
+        // The address phone is what the parcel is delivered against; the buyer
+        // record is the fallback.
+        let customerPhone = order.shippingAddress?.phone || buyer.phone;
         
         const customerPhoneDisplay = customerPhone ? `wa.me/${this.formatPhone(customerPhone)}` : 'N/A';
         const driverDashboardUrl = `${this.frontendUrl}/driver/deliveries.html`;
