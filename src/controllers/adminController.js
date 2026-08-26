@@ -1867,19 +1867,29 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         if (user && user.phone) order.shippingAddress.phone = user.phone;
     }
 
-    // Update User if possible, otherwise we rely on shippingAddress for receipt display
-    if (user && order.user) {
-        try {
-            const userDoc = await User.findById(order.user);
-            if (userDoc) {
-                if (user.name) userDoc.name = user.name;
-                if (user.email) userDoc.email = user.email;
-                if (user.phone) userDoc.phone = user.phone;
-                await userDoc.save();
-            }
-        } catch (e) {
-            console.error('Failed to update user doc from receipt generator:', e);
-        }
+    /* ── The buyer ──
+     *
+     * Written onto the ORDER, never into a User account.
+     *
+     * This block used to copy the typed name, email and phone into
+     * User.findById(order.user) and save it. Two ways that went wrong, and both
+     * happened in normal use:
+     *
+     *   · A receipt saved without an email is attached to whoever is logged in,
+     *     so editing it renamed the ADMIN'S OWN ACCOUNT to the customer's name
+     *     and replaced their email and phone.
+     *   · A receipt that did match a real customer rewrote that customer's
+     *     profile from a form meant to describe one sale — including their
+     *     login email, which could lock them out of their own account.
+     *
+     * A receipt describes a transaction. It is not an account editor, and it
+     * has no business writing to the users collection at all. */
+    if (user) {
+        if (!order.customer) order.customer = {};
+        if (user.name !== undefined) order.customer.name = user.name;
+        if (user.email !== undefined) order.customer.email = user.email;
+        if (user.phone !== undefined) order.customer.phone = user.phone;
+        order.markModified('customer');
     }
 
     /* Snapshot the lines as they stand so the stock reconcile below knows what
@@ -1997,19 +2007,38 @@ const createOrder = asyncHandler(async (req, res) => {
         throw new Error('A receipt needs at least one line item');
     }
 
+    /* ── Who this sale belongs to ──
+     *
+     * `orderUser` links the sale to an ACCOUNT, so it lands in that customer's
+     * order history. It is not who the receipt says the buyer is — that comes
+     * from the typed details below and is stored on the order.
+     *
+     * The distinction matters because the two used to be conflated. With no
+     * email typed (the common case at a counter — a name and a phone number)
+     * this fell through to the admin's own id, and since the receipt printed
+     * from `order.user`, every such receipt came out addressed to the member of
+     * staff who rang it up instead of the customer standing in front of them.
+     *
+     * An existing account is linked when the email matches one. A new account
+     * is created only when an email was actually supplied, because an account
+     * needs an address to ever be signed into — inventing one for a walk-in
+     * would leave an unreachable, passwordless record in the users collection. */
     let orderUser = req.user._id;
 
-    // Try to find or create user
-    if (user && user.email) {
-        let foundUser = await User.findOne({ email: user.email.toLowerCase() });
+    if (user && user.email && String(user.email).trim()) {
+        const email = String(user.email).toLowerCase().trim();
+        let foundUser = await User.findOne({ email });
         if (!foundUser) {
             foundUser = await User.create({
                 name: user.name || 'Guest',
-                email: user.email.toLowerCase(),
+                email,
                 phone: user.phone || '',
                 password: require('crypto').randomBytes(10).toString('hex')
             });
         }
+        // Deliberately NOT updating foundUser's name/phone from this form. The
+        // receipt describes one sale; it does not get to rewrite the profile of
+        // a customer who already has an account.
         orderUser = foundUser._id;
     }
 
@@ -2046,6 +2075,13 @@ const createOrder = asyncHandler(async (req, res) => {
             fullName: user?.name || 'Guest'
         },
         items: normalisedItems,
+        // What the receipt prints. Independent of whichever account `user`
+        // points at, so a counter sale shows the buyer and not the cashier.
+        customer: {
+            name: user?.name || '',
+            email: user?.email || '',
+            phone: user?.phone || ''
+        },
         shippingCost: Number(shippingCost) || 0,
         notes: notes || '',
         /* Two copies for a counter receipt: one the customer takes away, one

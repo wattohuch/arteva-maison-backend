@@ -68,6 +68,26 @@ const orderSchema = new mongoose.Schema({
         default: 'online',
         index: true
     },
+    /**
+     * The buyer, as written on this receipt.
+     *
+     * A walk-in customer has no account, so their details cannot live in one.
+     * They used to: a manual receipt copied the typed name, email and phone
+     * INTO the linked User document, which renamed whichever real account the
+     * order happened to point at — usually the admin's own, since an order with
+     * no email typed was attached to whoever was logged in. Editing a receipt
+     * silently rewrote a person's profile.
+     *
+     * This is a snapshot and belongs to the order alone. Nothing here ever
+     * writes back to a User. `user` may still link to a real account when one
+     * matches by email, which is what puts the sale in that customer's order
+     * history — but the receipt prints from these fields, not from that account.
+     */
+    customer: {
+        name: String,
+        email: String,
+        phone: String
+    },
     // Admin who created a manual receipt (null for online orders)
     createdByAdmin: {
         type: mongoose.Schema.Types.ObjectId,

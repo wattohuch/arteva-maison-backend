@@ -15,7 +15,7 @@
     "fix-images-script": "node src/fix-product-images.js --generate-script",
     "backup": "node src/backup.js",
     "restore": "node src/restore.js",
-    "test": "node tests/stockService.test.js && node tests/promoService.test.js && node tests/api.smoke.test.js && node tests/meta.test.js && node tests/whatsapp.test.js && node tests/aiChat.test.js && node tests/twilio.test.js && node tests/audit.test.js && node tests/print-queue.test.js",
+    "test": "node tests/stockService.test.js && node tests/promoService.test.js && node tests/api.smoke.test.js && node tests/meta.test.js && node tests/whatsapp.test.js && node tests/aiChat.test.js && node tests/twilio.test.js && node tests/audit.test.js && node tests/print-queue.test.js && node tests/receipt-customer.test.js",
     "test:meta": "node tests/meta.test.js",
     "test:stock": "node tests/stockService.test.js",
     "test:promo": "node tests/promoService.test.js",

@@ -52,7 +52,16 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
 
   const logoB64 = logoBase64;
   const date = new Date(order.createdAt || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const customer = order.user || {};
+  /* The buyer as written on this receipt, falling back to the linked account.
+   *
+   * order.customer wins deliberately. A manual receipt with no email typed is
+   * attached to whichever account created it, so reading order.user first
+   * printed the cashier's name and email in the customer box. Online orders
+   * carry no order.customer and still resolve through order.user exactly as
+   * before. */
+  const customer = (order.customer && (order.customer.name || order.customer.email || order.customer.phone))
+    ? order.customer
+    : (order.user || {});
   const addr = order.shippingAddress || {};
   const items = order.items || [];
   const statusRaw = escapeHTML((order.orderStatus || 'pending').replace(/_/g, ' '));
