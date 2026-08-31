@@ -11,6 +11,7 @@
 const { asyncHandler } = require('../middleware/error');
 const frontendUrls = require('../utils/frontendUrls');
 const Order = require('../models/Order');
+const { resolveGiftWrap } = require('../config/pricing');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
@@ -49,7 +50,7 @@ async function confirmPaidOrder(order) {
 
     // Clear cart
     const userId = order.user._id || order.user;
-    await Cart.findOneAndUpdate({ user: userId }, { items: [] });
+    await Cart.findOneAndUpdate({ user: userId }, { items: [], giftWrap: { enabled: false, message: '' } });
 
     // Promo usage
     await incrementPromoUsage(order);
@@ -176,6 +177,8 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
     // Calculate totals
     const subtotal = cart.items.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
     const shippingCost = 2.0;
+    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
+    const wrap = resolveGiftWrap(cart && cart.giftWrap);
     let totalDiscount = 0;
     let promoCodeData = null;
 
@@ -213,7 +216,7 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
         }
     }
 
-    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
+    const total = parseFloat((subtotal + shippingCost + wrap.fee - totalDiscount).toFixed(3));
 
     // ── DEDUP: Reuse existing pending Deema order for this user ──
     let order = await Order.findOne({
@@ -229,6 +232,7 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
         order.shippingAddress = shippingAddress;
         order.subtotal = subtotal;
         order.shippingCost = shippingCost;
+        order.giftWrap = wrap;
         order.total = total;
         order.promoCode = promoCodeData;
         order.notes = null; // Clear any old error notes
@@ -244,6 +248,7 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
             orderStatus: 'pending',
             subtotal,
             shippingCost,
+            giftWrap: wrap,
             total,
             promoCode: promoCodeData
         });

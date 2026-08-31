@@ -7,12 +7,13 @@ const { paginate } = require('../utils/helpers');
 const { emitNewOrder } = require('../socketHandler');
 const { WhatsAppService } = require('../services/whatsappService');
 const stockService = require('../services/stockService');
+const { resolveGiftWrap } = require('../config/pricing');
 
 // @desc    Create new order
 // @route   POST /api/orders
 // @access  Private
 const createOrder = asyncHandler(async (req, res) => {
-    const { shippingAddress, paymentMethod, notes, promoCode: promoCodeStr } = req.body;
+    const { shippingAddress, paymentMethod, notes, promoCode: promoCodeStr, giftWrap } = req.body;
 
     // Normalize phone number to international format before saving
     if (shippingAddress && shippingAddress.phone) {
@@ -89,6 +90,11 @@ const createOrder = asyncHandler(async (req, res) => {
 
     // Calculate shipping - Fixed 2 KD for all orders
     const shippingCost = 2.0;
+
+    /* Gift wrapping. The browser says whether the customer wants it and what
+     * the card should read; the price is ours. Taking a fee from the request
+     * would let anyone wrap an order for nothing. */
+    const wrap = resolveGiftWrap(giftWrap);
 
     // ── Promo Code Validation & Discount Calculation ──
     let promoData = null;
@@ -180,7 +186,7 @@ const createOrder = asyncHandler(async (req, res) => {
         }
     }
 
-    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
+    const total = parseFloat((subtotal + shippingCost + wrap.fee - totalDiscount).toFixed(3));
 
     let order;
     try {
@@ -191,6 +197,7 @@ const createOrder = asyncHandler(async (req, res) => {
             paymentMethod,
             subtotal,
             shippingCost,
+            giftWrap: wrap,
             discount: totalDiscount,
             promoCode: promoData,
             total,
@@ -212,6 +219,9 @@ const createOrder = asyncHandler(async (req, res) => {
 
     // Clear cart after order
     cart.items = [];
+    /* Wrapping is a per-order choice, not a standing preference. Leaving it
+     * set would charge the next order 3 KD that nobody asked for. */
+    cart.giftWrap = { enabled: false, message: '' };
     await cart.save();
 
     // Auto-save shipping address if user is logged in

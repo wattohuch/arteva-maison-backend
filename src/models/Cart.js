@@ -22,6 +22,19 @@ const cartSchema = new mongoose.Schema({
         unique: true
     },
     items: [cartItemSchema],
+    /**
+     * Gift wrapping the customer asked for, kept on the cart rather than sent
+     * with the order request.
+     *
+     * Checkout hands the customer to a payment gateway and gets them back on
+     * a different request, so anything held only in the browser is lost in
+     * between. The fee is deliberately absent: it is decided at order time by
+     * config/pricing, never stored here where a client could reach it.
+     */
+    giftWrap: {
+        enabled: { type: Boolean, default: false },
+        message: { type: String, default: '', maxlength: 300 }
+    },
     updatedAt: {
         type: Date,
         default: Date.now

@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const stockService = require('../services/stockService');
+const { resolveGiftWrap } = require('../config/pricing');
 const { withTransaction } = require('../utils/transaction');
 const promoService = require('../services/promoService');
 const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
@@ -1848,7 +1849,7 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         throw new Error('Order not found');
     }
 
-    const { items, shippingCost, discount, notes, orderStatus, paymentStatus, paymentMethod, user, shippingAddress, orderNumber, createdAt } = req.body;
+    const { items, shippingCost, discount, notes, orderStatus, paymentStatus, paymentMethod, user, shippingAddress, orderNumber, createdAt, giftWrap } = req.body;
 
     // Update basic statuses
     if (orderStatus !== undefined) order.orderStatus = orderStatus;
@@ -1953,10 +1954,18 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
         order.notes = notes;
     }
 
+    /* Gift wrapping is priced here, never taken from the request — the same
+     * rule the storefront checkout follows. Left untouched when the field is
+     * absent, so an edit that says nothing about wrapping does not silently
+     * remove it. */
+    if (giftWrap !== undefined) {
+        order.giftWrap = resolveGiftWrap(giftWrap);
+    }
+
     // Recalculate subtotal, refundAmount and total
     order.subtotal = order.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     order.refundAmount = order.items.reduce((sum, item) => sum + (item.isRefunded ? (item.price * item.quantity) : 0), 0);
-    order.total = order.subtotal + (order.shippingCost || 0) - (order.discount || 0) - (order.refundAmount || 0);
+    order.total = order.subtotal + (order.shippingCost || 0) + (order.giftWrap?.fee || 0) - (order.discount || 0) - (order.refundAmount || 0);
     if (order.total < 0) order.total = 0;
 
     /* ── Inventory ──
@@ -1999,7 +2008,7 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
 const createOrder = asyncHandler(async (req, res) => {
     const {
         orderNumber, createdAt, orderStatus, paymentStatus, paymentMethod,
-        user, shippingAddress, items, shippingCost, discount, notes, promoCode
+        user, shippingAddress, items, shippingCost, discount, notes, promoCode, giftWrap
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -2115,9 +2124,11 @@ const createOrder = asyncHandler(async (req, res) => {
     }
 
     newOrderData.discount = resolvedDiscount;
+    // Priced here, not taken from the request — see config/pricing.
+    newOrderData.giftWrap = resolveGiftWrap(giftWrap);
     newOrderData.total = Math.max(
         0,
-        newOrderData.subtotal + newOrderData.shippingCost - resolvedDiscount
+        newOrderData.subtotal + newOrderData.shippingCost + newOrderData.giftWrap.fee - resolvedDiscount
     );
 
     // ── Inventory ──

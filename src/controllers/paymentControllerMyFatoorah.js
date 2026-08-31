@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const frontendUrls = require('../utils/frontendUrls');
 const { getMyFatoorahStatus, getDeemaStatus } = require('../config/paymentConfig');
 const Order = require('../models/Order');
+const { resolveGiftWrap } = require('../config/pricing');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
@@ -243,7 +244,9 @@ const createPaymentSession = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
-    const total = subtotal + shippingCost;
+    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
+    const wrap = resolveGiftWrap(cart && cart.giftWrap);
+    const total = subtotal + shippingCost + wrap.fee;
 
     // Create order first
     const order = await Order.createWithRetry({
@@ -262,6 +265,7 @@ const createPaymentSession = asyncHandler(async (req, res) => {
         orderStatus: 'pending',
         subtotal,
         shippingCost,
+        giftWrap: wrap,
         total
     });
 
@@ -383,6 +387,8 @@ const executePayment = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
+    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
+    const wrap = resolveGiftWrap(cart && cart.giftWrap);
 
     // ── Promo Code Validation & Discount ──
     let promoData = null;
@@ -419,7 +425,7 @@ const executePayment = asyncHandler(async (req, res) => {
         }
     }
 
-    const total = parseFloat((subtotal + shippingCost - totalDiscount).toFixed(3));
+    const total = parseFloat((subtotal + shippingCost + wrap.fee - totalDiscount).toFixed(3));
 
     console.log('Order totals - Subtotal:', subtotal, 'Shipping:', shippingCost, 'Discount:', totalDiscount, 'Total:', total);
 
@@ -437,6 +443,7 @@ const executePayment = asyncHandler(async (req, res) => {
         order.paymentMethod = getPaymentMethodName(paymentMethodId);
         order.subtotal = subtotal;
         order.shippingCost = shippingCost;
+        order.giftWrap = wrap;
         order.discount = totalDiscount;
         order.promoCode = promoData;
         order.total = total;
@@ -452,6 +459,7 @@ const executePayment = asyncHandler(async (req, res) => {
             orderStatus: 'pending',
             subtotal,
             shippingCost,
+            giftWrap: wrap,
             discount: totalDiscount,
             promoCode: promoData,
             total
@@ -568,7 +576,7 @@ const verifyPayment = asyncHandler(async (req, res) => {
         }
 
         // Clear the user's cart now that payment is confirmed
-        await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+        await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [], giftWrap: { enabled: false, message: '' } });
 
         // Count promo code usage now that payment is confirmed
         await incrementPromoUsage(order);
@@ -718,7 +726,7 @@ const handleWebhook = asyncHandler(async (req, res) => {
             }
 
             // Clear cart after payment confirmed
-            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [], giftWrap: { enabled: false, message: '' } });
 
             // Count promo code usage now that payment is confirmed
             await incrementPromoUsage(order);
@@ -870,7 +878,9 @@ const processCOD = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
-    const total = subtotal + shippingCost;
+    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
+    const wrap = resolveGiftWrap(cart && cart.giftWrap);
+    const total = subtotal + shippingCost + wrap.fee;
 
     // Create order
     const order = await Order.createWithRetry({
@@ -889,6 +899,7 @@ const processCOD = asyncHandler(async (req, res) => {
         orderStatus: 'confirmed',
         subtotal,
         shippingCost,
+        giftWrap: wrap,
         total,
         notes: typeof notes === 'string' ? notes.slice(0, 1000) : undefined
     });
@@ -925,6 +936,9 @@ const processCOD = asyncHandler(async (req, res) => {
 
     // Clear cart
     cart.items = [];
+    /* Wrapping is a per-order choice, not a standing preference. Leaving it
+     * set would charge the next order 3 KD that nobody asked for. */
+    cart.giftWrap = { enabled: false, message: '' };
     await cart.save();
 
     res.json({
@@ -1007,7 +1021,7 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
             }
 
             // Clear cart
-            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [] });
+            await Cart.findOneAndUpdate({ user: order.user._id || order.user }, { items: [], giftWrap: { enabled: false, message: '' } });
 
             // Count promo code usage now that payment is confirmed
             await incrementPromoUsage(order);

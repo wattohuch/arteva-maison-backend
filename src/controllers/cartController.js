@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const { asyncHandler } = require('../middleware/error');
+const { giftWrapFee } = require('../config/pricing');
 
 // @desc    Get user's cart
 // @route   GET /api/cart
@@ -16,7 +17,9 @@ const getCart = asyncHandler(async (req, res) => {
 
     res.json({
         success: true,
-        data: cart
+        // The wrapping fee is quoted alongside the cart so the storefront can
+        // show the price without knowing it. Nothing client-side computes it.
+        data: { ...cart.toObject(), giftWrapFee: giftWrapFee() }
     });
 });
 
@@ -180,6 +183,8 @@ const clearCart = asyncHandler(async (req, res) => {
 
     if (cart) {
         cart.items = [];
+        // Emptying the bag drops the wrapping request with it.
+        cart.giftWrap = { enabled: false, message: '' };
         await cart.save();
     }
 
@@ -189,7 +194,35 @@ const clearCart = asyncHandler(async (req, res) => {
     });
 });
 
+// @desc    Ask for (or cancel) gift wrapping on this cart
+// @route   PUT /api/cart/gift-wrap
+// @access  Private
+//
+// Kept on the cart because checkout hands the customer to a payment gateway
+// and gets them back on a different request; a choice held only in the browser
+// does not survive that. The price is not stored — it is applied when the
+// order is created, so a client cannot name its own fee.
+const setGiftWrap = asyncHandler(async (req, res) => {
+    const cart = await Cart.findOne({ user: req.user._id });
+    if (!cart) {
+        res.status(404);
+        throw new Error('No cart to wrap');
+    }
+
+    const enabled = req.body.enabled === true || req.body.enabled === 'true';
+    cart.giftWrap = {
+        enabled,
+        // A message on a cancelled wrap is dead weight, and would reappear if
+        // the customer turned wrapping back on having forgotten it was there.
+        message: enabled ? String(req.body.message || '').trim().slice(0, 300) : '',
+    };
+    await cart.save();
+
+    res.json({ success: true, data: { giftWrap: cart.giftWrap, fee: enabled ? giftWrapFee() : 0 } });
+});
+
 module.exports = {
+    setGiftWrap,
     getCart,
     addToCart,
     updateCartItem,

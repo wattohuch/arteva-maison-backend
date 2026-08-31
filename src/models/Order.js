@@ -2,10 +2,20 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 
 const orderItemSchema = new mongoose.Schema({
+    /**
+     * The catalogue product this line sells, when there is one.
+     *
+     * Optional, because a manual receipt legitimately carries lines that are
+     * not catalogue products: a one-off charge, a service, gift wrapping.
+     * stockService already treats a line with no product as untracked — see
+     * isTrackedLine — and the admin write path already stores `null` for it.
+     * The schema was the last thing still demanding one, which is why adding
+     * a custom item to a receipt failed with "Path `product` is required".
+     */
     product: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Product',
-        required: true
+        default: null
     },
     name: { type: String, required: true },
     nameAr: { type: String }, // Arabic name
@@ -116,6 +126,17 @@ const orderSchema = new mongoose.Schema({
             lat: Number,
             lng: Number
         }
+    },
+    /**
+     * Gift wrapping, charged once per order however many items it holds.
+     *
+     * `fee` is stored rather than recomputed so an old order still totals to
+     * what the customer actually paid after the price changes.
+     */
+    giftWrap: {
+        enabled: { type: Boolean, default: false },
+        fee: { type: Number, default: 0 },
+        message: { type: String, default: '', maxlength: 300 }
     },
     paymentMethod: {
         type: String,

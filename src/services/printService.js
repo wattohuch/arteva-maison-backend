@@ -91,7 +91,8 @@ async function renderReceiptToJpeg(order, customer) {
     
     // Left: Customer
     c.fillStyle=MID; c.font=`${f(8)}px Arial`; c.fillText('Customer Details', LM+gP, y+gP);
-    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('بيانات العميل', LM+gP+c.measureText('Customer Details ').width, y+gP+f(1));
+    const cdW=c.measureText('Customer Details').width;
+    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('بيانات العميل', LM+gP+cdW+f(6), y+gP+f(1));
     c.fillStyle=DARK; c.font=`600 ${f(10)}px Arial`; c.fillText(custName, LM+gP, y+f(20));
     c.fillStyle=MID; c.font=`${f(8.5)}px Arial`; c.fillText(custEmail, LM+gP, y+f(31));
     c.fillText(custPhone, LM+gP, y+f(41));
@@ -100,7 +101,8 @@ async function renderReceiptToJpeg(order, customer) {
     const sx = LM+gW+f(15);
     const addr = order.shippingAddress||{};
     c.fillStyle=MID; c.font=`${f(8)}px Arial`; c.fillText('Shipping Address', sx, y+gP);
-    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('عنوان الشحن', sx+c.measureText('Shipping Address ').width, y+gP+f(1));
+    const saW=c.measureText('Shipping Address').width;
+    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('عنوان الشحن', sx+saW+f(6), y+gP+f(1));
     c.fillStyle=MID; c.font=`${f(8.5)}px Arial`;
     const addrLines = [addr.street, [addr.city,addr.state,addr.zipCode].filter(Boolean).join(', '), addr.country].filter(Boolean);
     let ay = y+f(20);
@@ -115,11 +117,13 @@ async function renderReceiptToJpeg(order, customer) {
 
     const payNames = {'cod':'Cash on Delivery','knet':'KNET','card':'Credit/Debit Card','applepay':'Apple Pay','myfatoorah':'Online Payment','deema':'Deema (BNPL)'};
     c.fillStyle=MID; c.font=`${f(8)}px Arial`; c.fillText('Payment Method', LM+gP, y+gP);
-    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('طريقة الدفع', LM+gP+c.measureText('Payment Method ').width, y+gP+f(1));
+    const pmW=c.measureText('Payment Method').width;
+    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('طريقة الدفع', LM+gP+pmW+f(6), y+gP+f(1));
     c.fillStyle=DARK; c.font=`500 ${f(10)}px Arial`; c.fillText((payNames[order.paymentMethod]||order.paymentMethod||'N/A').toUpperCase(), LM+gP, y+f(22));
 
     c.fillStyle=MID; c.font=`${f(8)}px Arial`; c.fillText('Payment Status', sx, y+gP);
-    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('حالة الدفع', sx+c.measureText('Payment Status ').width, y+gP+f(1));
+    const psLW=c.measureText('Payment Status').width;
+    c.fillStyle=LIGHT; c.font=`${f(6.5)}px Arial`; c.fillText('حالة الدفع', sx+psLW+f(6), y+gP+f(1));
     const ps = (order.paymentStatus||'pending').replace(/_/g,' ');
     const psBg = order.paymentStatus==='paid'?'#d1fae5':order.paymentStatus==='failed'?'#fee2e2':'#fef3c7';
     const psColor = order.paymentStatus==='paid'?'#065f46':order.paymentStatus==='failed'?'#991b1b':'#92400e';
@@ -247,6 +251,16 @@ async function renderReceiptToJpeg(order, customer) {
     c.fillText('/ التوصيل', tx+f(48), y+f(1.5));
     c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
     c.textAlign='right'; c.fillText((order.shippingCost||0).toFixed(3)+' KWD', RM, y); y+=f(12);
+    // Gift wrapping — a charge the customer paid, so the receipt must total to it
+    if (order.giftWrap && order.giftWrap.enabled) {
+        c.textAlign='left'; c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
+        c.fillText('Gift Wrapping', tx, y);
+        c.fillStyle=LIGHT; c.font=`${f(7.5)}px Arial`;
+        c.fillText('/ تغليف هدية', tx+f(70), y+f(1.5));
+        c.fillStyle=DARK; c.font=`${f(9.5)}px Arial`;
+        c.textAlign='right';
+        c.fillText((order.giftWrap.fee||0).toFixed(3)+' KWD', RM, y); y+=f(12);
+    }
     // Promo Code (if applicable)
     if (order.promoCode && order.promoCode.code) {
         const promoAmount = order.promoCode.totalDiscount || order.discount || 0;
@@ -280,6 +294,53 @@ async function renderReceiptToJpeg(order, customer) {
     c.fillText(totalLabelAr, tx+f(78), y+f(3));
     c.fillStyle= order.refundStatus === 'Full' ? '#ef4444' : DARK; c.font=`bold ${f(13)}px Arial`;
     c.textAlign='right'; c.fillText((order.total||0).toFixed(3)+' KWD', RM, y); y+=f(24);
+
+    // ═══ GIFT MESSAGE ═══
+    // Only when there is something to write. Wrapping without a card is
+    // common, and an empty bordered box on a receipt reads as a fault.
+    if (order.giftWrap && order.giftWrap.enabled && order.giftWrap.message) {
+        const gmX = LM + f(10);
+        const gmWidth = CW - f(20);
+
+        /* Measure before drawing: the box has to fit the words, and a long
+         * message must wrap rather than run off the paper. */
+        c.font = `${f(9)}px Arial`;
+        const words = String(order.giftWrap.message).split(/\s+/);
+        const lines = [];
+        let line = '';
+        for (const word of words) {
+            const attempt = line ? line + ' ' + word : word;
+            if (c.measureText(attempt).width > gmWidth - f(10) && line) {
+                lines.push(line);
+                line = word;
+            } else {
+                line = attempt;
+            }
+        }
+        if (line) lines.push(line);
+
+        const gmH = f(26) + lines.length * f(12);
+        c.fillStyle = '#fdf7f2'; rr(c, LM, y, CW, gmH, f(4)); c.fill();
+        c.strokeStyle = 'rgba(197,160,110,0.28)'; c.lineWidth = f(0.5);
+        rr(c, LM, y, CW, gmH, f(4)); c.stroke();
+        c.fillStyle = GOLD; c.fillRect(LM, y, f(2), gmH);
+
+        c.textAlign = 'left';
+        c.fillStyle = GOLD; c.font = `600 ${f(8.5)}px Arial`;
+        c.fillText('GIFT MESSAGE', gmX, y + f(14));
+        /* Measure while the heading's own font is still active. Measuring
+         * after switching to the smaller face returns a width for the wrong
+         * font, and the Arabic lands on top of the English. */
+        const gmLabelWidth = c.measureText('GIFT MESSAGE').width;
+        c.fillStyle = LIGHT; c.font = `${f(7.5)}px Arial`;
+        c.fillText('رسالة الهدية', gmX + gmLabelWidth + f(8), y + f(14));
+
+        c.fillStyle = DARK; c.font = `${f(9)}px Arial`;
+        let gy = y + f(26);
+        for (const l of lines) { c.fillText(l, gmX, gy); gy += f(12); }
+
+        y += gmH + f(10);
+    }
 
     // ═══ QR CODE ═══
     const qrSz=f(60), qrH=qrSz+f(14);
