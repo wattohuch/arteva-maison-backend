@@ -417,10 +417,21 @@ ${webFonts ? `<link rel="preconnect" href="https://fonts.googleapis.com">
 <div class="total-section">
   <div class="total-row"><span>Subtotal / المجموع الفرعي</span><span>${safeFixed(order.subtotal || order.total)} KWD</span></div>
   <div class="total-row"><span>Delivery / التوصيل</span><span>${safeFixed(order.shippingCost)} KWD</span></div>
+  ${order.giftWrap && order.giftWrap.enabled ? '<div class="total-row"><span>Gift Wrapping / تغليف هدية</span><span>' + safeFixed(order.giftWrap.fee) + ' KWD</span></div>' : ''}
   ${order.promoCode && order.promoCode.code ? '<div class="total-row promo-row"><span>Promo Code: ' + escapeHTML(order.promoCode.code) + ' / رمز الخصم</span><span>-' + safeFixed(order.promoCode.totalDiscount || order.discount) + ' KWD</span></div>' : ''}
   ${order.refundAmount > 0 ? '<div class="total-row" style="color:#ef4444;font-weight:600;"><span>Refunded / مسترجع</span><span>-' + safeFixed(order.refundAmount) + ' KWD</span></div>' : ''}
   <div class="total-row final"><span>Total Paid / المبلغ المدفوع</span><span>${safeFixed(order.total)} KWD</span></div>
 </div>
+
+${order.giftWrap && order.giftWrap.enabled && order.giftWrap.message ? `
+<div style="margin-top:14px; padding: 12px; background: #fdf7f2; border: 1px solid rgba(197,160,110,0.28); border-left: 3px solid var(--color-gold, #B58C4A); border-radius: 6px;">
+  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+    <span style="font-size:10px; font-weight:600; text-transform:uppercase; color:var(--color-gold, #B58C4A);">Gift Message</span>
+    <span style="font-family:var(--font-arabic); font-size:10px; color:var(--color-text-light); direction:rtl;">رسالة الهدية</span>
+  </div>
+  <div style="font-size:12px; white-space:pre-wrap; line-height:1.4;">${escapeHTML(order.giftWrap.message)}</div>
+</div>
+` : ''}
 
 ${order.notes && order.notes.trim() ? `
 <div style="margin-top:14px; padding: 12px; background: #fafaf8; border: 1px solid var(--color-border); border-radius: 6px;">

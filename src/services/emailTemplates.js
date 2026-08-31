@@ -199,6 +199,11 @@ function getOrderConfirmationHtml(order, user) {
                     <td colspan="2" style="text-align: right; border-bottom: none;">Shipping:</td>
                     <td style="text-align: right; border-bottom: none;">${order.shippingCost.toFixed(3)} KWD</td>
                 </tr>
+                ${order.giftWrap && order.giftWrap.enabled ? `
+                <tr>
+                    <td colspan="2" style="text-align: right; border-bottom: none;">Gift Wrapping:</td>
+                    <td style="text-align: right; border-bottom: none;">${(order.giftWrap.fee || 0).toFixed(3)} KWD</td>
+                </tr>` : ''}
                 ${order.promoCode && order.promoCode.code ? `
                 <tr>
                     <td colspan="2" style="text-align: right; border-bottom: none; color: #059669; font-style: italic;">Promo Code: ${order.promoCode.code}</td>

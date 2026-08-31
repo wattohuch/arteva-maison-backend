@@ -585,7 +585,9 @@ class WhatsAppService {
 
 💰 *${isArabic ? 'المجموع' : 'Total'}:* ${order.total} ${order.currency}
 💳 *${isArabic ? 'الدفع' : 'Payment'}:* ${order.paymentMethod.toUpperCase()}
-📊 *${isArabic ? 'الحالة' : 'Status'}:* ${order.orderStatus.toUpperCase()}
+📊 *${isArabic ? 'الحالة' : 'Status'}:* ${order.orderStatus.toUpperCase()}${order.giftWrap && order.giftWrap.enabled ? `
+🎁 *${isArabic ? 'تغليف هدية' : 'GIFT WRAP'}:* ${isArabic ? 'مطلوب' : 'Required'}${order.giftWrap.message ? `
+✍️ *${isArabic ? 'رسالة البطاقة' : 'Card message'}:* "${order.giftWrap.message}"` : ''}` : ''}
 
 *${isArabic ? `المنتجات (${order.items.length})` : `Items (${order.items.length})`}:*
 ${order.items.map(item => {
