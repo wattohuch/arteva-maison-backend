@@ -289,7 +289,13 @@ const createPaymentSession = asyncHandler(async (req, res) => {
             name: item.name,
             quantity: item.quantity,
             price: item.price
-        }))
+        })),
+        /* The gateway checks that its invoice lines sum to the amount charged,
+           so a fee that is in the total must also be a line. Without it the
+           sum came up short and the whole invoice collapsed to one opaque
+           "Order Total" line — the customer lost the itemised breakdown on the
+           payment page for no reason other than a missing row. */
+        giftWrapFee: (order.giftWrap && order.giftWrap.fee) || 0
     };
 
     // Initiate payment with MyFatoorah
@@ -494,7 +500,13 @@ const executePayment = asyncHandler(async (req, res) => {
             name: item.name,
             quantity: item.quantity,
             price: item.price
-        }))
+        })),
+        /* The gateway checks that its invoice lines sum to the amount charged,
+           so a fee that is in the total must also be a line. Without it the
+           sum came up short and the whole invoice collapsed to one opaque
+           "Order Total" line — the customer lost the itemised breakdown on the
+           payment page for no reason other than a missing row. */
+        giftWrapFee: (order.giftWrap && order.giftWrap.fee) || 0
     };
 
     try {

@@ -147,6 +147,37 @@ class MyFatoorahService {
                 cleanPhone = '00000000';
             }
 
+            /* MyFatoorah checks that the invoice lines sum to InvoiceValue.
+               This built lines from the items alone, so it has never included
+               the 2 KWD shipping that InvoiceValue does — and gift wrapping
+               would have widened the same gap. Both are charges the customer
+               is paying, so both are lines. */
+            const invoiceItems = orderData.items.map(item => ({
+                ItemName: item.name,
+                Quantity: item.quantity,
+                UnitPrice: item.price
+            }));
+            invoiceItems.push({ ItemName: 'Shipping', Quantity: 1, UnitPrice: 2.0 });
+
+            const wrapFee = Number(orderData.giftWrapFee) || 0;
+            if (wrapFee > 0) {
+                invoiceItems.push({ ItemName: 'Gift Wrapping', Quantity: 1, UnitPrice: wrapFee });
+            }
+
+            /* Same safety net executePayment has: rather than let the gateway
+               reject the invoice outright, collapse to one line that does sum.
+               The customer loses the breakdown, which is far better than
+               losing the payment. */
+            const lineSum = invoiceItems.reduce((sum, i) => sum + i.UnitPrice * i.Quantity, 0);
+            if (Math.abs(lineSum - orderData.amount) > 0.001) {
+                console.error(
+                    `[MYFATOORAH] initiatePayment line sum ${lineSum.toFixed(3)} != InvoiceValue ` +
+                    `${orderData.amount} - collapsing to a single line to stay valid.`
+                );
+                invoiceItems.length = 0;
+                invoiceItems.push({ ItemName: 'Order Total', Quantity: 1, UnitPrice: orderData.amount });
+            }
+
             const payload = {
                 CustomerName: orderData.customerName,
                 InvoiceValue: orderData.amount,
@@ -158,11 +189,7 @@ class MyFatoorahService {
                 Language: orderData.language || 'en',
                 CustomerReference: orderData.orderNumber,
                 UserDefinedField: orderData.orderId, // Store order ID for webhook
-                InvoiceItems: orderData.items.map(item => ({
-                    ItemName: item.name,
-                    Quantity: item.quantity,
-                    UnitPrice: item.price
-                })),
+                InvoiceItems: invoiceItems,
                 // Enable payment methods
                 MobileCountryCode: mobileCountryCode
             };
@@ -245,6 +272,21 @@ class MyFatoorahService {
                 Quantity: 1,
                 UnitPrice: 2.0
             });
+
+            /* Gift wrapping is part of the amount charged, so it has to be a
+               line too. MyFatoorah rejects an invoice whose lines do not sum
+               to InvoiceValue, and the guard below would otherwise collapse
+               the whole thing into one opaque "Order Total" — the customer
+               losing their itemised breakdown on the payment page because a
+               row was missing rather than because anything was wrong. */
+            const giftWrapFee = Number(paymentData.giftWrapFee) || 0;
+            if (giftWrapFee > 0) {
+                invoiceItems.push({
+                    ItemName: 'Gift Wrapping',
+                    Quantity: 1,
+                    UnitPrice: giftWrapFee
+                });
+            }
 
             // If there's a promo discount, distribute it across items proportionally
             // If there's a promo discount, calculating exact unit prices per item

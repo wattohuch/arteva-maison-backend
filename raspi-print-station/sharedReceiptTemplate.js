@@ -152,11 +152,21 @@ function buildReceiptHTMLFromData(order, { receiptQR, whatsappQR, logoBase64 = n
       </div>`;
     }
 
+    /* Gift wrapping is chosen line by line, so it is said on the line it
+       applies to. The totals below carry the charge; this is what tells
+       whoever packs the parcel which of five items is the gift. An order
+       placed before per-item wrapping has the flag on no line, and the
+       Gift Wrapping total still speaks for it. */
+    const giftWrapNote = it.giftWrap
+      ? '<div style="font-size:10px;font-weight:600;color:var(--color-gold, #B58C4A);margin-top:2px;">✦ Gift wrapped / تغليف هدية</div>'
+      : '';
+
     return `<tr>
       <td class="sku-col">${sku}</td>
       <td>
         <div style="font-weight:500; display:flex; align-items:center; flex-wrap:wrap;">${name}${refundedBadge}${exchangedBadge}</div>
         ${nameAr ? '<div style="font-size:10px;color:#888;font-family:var(--font-arabic);direction:rtl">' + nameAr + '</div>' : ''}
+        ${giftWrapNote}
         ${exchangeDetailsHTML}
       </td>
       <td>${priceCell}</td>
