@@ -180,4 +180,11 @@ main() {
   echo ""
 }
 
+# Nothing may follow this call.
+#
+# Bash reads a script by file offset. main() has just replaced this file, so
+# any further read lands at that offset inside the NEW content and fails to
+# parse — printing a syntax error after a successful update. Exiting here ends
+# the read.
 main "$@"
+exit $?
