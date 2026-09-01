@@ -157,6 +157,94 @@ const check = (name, cond, detail = '') => {
     check('an order built from the cart is priced by the server', fromCart.fee === 3);
     check('and carries the message through', fromCart.message === 'For Noura');
 
+    // == 8. Per-item wrapping ==============================================
+    //
+    // Wrapping is chosen line by line and charged once per wrapped line - not
+    // per unit, because two of the same candle ticked is one gift.
+    const { summariseGiftWrap, applyGiftWrapChoices } = require('../src/config/pricing');
+
+    const twoOfThree = summariseGiftWrap(
+        [{ giftWrap: true }, { giftWrap: false }, { giftWrap: true }],
+        'For Noura'
+    );
+    check('each wrapped line is charged', twoOfThree.fee === 6, `got ${twoOfThree.fee}`);
+    check('the wrapped lines are counted', twoOfThree.count === 2);
+    check('wrapping is on when any line is wrapped', twoOfThree.enabled === true);
+    check('the card message survives', twoOfThree.message === 'For Noura');
+
+    check('quantity is not a multiplier - one line, one fee',
+        summariseGiftWrap([{ giftWrap: true, quantity: 4 }]).fee === 3,
+        'four candles in one line is one gift');
+
+    check('nothing ticked is nothing charged',
+        summariseGiftWrap([{ giftWrap: false }, {}]).fee === 0);
+    check('and carries no message',
+        summariseGiftWrap([{ giftWrap: false }], 'orphan').message === '');
+
+    check('a refunded line is not charged for its wrapping',
+        summariseGiftWrap([{ giftWrap: true }, { giftWrap: true, isRefunded: true }]).fee === 3,
+        'a returned item was not wrapped for the customer to keep');
+
+    check('a message that is not a string is refused, not stringified',
+        summariseGiftWrap([{ giftWrap: true }], { evil: 1 }).message === '',
+        'this used to print [object Object] on the receipt');
+
+    const applied = applyGiftWrapChoices(
+        [{ product: 'aaa' }, { product: 'bbb' }],
+        [{ productId: 'aaa', giftWrap: true }, { productId: 'zzz', giftWrap: true }]
+    );
+    check('a named line is wrapped', applied[0].giftWrap === true);
+    check('an unmentioned line is not', applied[1].giftWrap === false);
+    check('a line the client invented cannot be added', applied.length === 2);
+
+    // == 9. An empty GIFT_WRAP_FEE is a misconfiguration, not free wrapping ==
+    process.env.GIFT_WRAP_FEE = '';
+    check('a blank fee falls back rather than making wrapping free',
+        giftWrapFee() === 3,
+        'Number("") is 0, which would have silently zeroed the charge');
+    process.env.GIFT_WRAP_FEE = '0';
+    check('an explicit zero is still honoured - free wrapping is a real promotion',
+        giftWrapFee() === 0);
+    delete process.env.GIFT_WRAP_FEE;
+
+    // == 10. The gift-wrap route is reachable ==============================
+    //
+    // It was not. PUT /cart/:productId was registered first, so
+    // PUT /cart/gift-wrap matched it as a product called "gift-wrap" and was
+    // rejected by isMongoId with 400 - the endpoint could never be reached,
+    // no wrapping choice ever reached the server, and the storefront rolled
+    // the failed request back so the tick appeared to untick itself.
+    const cartRouter = require('../src/routes/cart');
+    const putPaths = cartRouter.stack
+        .filter(layer => layer.route && layer.route.methods.put)
+        .map(layer => layer.route.path);
+    check('a literal PUT path is matched before the parameterised one',
+        putPaths.indexOf('/gift-wrap') < putPaths.indexOf('/:productId'),
+        `order was ${JSON.stringify(putPaths)}`);
+    check('the whole-bag replace is also matched before it',
+        putPaths.indexOf('/') < putPaths.indexOf('/:productId'),
+        `order was ${JSON.stringify(putPaths)}`);
+
+    // == 11. An order records which lines were wrapped =====================
+    const perItem = await Order.create({
+        user: staff._id,
+        items: [
+            { name: 'Silk Scarf', price: 12, quantity: 1, giftWrap: true },
+            { name: 'Ceramic Vase', price: 15, quantity: 1, giftWrap: false },
+        ],
+        shippingAddress: { street: 'x', city: 'Kuwait City' },
+        subtotal: 27,
+        shippingCost: 2,
+        giftWrap: summariseGiftWrap([{ giftWrap: true }, { giftWrap: false }], 'Happy birthday'),
+        total: 32,
+    });
+    check('the wrapped line is marked', perItem.items[0].giftWrap === true);
+    check('the unwrapped line is not', perItem.items[1].giftWrap === false);
+    check('the order totals to one wrapping fee', perItem.giftWrap.fee === 3);
+    check('subtotal + shipping + one wrap is the total',
+        perItem.subtotal + perItem.shippingCost + perItem.giftWrap.fee === perItem.total);
+
+
     await mongoose.disconnect();
     await mongod.stop();
 

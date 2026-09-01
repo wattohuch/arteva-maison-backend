@@ -171,9 +171,18 @@ async function renderReceiptToJpeg(order, customer) {
         c.textAlign='left';
         c.fillStyle=MID; c.font=`${f(8.5)}px Courier New`; c.fillText(sku, cols[0].x, y);
         const showNameAr = item.nameAr && item.nameAr.trim().toLowerCase() !== (item.name || '').trim().toLowerCase();
+        /* Gift wrapping is a per-line choice, so it is said on the line it
+           applies to. The totals below carry the charge; this is what tells
+           whoever packs the parcel which of five items to wrap. */
+        const wrapped = item.giftWrap === true;
         c.fillStyle=DARK; c.font=`500 ${f(9.5)}px Arial`; c.fillText(trunc(c,item.name||'Product',cols[1].w-f(4)), cols[1].x, y);
         if(showNameAr){c.fillStyle=LIGHT;c.font=`${f(7.5)}px Arial`;c.fillText(item.nameAr,cols[1].x,y+f(11));}
         if(item.variant){c.fillStyle=LIGHT;c.font=`${f(7)}px Arial`;c.fillText(item.variant,cols[1].x,y+f(showNameAr?19:11));}
+        if(wrapped){
+            const wrapY = y + f(showNameAr?19:11) + (item.variant?f(8):0);
+            c.fillStyle=GOLD; c.font=`600 ${f(7)}px Arial`;
+            c.fillText('✦ Gift wrapped / تغليف هدية', cols[1].x, wrapY);
+        }
         c.font=`${f(9)}px Arial`;
         const baseColor = item.isRefunded ? LIGHT : DARK;
         if (item.isRefunded) {
@@ -231,6 +240,8 @@ async function renderReceiptToJpeg(order, customer) {
             c.textAlign='right'; c.fillText(originalTotal+' KWD', cols[4].x+cols[4].w, y);
         }
         y += showNameAr?f(26):(itemDiscount?f(24):f(20));
+        // Room for the wrap note, so it cannot land on the rule below it.
+        if(wrapped) y += f(10);
         c.strokeStyle=BORDER; c.lineWidth=f(0.3); c.beginPath(); c.moveTo(LM,y); c.lineTo(RM,y); c.stroke();
         y += f(6);
     });

@@ -7,13 +7,13 @@ const { paginate } = require('../utils/helpers');
 const { emitNewOrder } = require('../socketHandler');
 const { WhatsAppService } = require('../services/whatsappService');
 const stockService = require('../services/stockService');
-const { resolveGiftWrap } = require('../config/pricing');
+const { summariseGiftWrap } = require('../config/pricing');
 
 // @desc    Create new order
 // @route   POST /api/orders
 // @access  Private
 const createOrder = asyncHandler(async (req, res) => {
-    const { shippingAddress, paymentMethod, notes, promoCode: promoCodeStr, giftWrap } = req.body;
+    const { shippingAddress, paymentMethod, notes, promoCode: promoCodeStr } = req.body;
 
     // Normalize phone number to international format before saving
     if (shippingAddress && shippingAddress.phone) {
@@ -54,7 +54,8 @@ const createOrder = asyncHandler(async (req, res) => {
             quantity: item.quantity,
             // Filled in by the reconcile below, once the stock has actually
             // moved. Never assumed.
-            stockHeld: 0
+            stockHeld: 0,
+            giftWrap: item.giftWrap === true
         });
 
         subtotal += product.price * item.quantity;
@@ -91,10 +92,14 @@ const createOrder = asyncHandler(async (req, res) => {
     // Calculate shipping - Fixed 2 KD for all orders
     const shippingCost = 2.0;
 
-    /* Gift wrapping. The browser says whether the customer wants it and what
-     * the card should read; the price is ours. Taking a fee from the request
-     * would let anyone wrap an order for nothing. */
-    const wrap = resolveGiftWrap(giftWrap);
+    /* Gift wrapping, read from the cart like every other payment path.
+     *
+     * It used to be taken from req.body here, which meant this route and the
+     * gateway routes disagreed about where the choice lived — and this one
+     * ignored the cart the customer had actually been ticking. The price is
+     * ours either way: taking a fee from the request would let anyone wrap an
+     * order for nothing. */
+    const wrap = summariseGiftWrap(orderItems, cart.giftWrap && cart.giftWrap.message);
 
     // ── Promo Code Validation & Discount Calculation ──
     let promoData = null;

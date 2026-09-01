@@ -586,13 +586,19 @@ class WhatsAppService {
 💰 *${isArabic ? 'المجموع' : 'Total'}:* ${order.total} ${order.currency}
 💳 *${isArabic ? 'الدفع' : 'Payment'}:* ${order.paymentMethod.toUpperCase()}
 📊 *${isArabic ? 'الحالة' : 'Status'}:* ${order.orderStatus.toUpperCase()}${order.giftWrap && order.giftWrap.enabled ? `
-🎁 *${isArabic ? 'تغليف هدية' : 'GIFT WRAP'}:* ${isArabic ? 'مطلوب' : 'Required'}${order.giftWrap.message ? `
+🎁 *${isArabic ? 'تغليف هدية' : 'GIFT WRAP'}:* ${isArabic ? `مطلوب (${order.items.filter(i => i.giftWrap).length || order.items.length} صنف)` : `Required (${order.items.filter(i => i.giftWrap).length || order.items.length} item(s))`}${order.giftWrap.message ? `
 ✍️ *${isArabic ? 'رسالة البطاقة' : 'Card message'}:* "${order.giftWrap.message}"` : ''}` : ''}
 
 *${isArabic ? `المنتجات (${order.items.length})` : `Items (${order.items.length})`}:*
 ${order.items.map(item => {
             const productName = (isArabic && item.nameAr) ? item.nameAr : item.name;
-            return `• ${productName} x${item.quantity} - ${item.price} ${order.currency}`;
+            /* Which lines to wrap, marked on the line itself. The header says
+               wrapping is required; without this the packer cannot tell which
+               of five items it applies to. An order placed before per-item
+               wrapping has the flag on no line, so the header still speaks
+               for the whole order. */
+            const wrap = item.giftWrap ? ` 🎁 ${isArabic ? '(تغليف)' : '(wrap)'}` : '';
+            return `• ${productName} x${item.quantity} - ${item.price} ${order.currency}${wrap}`;
         }).join('\n')}
 
 📍 *${isArabic ? 'عنوان التوصيل' : 'Delivery Address'}:*

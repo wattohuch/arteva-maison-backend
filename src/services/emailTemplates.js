@@ -156,10 +156,17 @@ function getOrderConfirmationHtml(order, user) {
         } else {
             priceCell = `${item.price.toFixed(3)} KWD`;
         }
+        /* Named on the line it applies to, so the confirmation says which of
+           the items is the gift rather than only that the order has wrapping
+           on it somewhere. */
+        const wrapNote = item.giftWrap
+            ? '<div style="font-size: 12px; color: #D4AF37; font-weight: 600;">✦ Gift wrapped</div>'
+            : '';
         return `
         <tr>
             <td width="60%">
                 <div style="font-weight: bold;">${item.name}</div>
+                ${wrapNote}
             </td>
             <td width="15%" style="text-align: center;">${item.quantity}</td>
             <td width="25%" style="text-align: right;">${priceCell}</td>

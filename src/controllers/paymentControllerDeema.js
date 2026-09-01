@@ -11,7 +11,7 @@
 const { asyncHandler } = require('../middleware/error');
 const frontendUrls = require('../utils/frontendUrls');
 const Order = require('../models/Order');
-const { resolveGiftWrap } = require('../config/pricing');
+const { summariseGiftWrap } = require('../config/pricing');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
@@ -177,8 +177,13 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
     // Calculate totals
     const subtotal = cart.items.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
     const shippingCost = 2.0;
-    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
-    const wrap = resolveGiftWrap(cart && cart.giftWrap);
+    /* Gift wrapping, priced here and read from the cart — see config/pricing.
+       Charged per wrapped line, so the count comes from the cart's own items
+       and never from anything the client sent. */
+    const wrap = summariseGiftWrap(cart && cart.items, cart && cart.giftWrap && cart.giftWrap.message);
+    const isWrapped = (productId) => (cart.items.find(
+        i => String(i.product._id || i.product) === String(productId)
+    ) || {}).giftWrap === true;
     let totalDiscount = 0;
     let promoCodeData = null;
 
@@ -188,7 +193,8 @@ const createDeemaCheckout = asyncHandler(async (req, res) => {
         nameAr: item.product.nameAr,
         price: item.product.price,
         quantity: item.quantity,
-        image: item.product.images[0]?.url
+        image: item.product.images[0]?.url,
+        giftWrap: isWrapped(item.product._id)
     }));
 
     // ── Promo code ──

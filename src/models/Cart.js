@@ -11,7 +11,16 @@ const cartItemSchema = new mongoose.Schema({
         required: true,
         min: 1,
         default: 1
-    }
+    },
+    /**
+     * Whether this line is to be gift wrapped.
+     *
+     * Per line rather than per order: a bag can hold one gift and one thing
+     * the customer bought for themselves. No fee is stored — the price is
+     * applied at order time by config/pricing, never here where a client
+     * could reach it.
+     */
+    giftWrap: { type: Boolean, default: false }
 });
 
 const cartSchema = new mongoose.Schema({

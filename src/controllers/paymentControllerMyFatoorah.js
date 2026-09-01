@@ -3,7 +3,7 @@ const ApiError = require('../utils/ApiError');
 const frontendUrls = require('../utils/frontendUrls');
 const { getMyFatoorahStatus, getDeemaStatus } = require('../config/paymentConfig');
 const Order = require('../models/Order');
-const { resolveGiftWrap } = require('../config/pricing');
+const { summariseGiftWrap } = require('../config/pricing');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const PromoCode = require('../models/PromoCode');
@@ -244,8 +244,13 @@ const createPaymentSession = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
-    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
-    const wrap = resolveGiftWrap(cart && cart.giftWrap);
+    /* Gift wrapping, priced here and read from the cart — see config/pricing.
+       Charged per wrapped line, so the count comes from the cart's own items
+       and never from anything the client sent. */
+    const wrap = summariseGiftWrap(cart && cart.items, cart && cart.giftWrap && cart.giftWrap.message);
+    const isWrapped = (productId) => (cart.items.find(
+        i => String(i.product._id || i.product) === String(productId)
+    ) || {}).giftWrap === true;
     const total = subtotal + shippingCost + wrap.fee;
 
     // Create order first
@@ -257,7 +262,8 @@ const createPaymentSession = asyncHandler(async (req, res) => {
             nameAr: item.product.nameAr,
             price: item.product.price,
             quantity: item.quantity,
-            image: item.product.images[0]?.url
+            image: item.product.images[0]?.url,
+            giftWrap: isWrapped(item.product._id)
         })),
         shippingAddress,
         paymentMethod: paymentMethod || 'myfatoorah',
@@ -387,8 +393,13 @@ const executePayment = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
-    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
-    const wrap = resolveGiftWrap(cart && cart.giftWrap);
+    /* Gift wrapping, priced here and read from the cart — see config/pricing.
+       Charged per wrapped line, so the count comes from the cart's own items
+       and never from anything the client sent. */
+    const wrap = summariseGiftWrap(cart && cart.items, cart && cart.giftWrap && cart.giftWrap.message);
+    const isWrapped = (productId) => (cart.items.find(
+        i => String(i.product._id || i.product) === String(productId)
+    ) || {}).giftWrap === true;
 
     // ── Promo Code Validation & Discount ──
     let promoData = null;
@@ -400,7 +411,8 @@ const executePayment = asyncHandler(async (req, res) => {
         nameAr: item.product.nameAr,
         price: item.product.price,
         quantity: item.quantity,
-        image: item.product.images[0]?.url
+        image: item.product.images[0]?.url,
+        giftWrap: isWrapped(item.product._id)
     }));
 
     if (promoCodeStr && promoCodeStr.trim()) {
@@ -878,8 +890,13 @@ const processCOD = asyncHandler(async (req, res) => {
     }, 0);
 
     const shippingCost = 2.0; // Fixed 2 KD shipping for all orders
-    /* Gift wrapping, priced here and read from the cart — see config/pricing. */
-    const wrap = resolveGiftWrap(cart && cart.giftWrap);
+    /* Gift wrapping, priced here and read from the cart — see config/pricing.
+       Charged per wrapped line, so the count comes from the cart's own items
+       and never from anything the client sent. */
+    const wrap = summariseGiftWrap(cart && cart.items, cart && cart.giftWrap && cart.giftWrap.message);
+    const isWrapped = (productId) => (cart.items.find(
+        i => String(i.product._id || i.product) === String(productId)
+    ) || {}).giftWrap === true;
     const total = subtotal + shippingCost + wrap.fee;
 
     // Create order
@@ -891,7 +908,8 @@ const processCOD = asyncHandler(async (req, res) => {
             nameAr: item.product.nameAr,
             price: item.product.price,
             quantity: item.quantity,
-            image: item.product.images[0]?.url
+            image: item.product.images[0]?.url,
+            giftWrap: isWrapped(item.product._id)
         })),
         shippingAddress,
         paymentMethod: 'cod',

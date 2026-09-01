@@ -5,7 +5,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const stockService = require('../services/stockService');
-const { resolveGiftWrap } = require('../config/pricing');
+const { summariseGiftWrap, wantsWrap } = require('../config/pricing');
 const { withTransaction } = require('../utils/transaction');
 const promoService = require('../services/promoService');
 const { uploadToCloudinary, deleteFromCloudinary, getPublicIdFromUrl } = require('../config/cloudinary');
@@ -1933,7 +1933,12 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
                 exchangeDiff: item.exchangeDiff !== undefined ? Number(item.exchangeDiff) : existing.exchangeDiff,
                 // Reset stockHeld to 0 if the product changed (exchange) so reconcile
                 // restores old product stock and deducts new product stock.
-                stockHeld: sameProduct ? (existing.stockHeld || 0) : 0
+                stockHeld: sameProduct ? (existing.stockHeld || 0) : 0,
+                // Kept when the edit says nothing about it, so re-saving a
+                // receipt does not quietly unwrap what the cashier wrapped.
+                giftWrap: item.giftWrap !== undefined
+                    ? wantsWrap(item.giftWrap)
+                    : (existing.giftWrap === true)
             };
         });
         order.markModified('items');
@@ -1957,9 +1962,18 @@ const updateOrderReceipt = asyncHandler(async (req, res) => {
     /* Gift wrapping is priced here, never taken from the request — the same
      * rule the storefront checkout follows. Left untouched when the field is
      * absent, so an edit that says nothing about wrapping does not silently
-     * remove it. */
-    if (giftWrap !== undefined) {
-        order.giftWrap = resolveGiftWrap(giftWrap);
+     * remove it.
+     *
+     * The per-line flags come in with `items` and are already on the order by
+     * this point; re-pricing from them is what keeps the fee honest when a
+     * wrapped line is removed or refunded. */
+    if (giftWrap !== undefined || items !== undefined) {
+        order.giftWrap = summariseGiftWrap(
+            order.items,
+            giftWrap !== undefined
+                ? (giftWrap && giftWrap.message)
+                : (order.giftWrap && order.giftWrap.message)
+        );
     }
 
     // Recalculate subtotal, refundAmount and total
@@ -2059,7 +2073,9 @@ const createOrder = asyncHandler(async (req, res) => {
         image: item.image || '',
         price: Number(item.price) || 0,
         quantity: Math.max(1, Number(item.quantity) || 1),
-        stockHeld: 0
+        stockHeld: 0,
+        // A cashier ticks wrapping line by line, exactly as a customer does.
+        giftWrap: wantsWrap(item.giftWrap)
     }));
 
     const newOrderData = {
@@ -2124,8 +2140,13 @@ const createOrder = asyncHandler(async (req, res) => {
     }
 
     newOrderData.discount = resolvedDiscount;
-    // Priced here, not taken from the request — see config/pricing.
-    newOrderData.giftWrap = resolveGiftWrap(giftWrap);
+    /* Priced here, not taken from the request — see config/pricing. Charged
+       per wrapped line, counted from the lines themselves; the request only
+       ever says which of them to wrap and what the card should read. */
+    newOrderData.giftWrap = summariseGiftWrap(
+        normalisedItems,
+        giftWrap && giftWrap.message
+    );
     newOrderData.total = Math.max(
         0,
         newOrderData.subtotal + newOrderData.shippingCost + newOrderData.giftWrap.fee - resolvedDiscount

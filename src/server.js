@@ -209,6 +209,7 @@ app.use('/api/auth/refresh', refreshLimiter, require('./routes/auth'));
 app.use('/api/auth', authLimiter, require('./routes/auth'));
 
 // Standard API routes
+app.use('/api/pricing', apiLimiter, require('./routes/pricing'));
 app.use('/api/products', apiLimiter, require('./routes/products'));
 app.use('/api/categories', apiLimiter, require('./routes/categories'));
 app.use('/api/cart', apiLimiter, require('./routes/cart'));

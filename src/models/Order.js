@@ -37,7 +37,15 @@ const orderItemSchema = new mongoose.Schema({
      * `quantity`, which is what makes edits and refunds idempotent: replaying
      * the same save can never double-deduct or double-restore.
      */
-    stockHeld: { type: Number, default: 0, min: 0 }
+    stockHeld: { type: Number, default: 0, min: 0 },
+    /**
+     * Whether this line was gift wrapped, and charged a wrapping fee.
+     *
+     * The order-level `giftWrap` below still carries the totals, so receipts
+     * and emails written before per-item wrapping keep working and orders
+     * placed then still render. This flag is what says *which* items.
+     */
+    giftWrap: { type: Boolean, default: false }
 });
 
 // Status history entry schema for tracking status changes
@@ -128,7 +136,13 @@ const orderSchema = new mongoose.Schema({
         }
     },
     /**
-     * Gift wrapping, charged once per order however many items it holds.
+     * Gift wrapping for the order as a whole: whether any line is wrapped,
+     * what the wrapping came to in total, and the one card message that goes
+     * with the parcel.
+     *
+     * Which lines are wrapped is on the items themselves. This stays because
+     * every receipt, email and print renderer totals from it, and because an
+     * order placed before per-item wrapping has only this.
      *
      * `fee` is stored rather than recomputed so an old order still totals to
      * what the customer actually paid after the price changes.
