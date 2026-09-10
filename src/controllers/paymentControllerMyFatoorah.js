@@ -208,7 +208,7 @@ const initApplePaySession = asyncHandler(async (req, res) => {
 // @route   POST /api/payments/create-session
 // @access  Private
 const createPaymentSession = asyncHandler(async (req, res) => {
-    const { paymentMethod, shippingAddress } = req.body;
+    const { paymentMethod, shippingAddress, promoCode: promoCodeStr, promoVisitId } = req.body;
 
     const mfStatus = getMyFatoorahStatus();
     if (!mfStatus.configured) {
@@ -251,7 +251,43 @@ const createPaymentSession = asyncHandler(async (req, res) => {
     const isWrapped = (productId) => (cart.items.find(
         i => String(i.product._id || i.product) === String(productId)
     ) || {}).giftWrap === true;
-    const total = subtotal + shippingCost + wrap.fee;
+
+    /* Promo code, priced by the shared calculator.
+     *
+     * This route created the order and charged for it without ever looking at
+     * a promo code, so a shopper who had one applied was quoted a discount at
+     * checkout and billed the full amount here. executePayment and Deema had
+     * always priced it; this one had been left behind. */
+    let promoData = null;
+    let totalDiscount = 0;
+
+    if (promoCodeStr && String(promoCodeStr).trim()) {
+        const result = await promoService.buildOrderPromo(
+            promoCodeStr,
+            cart.items.map(item => ({
+                product: item.product._id,
+                name: item.product.name,
+                price: item.product.price,
+                quantity: item.quantity,
+            })),
+            {
+                userId: req.user._id,
+                source: promoVisitId ? 'link' : 'manual_entry',
+                visitId: promoVisitId,
+            }
+        );
+
+        if (result.promoData) {
+            promoData = result.promoData;
+            totalDiscount = promoData.totalDiscount;
+            // Counted only once payment is confirmed, like every other path.
+            console.log(`[PAYMENTS] Promo "${promoData.code}" applied — discount ${totalDiscount} KWD`);
+        } else {
+            console.log(`[PAYMENTS] Promo "${promoCodeStr}" rejected: ${result.reason}`);
+        }
+    }
+
+    const total = parseFloat((subtotal + shippingCost + wrap.fee - totalDiscount).toFixed(3));
 
     // Create order first
     const order = await Order.createWithRetry({
@@ -272,6 +308,8 @@ const createPaymentSession = asyncHandler(async (req, res) => {
         subtotal,
         shippingCost,
         giftWrap: wrap,
+        discount: totalDiscount,
+        promoCode: promoData,
         total
     });
 
