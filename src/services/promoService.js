@@ -29,6 +29,29 @@ function calculateDiscount(promo, items) {
     let totalDiscount = 0;
     let discountedUnits = 0;
 
+    /* The basket minimum, checked before anything is discounted.
+     *
+     * Measured on the goods only — shipping and gift wrapping are not what a
+     * "spend 20 KWD" offer is asking for, and counting them would let a 18 KWD
+     * basket qualify on delivery alone. */
+    const minOrderAmount = Number(promo.minOrderAmount) || 0;
+    if (minOrderAmount > 0) {
+        const subtotal = (items || []).reduce(
+            (sum, i) => sum + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0
+        );
+        if (round3(subtotal) < minOrderAmount) {
+            return {
+                discounts: [],
+                totalDiscount: 0,
+                matchedProducts: 0,
+                discountedUnits: 0,
+                belowMinimum: true,
+                minOrderAmount,
+                subtotal: round3(subtotal),
+            };
+        }
+    }
+
     for (const item of items || []) {
         const itemProductId = String(item.product?._id || item.product || '');
         if (!itemProductId) continue;
@@ -84,6 +107,8 @@ function calculateDiscount(promo, items) {
         totalDiscount: round3(totalDiscount),
         matchedProducts: discounts.length,
         discountedUnits,
+        belowMinimum: false,
+        minOrderAmount,
     };
 }
 
@@ -120,7 +145,15 @@ async function buildOrderPromo(code, items, { userId, source = 'manual_entry', v
     if (!resolved.ok) return { promoData: null, reason: resolved.reason };
 
     const { promo } = resolved;
-    const { discounts, totalDiscount } = calculateDiscount(promo, items);
+    const { discounts, totalDiscount, belowMinimum, minOrderAmount } =
+        calculateDiscount(promo, items);
+
+    if (belowMinimum) {
+        return {
+            promoData: null,
+            reason: `This promo code needs a basket of at least ${minOrderAmount.toFixed(3)} KWD`,
+        };
+    }
 
     if (totalDiscount <= 0) {
         return { promoData: null, reason: 'This promo code does not apply to these items' };

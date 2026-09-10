@@ -1,12 +1,12 @@
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
-const PromoCode = require('../models/PromoCode');
 const { asyncHandler } = require('../middleware/error');
 const { paginate } = require('../utils/helpers');
 const { emitNewOrder } = require('../socketHandler');
 const { WhatsAppService } = require('../services/whatsappService');
 const stockService = require('../services/stockService');
+const promoService = require('../services/promoService');
 const { summariseGiftWrap } = require('../config/pricing');
 
 // @desc    Create new order
@@ -101,93 +101,33 @@ const createOrder = asyncHandler(async (req, res) => {
      * order for nothing. */
     const wrap = summariseGiftWrap(orderItems, cart.giftWrap && cart.giftWrap.message);
 
-    // ── Promo Code Validation & Discount Calculation ──
+    /* ── Promo code ──
+     *
+     * Priced by the shared calculator, which is also what quotes the shopper
+     * at /validate and what MyFatoorah and Deema charge from. This route used
+     * to carry its own copy of that arithmetic — eighty lines of it — and the
+     * copy had already drifted: it never enforced the basket minimum, and it
+     * read `p.product._id` on a rule whose product had been deleted, which
+     * populates to null and threw a TypeError the customer met as a 500.
+     *
+     * One calculator means the quote and the charge cannot disagree, whichever
+     * way the order is paid for.
+     */
     let promoData = null;
     let totalDiscount = 0;
 
     if (promoCodeStr && promoCodeStr.trim()) {
-        const promo = await PromoCode.findOne({ code: promoCodeStr.toUpperCase().trim() })
-            .populate('products.product', 'name nameAr price');
+        const result = await promoService.buildOrderPromo(promoCodeStr, orderItems, {
+            userId: req.user._id,
+            source: 'manual_entry',
+        });
 
-        if (promo) {
-            const validity = promo.canUserUse(req.user._id);
-            if (validity.valid) {
-                // Calculate per-product discounts
-                const discounts = [];
-                let totalDiscountedItems = 0;
-                for (const orderItem of orderItems) {
-                    const promoProduct = promo.products.find(
-                        p => p.product._id.toString() === orderItem.product.toString()
-                    );
-                    if (promoProduct) {
-                        let allowedQuantity = orderItem.quantity;
-
-                        // Per-product quantity limit
-                        if (promoProduct.maxDiscountedQuantity !== null && promoProduct.maxDiscountedQuantity !== undefined) {
-                            allowedQuantity = Math.min(allowedQuantity, promoProduct.maxDiscountedQuantity);
-                        }
-
-                        // Global per-order quantity limit
-                        if (promo.maxQuantityPerOrder !== null && promo.maxQuantityPerOrder !== undefined) {
-                            const remainingGlobal = Math.max(0, promo.maxQuantityPerOrder - totalDiscountedItems);
-                            allowedQuantity = Math.min(allowedQuantity, remainingGlobal);
-                        }
-
-                        if (allowedQuantity > 0) {
-                            let discount = 0;
-                            if (promoProduct.discountType === 'percentage') {
-                                discount = (orderItem.price * promoProduct.discountValue / 100) * allowedQuantity;
-                            } else {
-                                discount = promoProduct.discountValue * allowedQuantity;
-                            }
-                            const itemTotal = orderItem.price * allowedQuantity;
-                            discount = Math.min(discount, itemTotal);
-
-                            discounts.push({
-                                product: orderItem.product,
-                                productName: orderItem.name,
-                                discountType: promoProduct.discountType,
-                                discountValue: promoProduct.discountValue,
-                                discountedQuantity: allowedQuantity,
-                                discountAmount: parseFloat(discount.toFixed(3))
-                            });
-                            totalDiscount += discount;
-                            totalDiscountedItems += allowedQuantity;
-                        }
-                    }
-                }
-
-                totalDiscount = parseFloat(totalDiscount.toFixed(3));
-
-                if (totalDiscount > 0) {
-                    promoData = {
-                        code: promo.code,
-                        name: promo.name,
-                        promoCodeId: promo._id,
-                        totalDiscount,
-                        discounts
-                    };
-
-                    // Atomic usage increment to prevent race conditions
-                    const userUsageEntry = promo.usedBy.find(u => u.user.toString() === req.user._id.toString());
-                    if (userUsageEntry) {
-                        await PromoCode.updateOne(
-                            { _id: promo._id, 'usedBy.user': req.user._id },
-                            { $inc: { usageCount: 1, 'usedBy.$.count': 1 } }
-                        );
-                    } else {
-                        await PromoCode.updateOne(
-                            { _id: promo._id },
-                            { $inc: { usageCount: 1 }, $push: { usedBy: { user: req.user._id, count: 1 } } }
-                        );
-                    }
-                    console.log(`[ORDER] ✅ Promo "${promo.code}" applied — discount ${totalDiscount} KWD`);
-                }
-            } else {
-                console.log(`[ORDER] ⚠️ Promo "${promoCodeStr}" rejected: ${validity.reason}`);
-            }
+        if (result.promoData) {
+            promoData = result.promoData;
+            totalDiscount = promoData.totalDiscount;
+            console.log(`[ORDER] ✅ Promo "${promoData.code}" applied — discount ${totalDiscount} KWD`);
         } else {
-            console.log(`[ORDER] ⚠️ Promo code "${promoCodeStr}" not found — ignoring`);
+            console.log(`[ORDER] ⚠️ Promo "${promoCodeStr}" rejected: ${result.reason}`);
         }
     }
 
@@ -220,6 +160,17 @@ const createOrder = asyncHandler(async (req, res) => {
             console.error('[ORDER] Stock rollback failed after create error:', rollbackErr.message);
         });
         throw err;
+    }
+
+    /* Counted once the order exists, through the same guarded helper the
+       gateways use. The old inline increment ran before there was an order to
+       stamp, so `promoCode.usageCounted` stayed false — which meant deleting
+       the order could never give the use back, and a retry could spend the
+       code twice. */
+    if (promoData) {
+        await promoService.countUsageOnce(order).catch(err => {
+            console.error('[ORDER] Promo usage count failed:', err.message);
+        });
     }
 
     // Clear cart after order

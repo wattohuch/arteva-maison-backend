@@ -83,6 +83,38 @@ const promoCodeSchema = new mongoose.Schema({
         type: Number,
         default: null // null = unlimited items discounted per order
     },
+    /**
+     * Smallest basket this code will discount, compared against the subtotal
+     * before shipping and wrapping. 0 means no minimum.
+     *
+     * The admin form has always asked for this. It had nowhere to be stored,
+     * so it was dropped on save and never enforced — a code advertised as
+     * "10% off orders over 20 KWD" discounted a 5 KWD basket just the same.
+     */
+    minOrderAmount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    /**
+     * What a product gets when it is attached to this code without a discount
+     * of its own — "this code is 20% off, on whatever I add to it".
+     *
+     * Each attached product still stores its own type and value, so one code
+     * can hold different discounts per product; this only supplies the default
+     * the admin screen offers. It was already read there and never persisted,
+     * so every product silently defaulted to 10%.
+     */
+    defaultDiscountType: {
+        type: String,
+        enum: ['percentage', 'fixed'],
+        default: 'percentage'
+    },
+    defaultDiscountValue: {
+        type: Number,
+        default: 10,
+        min: 0
+    },
     usedBy: [promoUsageSchema],
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,

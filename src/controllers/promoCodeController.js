@@ -9,23 +9,51 @@ const { asyncHandler } = require('../middleware/error');
 // @route   POST /api/admin/promo-codes
 // @access  Private/Admin
 const createPromoCode = asyncHandler(async (req, res) => {
-    const { code, name, description, expiresAt, maxUsage, perUserLimit, maxQuantityPerOrder, products } = req.body;
+    const {
+        code, name, description, isActive, expiresAt,
+        maxUsage, perUserLimit, maxQuantityPerOrder, minOrderAmount,
+        defaultDiscountType, defaultDiscountValue, products
+    } = req.body;
+
+    /* Say what is missing, in the words the form uses.
+     *
+     * `code.toUpperCase()` used to be the first thing this did, so a request
+     * without a code died as a TypeError and surfaced as a bare 500. And with
+     * `name` required by the schema but absent from the admin form, every
+     * create failed on a Mongoose ValidationError that the screen threw away —
+     * the save button simply stopped spinning and nothing else happened. */
+    const missing = [];
+    if (!code || !String(code).trim()) missing.push('Code');
+    if (!name || !String(name).trim()) missing.push('Name');
+    if (!expiresAt) missing.push('Expiry date');
+    if (missing.length) {
+        res.status(400);
+        throw new Error(`${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} required`);
+    }
 
     // Check for duplicate code
-    const existing = await PromoCode.findOne({ code: code.toUpperCase().trim() });
+    const existing = await PromoCode.findOne({ code: String(code).toUpperCase().trim() });
     if (existing) {
         res.status(400);
         throw new Error(`Promo code "${code}" already exists`);
     }
 
+    /* Empty string, null and undefined all mean "no limit" here; 0 does not,
+       and `|| null` would have turned a deliberate 0 into unlimited. */
+    const limit = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+
     const promoCode = await PromoCode.create({
-        code: code.toUpperCase().trim(),
-        name,
+        code: String(code).toUpperCase().trim(),
+        name: String(name).trim(),
         description,
+        isActive: isActive === undefined ? true : Boolean(isActive),
         expiresAt,
-        maxUsage: maxUsage || null,
-        perUserLimit: perUserLimit || null,
-        maxQuantityPerOrder: maxQuantityPerOrder || null,
+        maxUsage: limit(maxUsage),
+        perUserLimit: limit(perUserLimit),
+        maxQuantityPerOrder: limit(maxQuantityPerOrder),
+        minOrderAmount: Number(minOrderAmount) || 0,
+        defaultDiscountType: defaultDiscountType === 'fixed' ? 'fixed' : 'percentage',
+        defaultDiscountValue: Number(defaultDiscountValue) || 0,
         products: products || [],
         createdBy: req.user._id
     });
@@ -166,7 +194,13 @@ const updatePromoCode = asyncHandler(async (req, res) => {
         throw new Error('Promo code not found');
     }
 
-    const { code, name, description, isActive, expiresAt, maxUsage, perUserLimit, maxQuantityPerOrder } = req.body;
+    const {
+        code, name, description, isActive, expiresAt,
+        maxUsage, perUserLimit, maxQuantityPerOrder, minOrderAmount,
+        defaultDiscountType, defaultDiscountValue
+    } = req.body;
+
+    const limit = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
 
     // If changing code, check for duplicates
     if (code && code.toUpperCase().trim() !== promoCode.code) {
@@ -182,9 +216,16 @@ const updatePromoCode = asyncHandler(async (req, res) => {
     if (description !== undefined) promoCode.description = description;
     if (isActive !== undefined) promoCode.isActive = isActive;
     if (expiresAt !== undefined) promoCode.expiresAt = expiresAt;
-    if (maxUsage !== undefined) promoCode.maxUsage = maxUsage || null;
-    if (perUserLimit !== undefined) promoCode.perUserLimit = perUserLimit || null;
-    if (maxQuantityPerOrder !== undefined) promoCode.maxQuantityPerOrder = maxQuantityPerOrder || null;
+    if (maxUsage !== undefined) promoCode.maxUsage = limit(maxUsage);
+    if (perUserLimit !== undefined) promoCode.perUserLimit = limit(perUserLimit);
+    if (maxQuantityPerOrder !== undefined) promoCode.maxQuantityPerOrder = limit(maxQuantityPerOrder);
+    if (minOrderAmount !== undefined) promoCode.minOrderAmount = Number(minOrderAmount) || 0;
+    if (defaultDiscountType !== undefined) {
+        promoCode.defaultDiscountType = defaultDiscountType === 'fixed' ? 'fixed' : 'percentage';
+    }
+    if (defaultDiscountValue !== undefined) {
+        promoCode.defaultDiscountValue = Number(defaultDiscountValue) || 0;
+    }
 
     await promoCode.save();
 
@@ -252,6 +293,16 @@ const addProductsToPromo = asyncHandler(async (req, res) => {
         }
     }
 
+    /* A product attached without a discount of its own takes the code's
+       default, so "this code is 20% off, add these fifty products to it" does
+       not mean typing 20 fifty times. An explicit value still wins. */
+    const fallbackType = promoCode.defaultDiscountType || 'percentage';
+    const fallbackValue = Number(promoCode.defaultDiscountValue) || 0;
+    const typeOf = (p) => (p.discountType === 'fixed' || p.discountType === 'percentage'
+        ? p.discountType : fallbackType);
+    const valueOf = (p) => (p.discountValue === undefined || p.discountValue === null || p.discountValue === ''
+        ? fallbackValue : Number(p.discountValue));
+
     // Upsert: update existing, add new
     for (const newProduct of products) {
         const existingIndex = promoCode.products.findIndex(
@@ -260,15 +311,15 @@ const addProductsToPromo = asyncHandler(async (req, res) => {
 
         if (existingIndex >= 0) {
             // Update existing
-            promoCode.products[existingIndex].discountType = newProduct.discountType;
-            promoCode.products[existingIndex].discountValue = newProduct.discountValue;
+            promoCode.products[existingIndex].discountType = typeOf(newProduct);
+            promoCode.products[existingIndex].discountValue = valueOf(newProduct);
             promoCode.products[existingIndex].maxDiscountedQuantity = newProduct.maxDiscountedQuantity || null;
         } else {
             // Add new
             promoCode.products.push({
                 product: newProduct.product,
-                discountType: newProduct.discountType,
-                discountValue: newProduct.discountValue,
+                discountType: typeOf(newProduct),
+                discountValue: valueOf(newProduct),
                 maxDiscountedQuantity: newProduct.maxDiscountedQuantity || null
             });
         }
@@ -337,8 +388,16 @@ const validatePromoCode = asyncHandler(async (req, res) => {
 
     // Same calculator the payment path uses, so the quoted saving is exactly
     // what the shopper will be charged.
-    const { discounts, totalDiscount, matchedProducts, discountedUnits } =
+    const { discounts, totalDiscount, matchedProducts, discountedUnits, belowMinimum, minOrderAmount } =
         promoService.calculateDiscount(promo, Array.isArray(cartItems) ? cartItems : []);
+
+    /* A basket that is simply too small is not the same as a code that does
+       not cover anything in it. Told apart here, because "spend 2 KWD more"
+       is something a shopper can act on and "doesn't apply" is not. */
+    if (belowMinimum) {
+        res.status(400);
+        throw new Error(`This promo code needs a basket of at least ${minOrderAmount.toFixed(3)} KWD`);
+    }
 
     res.json({
         success: true,
@@ -350,6 +409,7 @@ const validatePromoCode = asyncHandler(async (req, res) => {
             discounts,
             totalDiscount,
             discountedUnits,
+            minOrderAmount,
             applicableProducts: promo.products.length,
             matchedProducts
         }
