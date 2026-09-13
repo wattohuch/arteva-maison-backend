@@ -265,11 +265,34 @@ app.post('/api/site-visit', apiLimiter, async (req, res) => {
 // Health check (no rate limiting)
 // Surfaces payment gateway readiness so a misconfigured key is visible from
 // monitoring rather than only when a shopper reaches checkout.
+/** When this process came up — a deploy shows as a fresh value here. */
+const STARTED_AT = new Date().toISOString();
+
 app.get('/api/health', (req, res) => {
     const { getMyFatoorahStatus, getDeemaStatus } = require('./config/paymentConfig');
+
+    /* Which build is answering.
+     *
+     * Deploying is a push and a wait, and until now there was no way to tell
+     * from outside whether a given change had actually landed — every endpoint
+     * that changed sits behind auth, so "is it live yet" could only be answered
+     * by trying the thing and seeing. A short commit makes it a question with
+     * an answer, for a monitor as much as for a person.
+     *
+     * Render sets RENDER_GIT_COMMIT on every deploy; the fallbacks cover other
+     * hosts and a local run, where it is simply unknown. Seven characters, the
+     * length git itself abbreviates to — enough to identify a build, and not a
+     * secret in any case: it names a commit, it does not reveal its contents. */
+    const commit = process.env.RENDER_GIT_COMMIT
+        || process.env.GIT_COMMIT
+        || process.env.SOURCE_VERSION
+        || null;
+
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
+        commit: commit ? String(commit).slice(0, 7) : 'unknown',
+        startedAt: STARTED_AT,
         socketConnected: !!io,
         gateways: {
             myfatoorah: getMyFatoorahStatus().configured,
