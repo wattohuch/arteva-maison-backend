@@ -371,6 +371,42 @@ orderSchema.pre('save', async function () {
  * 
  * Usage: const order = await Order.createWithRetry({ user, items, ... });
  */
+/**
+ * Claim the right to mark this order paid, exactly once.
+ *
+ * A single sale is confirmed from three directions: the browser comes back to
+ * the callback, the success page calls verify, and the gateway posts a webhook.
+ * All three can arrive at once.
+ *
+ * Each of them used to guard with a plain read — `if (order.paymentStatus ===
+ * 'paid') return` — and then deduct stock further down, saving the order only
+ * at the end. Two arriving together both read "not paid", both passed, and both
+ * took the units off the shelf: one sale, stock down twice, and nothing to say
+ * it had happened. Promo usage already had this problem and was fixed with an
+ * atomic claim; the stock deduction beside it never was.
+ *
+ * This is that claim. The condition and the write are one operation, so exactly
+ * one caller is told to go ahead and do the side effects.
+ *
+ * @param {ObjectId|string} orderId
+ * @param {object} [fields] extra fields to set on the winning write
+ * @returns {Promise<boolean>} true only for the caller that won the claim
+ */
+orderSchema.statics.claimPaidOnce = async function (orderId, fields = {}) {
+    const result = await this.updateOne(
+        { _id: orderId, paymentStatus: { $ne: 'paid' } },
+        {
+            $set: {
+                paymentStatus: 'paid',
+                orderStatus: 'confirmed',
+                paidAt: new Date(),
+                ...fields,
+            },
+        }
+    );
+    return result.modifiedCount === 1;
+};
+
 orderSchema.statics.createWithRetry = async function (orderData, maxRetries = 5) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {

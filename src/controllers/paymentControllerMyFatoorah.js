@@ -625,6 +625,20 @@ const verifyPayment = asyncHandler(async (req, res) => {
             throw new Error('Payment amount mismatch');
         }
 
+        /* Claimed atomically, not read-then-write. The callback, verify and
+           the webhook can all arrive for one sale at once; a plain read let
+           two of them past together and the stock below came off twice. */
+        const claimed = await Order.claimPaidOnce(order._id, {
+            myfatoorahTransactionId: paymentStatus.transactionId,
+        });
+        if (!claimed) {
+            return res.json({
+                success: true,
+                message: 'Payment already processed',
+                data: { orderNumber: order.orderNumber, status: 'paid' }
+            });
+        }
+
         order.paymentStatus = 'paid';
         order.orderStatus = 'confirmed';
         order.myfatoorahTransactionId = paymentStatus.transactionId;
@@ -773,8 +787,18 @@ const handleWebhook = asyncHandler(async (req, res) => {
 
         const order = await Order.findById(paymentStatus.orderId).populate('user', 'name email phone language');
 
-        // Idempotency: only process if not already paid
-        if (order && paymentStatus.status === 'Paid' && order.paymentStatus !== 'paid') {
+        /* Claimed atomically, not read-then-write.
+         *
+         * `order.paymentStatus !== 'paid'` is a read, and the stock below came
+         * off before the order was saved. The browser callback and this webhook
+         * arrive for the same sale at the same moment, so both could pass that
+         * read and both deduct. Only the caller that wins the claim proceeds. */
+        const claimed = order && paymentStatus.status === 'Paid'
+            && await Order.claimPaidOnce(order._id, {
+                myfatoorahTransactionId: paymentStatus.transactionId,
+            });
+
+        if (claimed) {
             order.paymentStatus = 'paid';
             order.orderStatus = 'confirmed';
             order.myfatoorahTransactionId = paymentStatus.transactionId;
@@ -1073,6 +1097,17 @@ const handlePaymentCallback = asyncHandler(async (req, res) => {
                 await order.save();
                 console.error('Payment amount mismatch:', { expected: order.total, received: paymentStatus.amount });
                 return res.redirect(frontendUrls.paymentError({ error: 'amount_mismatch', order: order.orderNumber }));
+            }
+
+            /* Claimed atomically, not read-then-write. The webhook fires for
+               the same sale as this redirect, and the read above let both past
+               together while the stock below came off twice. */
+            const claimed = await Order.claimPaidOnce(order._id, {
+                myfatoorahTransactionId: paymentStatus.transactionId,
+            });
+            if (!claimed) {
+                console.log('Payment already processed for order:', order.orderNumber);
+                return res.redirect(frontendUrls.orderSuccess(order.orderNumber));
             }
 
             // Payment successful

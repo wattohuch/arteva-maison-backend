@@ -37,8 +37,18 @@ async function incrementPromoUsage(order) {
 
 // Helper: Confirm paid order (stock, cart, notifications)
 async function confirmPaidOrder(order) {
-    if (order.paymentStatus === 'paid') return; // idempotent
+    /* Claimed atomically, not read-then-write.
+     *
+     * The callback, the verify call and the webhook can all arrive for one
+     * sale at the same moment. A plain `if (paymentStatus === 'paid') return`
+     * let two of them past at once and the stock below came off twice for a
+     * single order. Only the caller that wins this claim runs the side
+     * effects. */
+    const claimed = await Order.claimPaidOnce(order._id);
+    if (!claimed) return;
 
+    // Mirror the winning write onto the in-memory copy, so the save() below
+    // and the notifications that read it agree with what is stored.
     order.paymentStatus = 'paid';
     order.orderStatus = 'confirmed';
     order.paidAt = new Date();
