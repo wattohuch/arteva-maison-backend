@@ -465,7 +465,9 @@ const section = (title) => console.log(`\n── ${title} ──`);
         method: 'POST',
         body: JSON.stringify({
             shippingAddress: { street: 's', city: 'c', phone: '96500000000' },
-            paymentMethod: 'cod',
+            // A live method: cash on delivery is retired and this route refuses
+            // it, so using it here would test the refusal rather than the stock.
+            paymentMethod: 'knet',
         }),
     }, shopTok);
     check('checkout succeeds for the 2 in stock', checkout.status === 201, JSON.stringify(checkout.body).slice(0, 140));

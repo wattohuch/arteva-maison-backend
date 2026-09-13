@@ -478,16 +478,25 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     const wasCancelled = oldStatus === 'cancelled';
     const nowCancelled = status === 'cancelled';
 
+    /* Taken before the status changes. This snapshot used to be read after it,
+       which for a gateway order meant snapshotting an order that already read
+       as cancelled - so it held nothing and nothing came back to the shelf. */
+    const heldBefore = stockService.snapshotItems(order);
+
     order.updateStatus(status, 'Status updated by admin', req.user._id);
 
     if (status === 'paid' || status === 'delivered') {
         order.paymentStatus = 'paid';
     }
 
-    const stockSnapshot = stockService.snapshotItems(order);
+    const stockSnapshot = heldBefore;
 
     if (nowCancelled && !wasCancelled) {
-        await stockService.releaseOrderStock(order);
+        await stockService.releaseOrderStock(order, { holdings: heldBefore });
+        // The sale is off, so the code it used goes back on the shelf too.
+        await promoService.releaseUsage(order).catch(err => {
+            console.error('[PROMO] Usage release failed:', err.message);
+        });
     } else if (wasCancelled && !nowCancelled) {
         // Reviving a cancelled order has to take its stock back out. Throws
         // INSUFFICIENT_STOCK if those units have since been sold, which is the

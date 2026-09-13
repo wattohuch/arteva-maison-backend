@@ -15,6 +15,19 @@ const { summariseGiftWrap } = require('../config/pricing');
 const createOrder = asyncHandler(async (req, res) => {
     const { shippingAddress, paymentMethod, notes, promoCode: promoCodeStr } = req.body;
 
+    /* Cash on delivery was retired, and this route was the last way to get one.
+     *
+     * The method is passed straight through to the order, and Order.paymentMethod
+     * defaults to 'cod' — so omitting it entirely produced a confirmed cash
+     * order, for the one payment method the shop no longer offers. It then
+     * reached the driver app as cash to collect. /payments/cod already refuses
+     * in these words; this refuses in the same ones rather than leaving a second
+     * door open beside it. */
+    if (!paymentMethod || paymentMethod === 'cod') {
+        res.status(400);
+        throw new Error('Cash on delivery is no longer available. Please pay by card, KNET or Deema.');
+    }
+
     // Normalize phone number to international format before saving
     if (shippingAddress && shippingAddress.phone) {
         shippingAddress.phone = WhatsAppService.normalizePhoneInternational(shippingAddress.phone);
@@ -401,6 +414,9 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
     if (orderStatus) {
         const wasCancelled = order.orderStatus === 'cancelled';
+        // Taken before the status changes: once the order reads as cancelled,
+        // a legacy order's holdings compute as zero and nothing is returned.
+        const heldBefore = stockService.snapshotItems(order);
         order.orderStatus = orderStatus;
         if (orderStatus === 'delivered') {
             order.deliveredAt = Date.now();
@@ -416,7 +432,11 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
          * call moves nothing. */
         if (orderStatus === 'cancelled' && !wasCancelled) {
             order.cancelledAt = Date.now();
-            await stockService.releaseOrderStock(order);
+            await stockService.releaseOrderStock(order, { holdings: heldBefore });
+            // The sale is off, so the code it used goes back on the shelf too.
+            await promoService.releaseUsage(order).catch(err => {
+                console.error('[PROMO] Usage release failed:', err.message);
+            });
         } else if (wasCancelled && orderStatus !== 'cancelled') {
             // Un-cancelling has to take the stock back out, or the order ships
             // goods the shelf has already been credited for.
@@ -496,6 +516,9 @@ const cancelOrder = asyncHandler(async (req, res) => {
         throw new Error('Cancellation period expired. Orders can only be cancelled within 14 days.');
     }
 
+    // Taken before the status changes, for the same reason as above.
+    const heldBefore = stockService.snapshotItems(order);
+
     // Update order status
     order.updateStatus('cancelled', reason || 'Cancelled by customer', req.user._id);
     order.cancelledAt = new Date();
@@ -505,7 +528,17 @@ const cancelOrder = asyncHandler(async (req, res) => {
      * The guard above already refuses an order that is `cancelled`, but that is
      * a read-then-write check: two cancel requests in flight together both pass
      * it. The reconcile is what actually makes a second restore a no-op. */
-    await stockService.releaseOrderStock(order);
+    await stockService.releaseOrderStock(order, { holdings: heldBefore });
+
+    /* Give the promo use back.
+     *
+     * A cancelled sale should not permanently consume a limited-run code, and
+     * a customer on a one-per-person code who cancels would otherwise be locked
+     * out of it for good. Only order deletion did this before, so every
+     * cancellation quietly spent a use on an order that never happened. */
+    await promoService.releaseUsage(order).catch(err => {
+        console.error('[PROMO] Usage release failed:', err.message);
+    });
 
     // Update payment status - no automatic refund
     if (order.paymentStatus === 'paid') {

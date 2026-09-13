@@ -287,8 +287,22 @@ async function syncOrderStock(order, { previousItems, session } = {}) {
  * what stops a double-clicked Cancel, or a status set to `cancelled` twice,
  * from crediting the shelf twice.
  */
-async function releaseOrderStock(order, { session } = {}) {
-    const targets = buildTargets(currentHoldings(order), [], () => 0);
+async function releaseOrderStock(order, { session, holdings } = {}) {
+    /* `holdings` is what the order was holding *before* the caller marked it
+     * cancelled, and every cancel path must pass it.
+     *
+     * currentHoldings reads orderStatus to decide that a cancelled order holds
+     * nothing - which is what makes releasing twice a no-op. But all three
+     * cancel paths set the status first and released second, so by the time
+     * holdings were computed the order already read as cancelled and came back
+     * holding zero. Orders written by the gateways are the ones this hurt: they
+     * carry no stockLedgerVersion, so their holdings are inferred from
+     * quantity, and that inference is exactly what the cancelled flag zeroes.
+     * The units stayed deducted for good.
+     *
+     * Falling back to currentHoldings keeps a caller that has not mutated the
+     * order working unchanged. */
+    const targets = buildTargets(holdings || currentHoldings(order), [], () => 0);
     await reconcile(targets, { session });
     for (const item of order.items || []) item.stockHeld = 0;
     order.stockLedgerVersion = STOCK_LEDGER_VERSION;

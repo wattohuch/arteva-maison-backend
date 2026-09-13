@@ -240,7 +240,28 @@ async function countUsageOnce(order) {
  */
 async function releaseUsage(order) {
     const promoRef = order.promoCode;
-    if (!promoRef || !promoRef.promoCodeId || !promoRef.usageCounted) return;
+    if (!promoRef || !promoRef.promoCodeId || !promoRef.usageCounted) return false;
+
+    /* Claimed, the mirror of countUsageOnce.
+     *
+     * The guard above is a read, and nothing used to clear the flag, so calling
+     * this twice gave the use back twice - handing a limited-run code free
+     * slots it had never sold. That did not matter while only order deletion
+     * called it, because the order stopped existing; it matters now that a
+     * cancellation calls it too and the order survives.
+     *
+     * Flipping the flag and reading the result is one operation, so only the
+     * caller that wins puts the use back. */
+    const Order = require('../models/Order');
+    const claimed = await Order.updateOne(
+        { _id: order._id, 'promoCode.usageCounted': true },
+        { $set: { 'promoCode.usageCounted': false } }
+    );
+    if (claimed.modifiedCount === 0) return false;
+
+    // Keep the in-memory copy in step, or a later save() writes the flag back
+    // to true and the use looks counted while the tally says otherwise.
+    promoRef.usageCounted = false;
 
     const userId = order.user?._id || order.user;
 
@@ -265,6 +286,9 @@ async function releaseUsage(order) {
             { $set: { converted: false, orderTotal: 0, discountGiven: 0 }, $unset: { order: 1, convertedAt: 1 } }
         ).catch(() => {});
     }
+
+    console.log(`[PROMO] ↩ Usage released for "${promoRef.code}" (order ${order.orderNumber})`);
+    return true;
 }
 
 /**
